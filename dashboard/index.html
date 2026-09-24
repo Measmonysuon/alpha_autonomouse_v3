@@ -8209,8 +8209,8 @@
             <div class="stat-pod-title">
               <span>📈 Financial Performance</span>
             </div>
-            <span
-              style="font-size:9.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,0.12);padding:2px 6px;border-radius:4px;border:1px solid rgba(16,185,129,0.25);">LIVE
+            <span id="stat-pod-pnl-badge"
+              style="font-size:9.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,0.12);padding:2px 6px;border-radius:4px;border:1px solid rgba(16,185,129,0.25);">REALIZED
               P&amp;L</span>
           </div>
           <div class="stat-pod-hero">
@@ -10561,6 +10561,24 @@
       const autoColor = autoPnl > 0 ? 'var(--green)' : autoPnl < 0 ? 'var(--red)' : 'var(--text2)';
       const manColor = manPnl > 0 ? 'var(--green)' : manPnl < 0 ? 'var(--red)' : 'var(--text2)';
 
+      const openFromStats = stats ? (stats.openTrades !== undefined ? stats.openTrades : stats.openTradesCount) : undefined;
+      const openCount = openFromStats !== undefined ? openFromStats : (Array.isArray(lastPositions) ? lastPositions.length : 0);
+
+      const pnlBadge = document.getElementById('stat-pod-pnl-badge');
+      if (pnlBadge) {
+        if (openCount > 0) {
+          pnlBadge.textContent = 'LIVE + REALIZED';
+          pnlBadge.style.color = '#38bdf8';
+          pnlBadge.style.background = 'rgba(56, 189, 248, 0.12)';
+          pnlBadge.style.borderColor = 'rgba(56, 189, 248, 0.25)';
+        } else {
+          pnlBadge.textContent = 'REALIZED P&L';
+          pnlBadge.style.color = '#34d399';
+          pnlBadge.style.background = 'rgba(16, 185, 129, 0.12)';
+          pnlBadge.style.borderColor = 'rgba(16, 185, 129, 0.25)';
+        }
+      }
+
       const statPnlSub = document.getElementById('stat-pnl-sub');
       if (statPnlSub) {
         const autoPnlStr = autoPnl > 0 ? '+' + fmtUsd(autoPnl) : (autoPnl < 0 ? fmtUsd(autoPnl) : '$0.00');
@@ -10612,8 +10630,6 @@
       }
 
       updateBudgetRing(budgetUsed, budget);
-      const openFromStats = stats ? (stats.openTrades !== undefined ? stats.openTrades : stats.openTradesCount) : undefined;
-      const openCount = openFromStats !== undefined ? openFromStats : (Array.isArray(lastPositions) ? lastPositions.length : 0);
       document.getElementById('stat-open').textContent = openCount;
 
       const statOpenSub = document.getElementById('stat-open-sub');
@@ -14682,6 +14698,9 @@
       lastPositions = posList;
 
       if (!posList || !posList.length) {
+        try {
+          localStorage.setItem('alpha_positions_cache', '[]');
+        } catch (e) {}
         const activeGate = (studioData?.activeStrategy?.layer5?.minConfidenceGate) || 80;
         const empty = `<div class="empty-state">📭 No open positions.<br/>Agent will trade when confidence ≥ ${activeGate}%.</div>`;
         grids.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = empty; });

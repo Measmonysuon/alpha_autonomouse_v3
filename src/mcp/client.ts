@@ -199,13 +199,14 @@ export class DecibelMCPClient {
   }
 
   private initTransport(): void {
+    const nodeKey = process.env.DECIBEL_NODE_API_KEY || config.DECIBEL_NODE_API_KEY || '';
     this.transport = new StdioClientTransport({
       command: 'decibel-mcp',
       args: [],
       env: {
         ...process.env,
         DECIBEL_NETWORK: config.DECIBEL_NETWORK,
-        DECIBEL_NODE_API_KEY: config.DECIBEL_NODE_API_KEY,
+        DECIBEL_NODE_API_KEY: nodeKey,
         DECIBEL_PRIVATE_KEY: config.DECIBEL_PRIVATE_KEY,
         DECIBEL_SUBACCOUNT_ADDRESS: config.DECIBEL_SUBACCOUNT_ADDRESS,
       },
@@ -939,9 +940,16 @@ export class DecibelMCPClient {
   }
 
   async getTradeHistory(limit = 50): Promise<any[]> {
-    const toolName = this.hasTool('get_trade_history') ? 'get_trade_history' : 'trade_history';
+    if (!this.connected) {
+      await this.connect().catch((e) => logger.debug(`MCP auto-connect in getTradeHistory: ${e.message}`));
+    }
+    const toolName = this.hasTool('get_trade_history') ? 'get_trade_history' : (this.hasTool('trade_history') ? 'trade_history' : 'get_trade_history');
     try {
-      const res = await this.call<any>(toolName, { limit });
+      const toolArgs: any = { limit };
+      if (config.DECIBEL_SUBACCOUNT_ADDRESS) {
+        toolArgs.subaccount = config.DECIBEL_SUBACCOUNT_ADDRESS;
+      }
+      const res = await this.call<any>(toolName, toolArgs);
       const rawTrades = Array.isArray(res) ? res : (res?.trades || []);
 
       if (this.marketMap.size === 0) {

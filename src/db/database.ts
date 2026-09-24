@@ -288,15 +288,27 @@ class TradeDatabase {
   syncOnChainTrades(onChainTrades: any[]): void {
     if (!Array.isArray(onChainTrades) || onChainTrades.length === 0) return;
 
-    for (const oct of onChainTrades) {
+    // Sort fills chronologically ascending so open fills precede close fills
+    const sorted = [...onChainTrades].sort((a, b) => {
+      const ta = Number(a.transaction_unix_ms || a.timestamp || 0);
+      const tb = Number(b.transaction_unix_ms || b.timestamp || 0);
+      return ta - tb;
+    });
+
+    for (const oct of sorted) {
       const clientOrderId = String(oct.client_order_id || '');
-      const isAgent = !clientOrderId.startsWith('manual-user-override');
+      const isAgent = oct.isManual !== undefined
+        ? !oct.isManual
+        : (oct.tradeType === 'AUTO' || (!clientOrderId.startsWith('manual-user-override') && !clientOrderId.startsWith('live-test') && !clientOrderId.startsWith('e2e')));
       const txVersion = oct.transaction_version ? String(oct.transaction_version) : undefined;
       const price = Number(oct.execution_price || oct.price || 0);
       const size = Number(oct.executed_size || oct.size || 0);
       const pnl = Number(oct.realized_pnl_amount || oct.pnlUsd || 0);
       const fee = Number(oct.fee_amount || oct.feeUsd || 0);
       const octAction = String(oct.action || '').toLowerCase();
+      const isClose = octAction.includes('close');
+      const isOpen = octAction.includes('open');
+
       let action: 'LONG' | 'SHORT' = 'LONG';
       let side: 'buy' | 'sell' = 'buy';
 
@@ -316,46 +328,74 @@ class TradeDatabase {
       const normSymbol = rawSym.replace('-', '/').toUpperCase();
       const altSymbol = rawSym.replace('/', '-').toUpperCase();
 
-      // 1. Unified Matcher: Match existing bot trade by ID, txVersion, or symbol & 10-minute window
       if (this.db) {
-        const existing = this.db.prepare(`
-          SELECT id, status, is_manual, client_order_id, strategy_name 
-          FROM trades 
-          WHERE (client_order_id IS NOT NULL AND client_order_id != "" AND client_order_id = ?) 
+        // 1. Try matching by exact client_order_id or tx_version
+        let existing = this.db.prepare(`
+          SELECT * FROM trades 
+          WHERE (client_order_id IS NOT NULL AND client_order_id != '' AND client_order_id = ?) 
              OR id = ? 
-             OR (tx_version IS NOT NULL AND tx_version != "" AND tx_version = ?)
-             OR (
-                  (symbol = ? OR symbol = ? OR symbol = ?) 
-                  AND (
-                    (status = 'OPEN' AND ABS(opened_at - ?) < 600000)
-                    OR (closed_at IS NOT NULL AND ABS(closed_at - ?) < 600000)
-                    OR (opened_at IS NOT NULL AND ABS(opened_at - ?) < 600000)
-                  )
-                )
-          ORDER BY (is_manual = 0) DESC, ABS(opened_at - ?) ASC
+             OR (tx_version IS NOT NULL AND tx_version != '' AND tx_version = ?)
           LIMIT 1
-        `).get(clientOrderId, clientOrderId, txVersion || '', normSymbol, altSymbol, rawSym, timestamp, timestamp, timestamp, timestamp) as any;
+        `).get(clientOrderId, clientOrderId, txVersion || '') as any;
+
+        // 2. If close fill and no exact match by ID, match active OPEN trade on same symbol
+        if (!existing && isClose) {
+          existing = this.db.prepare(`
+            SELECT * FROM trades
+            WHERE (symbol = ? OR symbol = ? OR symbol = ?)
+              AND status = 'OPEN'
+            ORDER BY opened_at DESC
+            LIMIT 1
+          `).get(normSymbol, altSymbol, rawSym) as any;
+        }
+
+        // 3. If open fill and no exact match by ID, check if a closed trade without entry_price exists
+        if (!existing && isOpen) {
+          existing = this.db.prepare(`
+            SELECT * FROM trades
+            WHERE (symbol = ? OR symbol = ? OR symbol = ?)
+              AND ABS(opened_at - ?) < 3600000
+            ORDER BY ABS(opened_at - ?) ASC
+            LIMIT 1
+          `).get(normSymbol, altSymbol, rawSym, timestamp, timestamp) as any;
+        }
 
         if (existing) {
-          this.db.prepare(`
-            UPDATE trades 
-            SET tx_version = COALESCE(?, tx_version),
-                fee_usd = CASE WHEN fee_usd = 0 THEN ? ELSE fee_usd END,
-                realized_pnl = CASE WHEN status != 'OPEN' AND ? != 0 THEN ? ELSE realized_pnl END,
-                raw_onchain_data = ?,
-                action = ?,
-                side = ?
-            WHERE id = ?
-          `).run(txVersion || null, fee, pnl, pnl, JSON.stringify(oct), action, side, existing.id);
+          if (isClose) {
+            this.db.prepare(`
+              UPDATE trades 
+              SET tx_version = COALESCE(?, tx_version),
+                  exit_price = ?,
+                  closed_at = ?,
+                  fee_usd = fee_usd + ?,
+                  realized_pnl = ?,
+                  status = 'CLOSED',
+                  raw_onchain_data = ?,
+                  action = ?,
+                  side = ?
+              WHERE id = ?
+            `).run(txVersion || null, price, timestamp, fee, pnl, JSON.stringify(oct), action, side, existing.id);
+          } else {
+            // Open fill updates entry parameters
+            this.db.prepare(`
+              UPDATE trades 
+              SET tx_version = COALESCE(tx_version, ?),
+                  entry_price = CASE WHEN entry_price = 0 THEN ? ELSE entry_price END,
+                  fee_usd = CASE WHEN fee_usd = 0 THEN ? ELSE fee_usd END,
+                  opened_at = CASE WHEN opened_at = 0 THEN ? ELSE opened_at END,
+                  raw_onchain_data = COALESCE(raw_onchain_data, ?)
+              WHERE id = ?
+            `).run(txVersion || null, price, fee, timestamp, JSON.stringify(oct), existing.id);
+          }
 
           if (txVersion && existing.id !== `txn-${txVersion}`) {
-            this.db.prepare('DELETE FROM trades WHERE id = ?').run(`txn-${txVersion}`);
+            this.db.prepare("DELETE FROM trades WHERE id = ?").run(`txn-${txVersion}`);
           }
           continue;
         }
       }
 
-      // 2. Fallback: Insert new distinct on-chain trade with explicit strategy attribution
+      // Fallback: Insert new distinct on-chain trade with explicit strategy attribution
       const isManual = isAgent ? 0 : 1;
       const id = clientOrderId || (txVersion ? `txn-${txVersion}` : `oct-${oct.transaction_unix_ms}`);
       const fallbackStrategyName = isAgent ? 'Turtle Soup & Liquidity Grab' : 'Manual Decibel Trade';
@@ -371,24 +411,25 @@ class TradeDatabase {
         action,
         is_manual: isManual,
         entry_price: price,
-        exit_price: price,
+        exit_price: isClose ? price : undefined,
         size,
         allocated_usd: (price * size),
         leverage: 1,
         realized_pnl: pnl,
         fee_usd: fee,
-        status: pnl !== 0 ? 'CLOSED' : 'OPEN',
+        status: isClose ? 'CLOSED' : 'OPEN',
         opened_at: timestamp,
-        closed_at: timestamp,
+        closed_at: isClose ? timestamp : undefined,
         strategy_name: fallbackStrategyName,
         strategy_tags: fallbackStrategyTags,
         raw_onchain_data: JSON.stringify(oct),
       });
     }
 
-    // Cleanup pass: prune false duplicate manual trades that match an AI trade by symbol and time
+    // Cleanup pass: prune false ghost/duplicate trades
     if (this.db) {
       try {
+        // Prune manual duplicate placeholders where AI trade exists
         this.db.prepare(`
           DELETE FROM trades 
           WHERE is_manual = 1 
@@ -401,6 +442,21 @@ class TradeDatabase {
                 AND t2.id != trades.id
             )
         `).run();
+
+        // Prune ghost open trades that were synthetically marked closed when an actual on-chain close fill exists for that symbol
+        this.db.prepare(`
+          DELETE FROM trades 
+          WHERE (status = 'CLOSED_SL' OR status = 'CLOSED_MANUAL')
+            AND realized_pnl < -1.0
+            AND EXISTS (
+              SELECT 1 FROM trades t2
+              WHERE t2.symbol = trades.symbol
+                AND t2.id != trades.id
+                AND t2.status = 'CLOSED'
+                AND t2.realized_pnl > -0.5
+            )
+        `).run();
+
       } catch {}
     }
   }

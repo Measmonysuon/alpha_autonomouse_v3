@@ -258,6 +258,9 @@ export class TradeExecutor {
     try {
       const sqliteTrades = dbClient.getTrades({ limit: 1000 });
       if (sqliteTrades && sqliteTrades.length > 0) {
+        const sqliteIdSet = new Set(sqliteTrades.map(s => s.id));
+        // Prune any cache items that were deleted or pruned from SQLite
+        this.tradesCache = this.tradesCache.filter(t => sqliteIdSet.has(t.id));
         const cacheMap = new Map(this.tradesCache.map(t => [t.id, t]));
         for (const st of sqliteTrades) {
           const rawStatus = (st.status || 'closed').toLowerCase();
@@ -300,9 +303,11 @@ export class TradeExecutor {
             this.tradesCache.push(trade);
             cacheMap.set(st.id, trade);
           } else {
-            if (st.fee_usd && st.fee_usd > 0) {
-              existing.pnlUsd = netPnl;
-            }
+            existing.pnlUsd = netPnl;
+            existing.status = status;
+            if (st.exit_price) existing.exitPrice = st.exit_price;
+            if (st.closed_at) existing.closedAt = st.closed_at;
+            if (st.tx_version) existing.txHash = st.tx_version;
           }
         }
       }

@@ -1443,7 +1443,25 @@ function triggerBackgroundOnChainSync(): void {
       // Fallback to local trade journal if SQLite table is empty
       if (!trades || trades.length === 0) {
         trades = tradeExecutor.loadTrades();
-        syncTradesToSqlite(trades);
+        if (trades.length > 0) {
+          syncTradesToSqlite(trades);
+        }
+      }
+
+      // If still 0 trades (e.g. freshly deployed or post-reset), sync on-chain directly
+      if (!trades || trades.length === 0) {
+        try {
+          const onChainFills = await mcpClient.getTradeHistory(50);
+          if (onChainFills && onChainFills.length > 0) {
+            dbClient.syncOnChainTrades(onChainFills);
+            const freshSqlite = dbClient.getTrades({ limit: 100 });
+            if (freshSqlite && freshSqlite.length > 0) {
+              trades = freshSqlite.map(dbTradeToFrontendTrade);
+            }
+          }
+        } catch (syncErr: any) {
+          logger.debug(`Initial on-chain sync error: ${syncErr.message}`);
+        }
       }
 
       // 2. Respond immediately so history page renders with 0 delay!
@@ -1452,6 +1470,25 @@ function triggerBackgroundOnChainSync(): void {
 
       // 3. Reconcile with on-chain in the background without blocking HTTP
       triggerBackgroundOnChainSync();
+      return;
+    }
+
+    // ── 7b. Manual On-Chain History Sync ─────────────────────────────────────
+    if (pathname === '/api/trades/sync' && (req.method === 'POST' || req.method === 'GET')) {
+      try {
+        const onChainFills = await mcpClient.getTradeHistory(100);
+        if (onChainFills && onChainFills.length > 0) {
+          dbClient.syncOnChainTrades(onChainFills);
+        }
+        await tradeExecutor.syncOnChainPositions();
+        const freshSqlite = dbClient.getTrades({ limit: 100 });
+        const syncedTrades = freshSqlite && freshSqlite.length > 0 ? freshSqlite.map(dbTradeToFrontendTrade) : [];
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, count: syncedTrades.length, trades: syncedTrades, fillsCount: onChainFills.length }));
+      } catch (err: any) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
       return;
     }
 
