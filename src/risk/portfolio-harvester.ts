@@ -421,10 +421,14 @@ export class PortfolioHarvester {
       }
 
       // ── Defensive Bleed Cutting (Saves capital from slow bleed positions) ──────
-      const isBleedingOut = pnlPct <= -3.0 && score >= (this.config.harvestScoreThreshold || 65) && !breakevenLocked;
+      // Calibrated to 15% margin loss (matching the Dual-Layer Hard Stop Loss armor).
+      // Never prematurely close trades protected by on-chain Hard SL or manual on-chain trades.
+      const isManual = Boolean(trade.notes?.includes('Manual') || trade.strategyName?.includes('Manual'));
+      const hasOnChainArmor = Boolean((trade.hardStopLoss && trade.hardStopLoss > 0) || isManual || trade.strategyName?.includes('On-Chain'));
+      const isBleedingOut = !hasOnChainArmor && pnlPct <= -15.0 && score >= (this.config.harvestScoreThreshold || 75) && !breakevenLocked;
       if (isBleedingOut && this.config.enableDefensiveCut !== false) {
         recommendation = 'HARVEST';
-        factors.push('🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold, exiting to protect capital');
+        factors.push('🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital');
         if (this.config.enabled && !trade.isPaper) {
           mcpClient.closePosition(trade.symbol).catch((err: any) => {
             logger.warn(`Could not close on-chain position for ${trade.symbol} during defensive bleed cut: ${err.message}`);

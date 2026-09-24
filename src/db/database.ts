@@ -91,13 +91,44 @@ class TradeDatabase {
     }
 
     try {
-      this.db = new Database(this.dbPath);
-      this.db.pragma('journal_mode = WAL');
-      this.db.pragma('synchronous = NORMAL');
-      this.initTables();
-      logger.info(`Trade Database initialized with SQLite at ${this.dbPath}`);
+      this.initSqlite();
     } catch (err: any) {
-      logger.warn(`SQLite initialization failed (${err.message}). Using resilient in-memory store.`);
+      logger.warn(`SQLite initial setup failed (${err.message}). Auto-repairing database...`);
+      this.repairDatabase();
+    }
+  }
+
+  private initSqlite(): void {
+    this.db = new Database(this.dbPath);
+    // Verify file integrity
+    const check = this.db.pragma('integrity_check') as any[];
+    if (!check || check.length === 0 || check[0].integrity_check !== 'ok') {
+      throw new Error(`SQLite corrupted: ${JSON.stringify(check)}`);
+    }
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = NORMAL');
+    this.initTables();
+    logger.info(`Trade Database initialized with SQLite at ${this.dbPath}`);
+  }
+
+  private repairDatabase(): void {
+    try {
+      if (this.db) {
+        try { this.db.close(); } catch {}
+        this.db = null;
+      }
+      if (fs.existsSync(this.dbPath)) {
+        const bak = `${this.dbPath}.corrupt.${Date.now()}`;
+        fs.renameSync(this.dbPath, bak);
+        if (fs.existsSync(`${this.dbPath}-wal`)) fs.unlinkSync(`${this.dbPath}-wal`);
+        if (fs.existsSync(`${this.dbPath}-shm`)) fs.unlinkSync(`${this.dbPath}-shm`);
+        logger.info(`Corrupt SQLite database moved to ${bak}`);
+      }
+      this.initSqlite();
+      this.migrateFromJson();
+      logger.info(`SQLite auto-repair completed successfully at ${this.dbPath}`);
+    } catch (err: any) {
+      logger.error(`SQLite auto-repair failed (${err.message}). Falling back to in-memory store.`);
       this.db = null;
     }
   }

@@ -400,12 +400,21 @@ export class DecibelMCPClient {
           symbol = p.market;
         }
         if (!symbol) symbol = 'UNKNOWN';
-        const entryPrice = Number(p.entry_price ?? 0);
-        const leverage = Number(p.user_leverage ?? 1);
+        const entryPrice = Number(p.entry_price ?? p.entryPrice ?? 0);
         const sizeBase = Math.abs(rawSize);
         const sizeUsd = sizeBase * entryPrice;
         const action: 'LONG' | 'SHORT' = rawSize > 0 ? 'LONG' : 'SHORT';
         const side: 'buy' | 'sell' = rawSize > 0 ? 'buy' : 'sell';
+
+        const rawMargin = Number(p.margin ?? p.position_margin ?? p.collateral ?? p.allocatedUsd ?? 0);
+        let leverage = Number(p.leverage ?? p.user_leverage ?? p.target_leverage ?? 0);
+        if (leverage <= 0 && rawMargin > 0 && sizeUsd > 0) {
+          leverage = Math.round(sizeUsd / rawMargin);
+        }
+        if (leverage <= 0) {
+          leverage = Number(p.user_leverage ?? p.leverage ?? 1);
+        }
+        const allocatedUsd = rawMargin > 0 ? rawMargin : (sizeUsd / (leverage || 1));
 
         normalized.push({
           symbol,
@@ -415,7 +424,7 @@ export class DecibelMCPClient {
           sizeBase,
           sizeUsd,
           leverage,
-          allocatedUsd: sizeUsd / (leverage || 1),
+          allocatedUsd,
           liquidationPrice: p.estimated_liquidation_price ? Number(p.estimated_liquidation_price) : undefined,
           takeProfit: p.tp_trigger_price ? Number(p.tp_trigger_price) : undefined,
           stopLoss: p.sl_trigger_price ? Number(p.sl_trigger_price) : undefined,
@@ -432,6 +441,20 @@ export class DecibelMCPClient {
     if (!marketAddr) return null;
     const clean = marketAddr.toLowerCase();
     if (this.marketMap.has(clean)) return this.marketMap.get(clean)!;
+
+    const KNOWN_MARKETS: Record<string, string> = {
+      '0x386bfa4f18abc8ca926b7ade89ad5aaad34cf9a0a8bd828b7059f17b252f8607': 'ADA/USD',
+      '0xdf3f9b3241aaf20c47e99eac29f3ff2f736e40644c856e0db612a22e62b847f3': 'SOL/USD',
+      '0xda8615922bac85a53811e845ce39110713be6d80366f4477d5427002ac0162e3': 'APT/USD',
+      '0xc29172db08345aceadb2306320c3239a212d55fdb6c728109a0de62864c4a02f': 'NEAR/USD',
+      '0x12f45ea2e6c5ee398dbd6c3fb8a4d46cfb7f7112005934524419ad24f603c734': 'BTC/USD',
+      '0xfa6273ebf10b77e8a9ec9e11504cfd6b8ccbbba20bc6a98342416b113038676a': 'ETH/USD',
+    };
+    if (KNOWN_MARKETS[clean]) {
+      this.marketMap.set(clean, KNOWN_MARKETS[clean]);
+      return KNOWN_MARKETS[clean];
+    }
+
     if (this.marketDetails.size === 0) {
       this.loadMarketsFromCache();
     }
@@ -966,7 +989,7 @@ export class DecibelMCPClient {
 
       return rawTrades.map((t: any) => {
         const marketAddr = (t.market || '').toLowerCase();
-        const symbol = this.marketMap.get(marketAddr) || t.symbol || (marketAddr.length > 10 ? `${marketAddr.slice(0, 6)}...${marketAddr.slice(-4)}` : 'DEX');
+        const symbol = this.getSymbolForMarket(marketAddr) || this.marketMap.get(marketAddr) || t.symbol || (marketAddr.length > 10 ? `${marketAddr.slice(0, 6)}...${marketAddr.slice(-4)}` : 'DEX');
         const isAgent = Boolean(
           t.client_order_id &&
           (String(t.client_order_id).startsWith('agent-') ||

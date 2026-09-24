@@ -61,6 +61,12 @@ export interface TradeRecord {
   tx_version?: string;
   entryRationale?: string;
   strategyTags?: string[];
+  hardStopLoss?: number;
+  softRatchetPrice?: number;
+  estimatedLiquidationPrice?: number;
+  estimatedProfitPct?: number;
+  estimatedLossPct?: number;
+  estimatedWinRatePct?: number;
 }
 
 export interface ShadowTrade {
@@ -435,8 +441,17 @@ export class TradeExecutor {
           }
         }
 
+        const lev = Math.max(1, pos.leverage || 1);
+        const isLong = pos.action === 'LONG' || pos.side === 'buy';
+        const defaultHardSl = isLong
+          ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
+          : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
+        const hardSl = pos.stopLoss && pos.stopLoss > 0 ? pos.stopLoss : defaultHardSl;
+        const softRatchet = isLong
+          ? Number((pos.entryPrice * (1 - 0.05 / lev)).toFixed(4))
+          : Number((pos.entryPrice * (1 + 0.05 / lev)).toFixed(4));
+
         if (!existing) {
-          const isLong = pos.action === 'LONG' || pos.side === 'buy';
           const newTrade: TradeRecord = {
             id: `decibel-onchain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             symbol: pos.symbol,
@@ -445,22 +460,43 @@ export class TradeExecutor {
             entryPrice: pos.entryPrice || 0,
             takeProfit: pos.takeProfit || 0,
             stopLoss: pos.stopLoss || 0,
+            hardStopLoss: hardSl,
+            softRatchetPrice: softRatchet,
+            estimatedLiquidationPrice: pos.liquidationPrice,
             sizeUsd: pos.sizeUsd || (pos.sizeBase * (pos.entryPrice || 0)),
             sizeBase: pos.sizeBase || 0,
-            leverage: pos.leverage || 3,
-            allocatedUsd: pos.allocatedUsd || ((pos.sizeUsd || 0) / (pos.leverage || 3)),
+            leverage: pos.leverage || 1,
+            allocatedUsd: pos.allocatedUsd || ((pos.sizeUsd || 0) / (pos.leverage || 1)),
             confidence: 85,
             status: 'open',
             isPaper: false,
             openedAt: Date.now(),
             strategyName: 'Decibel On-Chain Position',
             notes: 'Reconciled directly from Aptos on-chain DEX state',
+            estimatedProfitPct: (pos.takeProfit && pos.entryPrice) ? Math.abs((pos.takeProfit - pos.entryPrice) / pos.entryPrice) * 100 * (pos.leverage || 1) : 15.0,
+            estimatedLossPct: hardSl && pos.entryPrice ? Math.abs((pos.entryPrice - hardSl) / pos.entryPrice) * 100 * (pos.leverage || 1) : 15.0,
+            estimatedWinRatePct: 85,
           };
           this.tradesCache.push(newTrade);
           modified = true;
-          logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice})`);
+          logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice}, ${newTrade.leverage}x) [Hard SL: $${hardSl} | Soft Ratchet: $${softRatchet}]`);
         } else {
-          // Update live on-chain TP / SL if present
+          // ALWAYS update live on-chain leverage, position size, and margin for existing/restored positions
+          if (pos.leverage && pos.leverage > 0 && existing.leverage !== pos.leverage) {
+            logger.info(`⚙️ [RECONCILE] Updating ${existing.symbol} leverage to on-chain: ${existing.leverage}x → ${pos.leverage}x`);
+            existing.leverage = pos.leverage;
+            modified = true;
+          }
+          if (pos.sizeBase && pos.sizeBase > 0 && Math.abs(existing.sizeBase - pos.sizeBase) > 0.0001) {
+            logger.info(`⚙️ [RECONCILE] Updating ${existing.symbol} sizeBase to on-chain: ${existing.sizeBase} → ${pos.sizeBase}`);
+            existing.sizeBase = pos.sizeBase;
+            existing.sizeUsd = pos.sizeUsd || (pos.sizeBase * (pos.entryPrice || existing.entryPrice));
+            modified = true;
+          }
+          if (pos.allocatedUsd && pos.allocatedUsd > 0 && Math.abs((existing.allocatedUsd || 0) - pos.allocatedUsd) > 0.01) {
+            existing.allocatedUsd = pos.allocatedUsd;
+            modified = true;
+          }
           if (pos.takeProfit && pos.takeProfit !== existing.takeProfit) {
             existing.takeProfit = pos.takeProfit;
             modified = true;
@@ -469,10 +505,32 @@ export class TradeExecutor {
             existing.stopLoss = pos.stopLoss;
             modified = true;
           }
-          if (pos.entryPrice && Math.abs(pos.entryPrice - existing.entryPrice) > 0.01) {
+          if (pos.entryPrice && Math.abs(pos.entryPrice - existing.entryPrice) > 0.0001) {
             existing.entryPrice = pos.entryPrice;
             modified = true;
           }
+          existing.hardStopLoss = hardSl;
+          existing.softRatchetPrice = softRatchet;
+          if (pos.liquidationPrice) existing.estimatedLiquidationPrice = pos.liquidationPrice;
+
+          const curLev = existing.leverage || pos.leverage || 1;
+          const curTp = existing.takeProfit || pos.takeProfit || 0;
+          const curEntry = existing.entryPrice || pos.entryPrice || 0;
+          existing.estimatedProfitPct = (curTp > 0 && curEntry > 0)
+            ? Math.abs((curTp - curEntry) / curEntry) * 100 * curLev
+            : (existing.estimatedProfitPct || 15.0);
+          existing.estimatedLossPct = (hardSl > 0 && curEntry > 0)
+            ? Math.abs((curEntry - hardSl) / curEntry) * 100 * curLev
+            : (existing.estimatedLossPct || 15.0);
+          existing.estimatedWinRatePct = existing.confidence || existing.estimatedWinRatePct || 85;
+          modified = true;
+        }
+
+        // Auto-arm on-chain hard SL if position is open without an active stop order
+        if ((!pos.stopLoss || pos.stopLoss <= 0) && hardSl > 0 && isClientConfigured() && !config.PAPER_TRADING) {
+          mcpClient.setTpSl({ symbol: pos.symbol, slTrigger: hardSl }).catch((err: any) => {
+            logger.debug(`[ON-CHAIN HARD SL] Auto-arm notice for ${pos.symbol}: ${err.message}`);
+          });
         }
       }
 
@@ -482,6 +540,17 @@ export class TradeExecutor {
         const symNorm = trade.symbol.replace('-', '/').toUpperCase();
         const symRaw = trade.symbol.toUpperCase();
         if (!onChainSymbols.has(symNorm) && !onChainSymbols.has(symRaw)) {
+          // Guard 1: Allow 30s grace period for freshly opened or restored trades
+          if (trade.openedAt && now - trade.openedAt < 30_000) {
+            continue;
+          }
+          // Guard 2: If onChainList is completely empty but local cache has open trades,
+          // it is an RPC glitch, indexer blip, or MCP reconnect — NEVER drop trades!
+          if (onChainList.length === 0) {
+            logger.debug(`[RECONCILE] On-chain report returned 0 positions while local has open trades — holding open`);
+            continue;
+          }
+
           const missed = (this.missingOnChainCount.get(symNorm) || 0) + 1;
           this.missingOnChainCount.set(symNorm, missed);
           if (!this.missingFirstSeenAt.has(symNorm)) {
@@ -489,8 +558,8 @@ export class TradeExecutor {
           }
           const durationMissingMs = now - (this.missingFirstSeenAt.get(symNorm) || now);
 
-          // Require at least 2 consecutive cycles AND at least 3500ms of continuous confirmed absence
-          if (missed >= 2 && durationMissingMs >= 3500) {
+          // Require at least 6 consecutive cycles AND at least 20 seconds of continuous confirmed absence
+          if (missed >= 6 && durationMissingMs >= 20000) {
             const pnl = trade.pnlUsd || 0;
             const smartStatus = pnl > 0.05 ? 'closed_tp' : (pnl < 0 ? 'closed_sl' : 'closed_manual');
             const smartReason = 'MANUAL_DEX_CLOSE';
@@ -502,7 +571,7 @@ export class TradeExecutor {
             this.missingFirstSeenAt.delete(symNorm);
             modified = true;
           } else {
-            logger.debug(`[RECONCILE] Position ${trade.symbol} not in latest report (strike ${missed}/2, ${Math.round(durationMissingMs / 1000)}s) — holding open`);
+            logger.debug(`[RECONCILE] Position ${trade.symbol} not in latest report (strike ${missed}/6, ${Math.round(durationMissingMs / 1000)}s) — holding open`);
           }
         } else {
           this.missingOnChainCount.set(symNorm, 0);
@@ -723,6 +792,11 @@ export class TradeExecutor {
       }
     }
 
+    // Hard Stop Loss barrier (15% margin max risk)
+    const hardSlPrice = signal.action === 'LONG'
+      ? signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))
+      : signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage));
+
     // Record trade
     const trade: TradeRecord = {
       id: tradeId,
@@ -749,6 +823,11 @@ export class TradeExecutor {
       regime: risk.directivesUsed.regime,
       strategyAttribution: signal.strategyAttribution,
       notes: aiEval.reasoning,
+      hardStopLoss: hardSlPrice,
+      softRatchetPrice: signal.stopLoss || (signal.action === 'LONG' ? signal.entryPrice * (1 - 0.05 / risk.leverage) : signal.entryPrice * (1 + 0.05 / risk.leverage)),
+      estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
+      estimatedLossPct: hardSlPrice && signal.entryPrice ? Math.abs((signal.entryPrice - hardSlPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
+      estimatedWinRatePct: aiEval.confidenceScore || 78,
     };
 
       const existingIdx = this.tradesCache.findIndex((t) => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');

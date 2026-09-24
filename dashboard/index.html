@@ -8501,11 +8501,12 @@
             <div class="section-title">📜 On-Chain Trade History</div>
             <div class="section-meta" id="history-meta">Real-time Decibel DEX settled trades</div>
           </div>
-          <!-- Filter Tabs -->
-          <div class="history-filters">
+          <!-- Filter Tabs & On-Chain Sync -->
+          <div class="history-filters" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <button class="hf-btn active" data-filter="all" onclick="setHistoryFilter('all')">🌐 All Trades</button>
             <button class="hf-btn" data-filter="auto" onclick="setHistoryFilter('auto')">🤖 Auto AI Only</button>
             <button class="hf-btn" data-filter="manual" onclick="setHistoryFilter('manual')">👤 Manual Only</button>
+            <button class="hf-btn" id="sync-history-btn" onclick="syncOnChainTradesHistory(event)" style="border-color:rgba(59,130,246,0.4);background:rgba(59,130,246,0.12);color:#60a5fa;" title="Sync latest on-chain transactions and fills from Decibel DEX">🔄 Sync On-Chain Trades</button>
           </div>
         </div>
         <div class="card">
@@ -10370,6 +10371,18 @@
           if (trades && trades.length) {
             lastTrades = trades;
             renderHistory(trades);
+          } else {
+            // Auto sync from Decibel DEX if local cache is empty
+            fetch(API + '/api/trades/sync', { method: 'POST' })
+              .then(r => r.json())
+              .then(res => {
+                const syn = Array.isArray(res) ? res : (res?.trades || []);
+                if (syn.length) {
+                  lastTrades = syn;
+                  renderHistory(syn);
+                }
+              })
+              .catch(() => {});
           }
         }).catch(() => {});
       }
@@ -14246,8 +14259,26 @@
             return;
           }
 
-          // Build execution lines: TP, Entry, Mark, SL/Liq
+          // Build execution lines: TP, Entry, Mark, Hard SL (Red), Dynamic Ratchet (Green)
           const lines = [];
+          const lev = Math.max(1, p.leverage || 1);
+          const isLong = p.action === 'LONG';
+          const defaultHardSl = isLong 
+            ? p.entryPrice * (1 - 0.15 / lev) 
+            : p.entryPrice * (1 + 0.15 / lev);
+          const hardSlPrice = p.hardStopLoss > 0 ? p.hardStopLoss : (p.stopLoss > 0 ? p.stopLoss : defaultHardSl);
+
+          let ratchetPrice = p.softRatchetPrice || 0;
+          if (!ratchetPrice && p.entryPrice > 0) {
+            const price = currentPrice > 0 ? currentPrice : p.entryPrice;
+            const pnlPct = isLong ? ((price - p.entryPrice) / p.entryPrice) * lev : ((p.entryPrice - price) / p.entryPrice) * lev;
+            if (pnlPct >= 0.015) {
+              ratchetPrice = isLong ? Math.max(p.entryPrice * 1.0005, price * 0.985) : Math.min(p.entryPrice * 0.9995, price * 1.015);
+            } else {
+              ratchetPrice = isLong ? p.entryPrice * (1 - 0.05 / lev) : p.entryPrice * (1 + 0.05 / lev);
+            }
+          }
+
           if (p.takeProfit > 0) {
             lines.push({
               label: 'TP',
@@ -14278,14 +14309,27 @@
               badgeText: '#ffffff'
             });
           }
-          const slPrice = p.stopLoss > 0 ? p.stopLoss : (p.estimatedLiquidationPrice || 0);
-          if (slPrice > 0) {
+
+          // 1. Red Line: Hard SL (On-Chain Emergency Catastrophe Stop)
+          if (hardSlPrice > 0) {
             lines.push({
-              label: p.stopLoss > 0 ? 'SL' : 'LIQ',
-              price: slPrice,
+              label: 'HARD SL',
+              price: hardSlPrice,
               color: '#ef4444',
-              dash: [4, 3],
+              dash: [6, 3],
               badgeBg: 'rgba(239, 68, 68, 0.95)',
+              badgeText: '#ffffff'
+            });
+          }
+
+          // 2. Green Line: Soft Dynamic Ratchet (Trails Profit in Green)
+          if (ratchetPrice > 0 && Math.abs(ratchetPrice - hardSlPrice) > 0.001) {
+            lines.push({
+              label: 'RATCHET',
+              price: ratchetPrice,
+              color: '#10b981',
+              dash: [3, 2],
+              badgeBg: 'rgba(16, 185, 129, 0.95)',
               badgeText: '#ffffff'
             });
           }
@@ -14303,25 +14347,30 @@
               let distTp = '';
               if (p.takeProfit > 0) {
                 const tpDiffPct = ((p.takeProfit - candle.c) / candle.c) * 100 * (p.action === 'LONG' ? 1 : -1);
-                distTp = ` | TP dist: <b style="color:#34d399">${tpDiffPct >= 0 ? '+' : ''}${tpDiffPct.toFixed(1)}%</b>`;
+                distTp = ` | TP: <b style="color:#34d399">${tpDiffPct >= 0 ? '+' : ''}${tpDiffPct.toFixed(1)}%</b>`;
               }
-              let distSl = '';
-              if (p.stopLoss > 0) {
-                const slDiffPct = ((candle.c - p.stopLoss) / candle.c) * 100 * (p.action === 'LONG' ? 1 : -1);
-                distSl = ` | SL dist: <b style="color:#f87171">${slDiffPct >= 0 ? '-' : '+'}${Math.abs(slDiffPct).toFixed(1)}%</b>`;
+              let distRatchet = '';
+              if (ratchetPrice > 0) {
+                const rDiffPct = ((candle.c - ratchetPrice) / candle.c) * 100 * (isLong ? 1 : -1);
+                distRatchet = ` | Ratchet: <b style="color:#10b981">${rDiffPct >= 0 ? '+' : ''}${rDiffPct.toFixed(1)}%</b>`;
+              }
+              let distHardSl = '';
+              if (hardSlPrice > 0) {
+                const slDiffPct = ((candle.c - hardSlPrice) / candle.c) * 100 * (isLong ? 1 : -1);
+                distHardSl = ` | Hard SL: <b style="color:#f87171">${slDiffPct >= 0 ? '-' : '+'}${Math.abs(slDiffPct).toFixed(1)}%</b>`;
               }
 
-              hudEl.innerHTML = `<span class="pos-hud-left">${timeStr} · O:<b>${fmtPosPrice(candle.o)}</b> H:<b>${fmtPosPrice(candle.h)}</b> L:<b>${fmtPosPrice(candle.l)}</b> C:<b style="color:${col}">${fmtPosPrice(candle.c)}</b></span><span class="pos-hud-right">${distTp}${distSl}</span>`;
+              hudEl.innerHTML = `<span class="pos-hud-left">${timeStr} · O:<b>${fmtPosPrice(candle.o)}</b> H:<b>${fmtPosPrice(candle.h)}</b> L:<b>${fmtPosPrice(candle.l)}</b> C:<b style="color:${col}">${fmtPosPrice(candle.c)}</b></span><span class="pos-hud-right">${distTp}${distRatchet}${distHardSl}</span>`;
             },
             onLeaveCandle: () => {
               if (hudEl) {
-                hudEl.innerHTML = `<span class="pos-hud-left">${tf} Candlesticks (${klines.length} bars) · Hover for OHLC</span><span class="pos-hud-right"><span style="color:#34d399">🎯 TP</span> · <span style="color:#22d3ee">⚓ Entry</span> · <span style="color:#f87171">🛑 SL</span></span>`;
+                hudEl.innerHTML = `<span class="pos-hud-left">${tf} Candlesticks (${klines.length} bars) · Hover for OHLC</span><span class="pos-hud-right"><span style="color:#34d399">🎯 TP</span> · <span style="color:#22d3ee">⚓ Entry</span> · <span style="color:#10b981">🛡️ Ratchet</span> · <span style="color:#f87171">🛑 Hard SL</span></span>`;
               }
             }
           });
 
           if (hudEl && (!canvas._hasHovered)) {
-            hudEl.innerHTML = `<span class="pos-hud-left">${tf} Candlesticks (${klines.length} bars) · Hover for OHLC</span><span class="pos-hud-right"><span style="color:#34d399">🎯 TP</span> · <span style="color:#22d3ee">⚓ Entry</span> · <span style="color:#f87171">🛑 SL</span></span>`;
+            hudEl.innerHTML = `<span class="pos-hud-left">${tf} Candlesticks (${klines.length} bars) · Hover for OHLC</span><span class="pos-hud-right"><span style="color:#34d399">🎯 TP</span> · <span style="color:#22d3ee">⚓ Entry</span> · <span style="color:#10b981">🛡️ Ratchet</span> · <span style="color:#f87171">🛑 Hard SL</span></span>`;
           }
         });
       });
@@ -14410,6 +14459,21 @@
       }
 
       const tpDisplay = p.takeProfit > 0 ? fmtPosPrice(p.takeProfit) : '<span style="color:var(--text3)">Manual</span>';
+      
+      // Dual-Layer Stop Loss: 🛑 Hard On-chain SL vs 🛡️ Soft Dynamic Ratchet
+      const lev = Math.max(1, p.leverage || 1);
+      const isLong = p.action === 'LONG';
+      const hardSlPrice = p.hardStopLoss || p.stopLoss || (isLong ? (p.entryPrice * (1 - 0.15 / lev)) : (p.entryPrice * (1 + 0.15 / lev)));
+      let ratchetPrice = p.softRatchetPrice || 0;
+      if (!ratchetPrice) {
+        if (pnlPct >= 1.5) {
+          ratchetPrice = isLong ? Math.max(p.entryPrice * 1.0005, currentPrice * 0.985) : Math.min(p.entryPrice * 0.9995, currentPrice * 1.015);
+        } else {
+          ratchetPrice = isLong ? (p.entryPrice * (1 - 0.05 / lev)) : (p.entryPrice * (1 + 0.05 / lev));
+        }
+      }
+      const isRiskFree = isLong ? (ratchetPrice >= p.entryPrice) : (ratchetPrice <= p.entryPrice);
+
       let slDisplay = '<span style="color:var(--text3)">None</span>';
       if (p.stopLoss > 0) {
         slDisplay = fmtPosPrice(p.stopLoss);
@@ -14443,6 +14507,27 @@
         }
       }
 
+      const displayLev = (p.leverage && p.leverage > 1) ? p.leverage : (p.allocatedUsd > 0 && notionalVal > 0 ? Math.round(notionalVal / p.allocatedUsd) : (p.leverage || 1));
+
+      // Dynamic calculation for Strategy Estimated Metrics
+      const cardEstProfit = (p.estimatedProfitPct && p.estimatedProfitPct > 0)
+        ? p.estimatedProfitPct
+        : (p.takeProfit > 0 && p.entryPrice > 0
+            ? Math.max(1.0, ((isLong ? (p.takeProfit - p.entryPrice) : (p.entryPrice - p.takeProfit)) / p.entryPrice) * 100 * displayLev)
+            : 15.0);
+
+      const cardEstLoss = (p.estimatedLossPct && p.estimatedLossPct > 0)
+        ? p.estimatedLossPct
+        : (hardSlPrice > 0 && p.entryPrice > 0
+            ? Math.max(1.0, ((isLong ? (p.entryPrice - hardSlPrice) : (hardSlPrice - p.entryPrice)) / p.entryPrice) * 100 * displayLev)
+            : 15.0);
+
+      const cardEstWinRate = (p.estimatedWinRatePct && p.estimatedWinRatePct > 0)
+        ? p.estimatedWinRatePct
+        : (p.confidence && p.confidence > 0
+            ? p.confidence
+            : ((lastState?.stats?.winRatePct && lastState.stats.winRatePct > 0) ? lastState.stats.winRatePct : 68));
+
       return `
   <div class="pos-card ${sideClass}" id="pos-card-${posSafeId}" data-pos-key="${posSafeId}">
     <!-- Top Header: Identity & Hero PnL -->
@@ -14451,7 +14536,7 @@
         <div class="pos-title-row">
           <span class="pos-symbol">${p.symbol}</span>
           <span class="pos-side-pill ${sideClass}">${p.action === 'LONG' ? '▲ LONG' : '▼ SHORT'}</span>
-          <span class="pos-lev-pill">${p.leverage}x</span>
+          <span class="pos-lev-pill">${displayLev}x</span>
           <span class="pos-notional-pill" style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(59,130,246,0.18);border:1px solid rgba(59,130,246,0.4);color:#60a5fa;" title="Total Leveraged Notional Value">💎 $${notionalUsd} Notional</span>
           ${p.isManual ? '<span class="pos-manual-pill">MANUAL</span>' : '<span class="pos-ai-pill">AI SIGNAL</span>'}
           <span class="pos-harv-pill-wrap">${harvestPill}</span>
@@ -14484,17 +14569,29 @@
         <div class="pos-price-label">TARGET TP</div>
         <div class="pos-price-value tp">${tpDisplay}</div>
       </div>
-      <div class="pos-price-item" title="Stop Loss / Liquidation: ${p.stopLoss > 0 ? '$' + p.stopLoss : (p.estimatedLiquidationPrice ? '$' + p.estimatedLiquidationPrice : 'None')}">
-        <div class="pos-price-label">STOP / LIQ</div>
-        <div class="pos-price-value sl">${slDisplay}</div>
+      <div class="pos-price-item" title="Dual-Layer Armor: Hard On-chain SL: $${hardSlPrice.toFixed(2)} | Soft Dynamic Ratchet: $${ratchetPrice.toFixed(2)}">
+        <div class="pos-price-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#ef4444;font-weight:700;">HARD SL</span>
+          <span style="color:#10b981;font-weight:700;">RATCHET</span>
+        </div>
+        <div class="pos-price-value" style="display:flex;flex-direction:column;gap:1px;font-size:11px;">
+          <span style="color:#f87171;font-weight:700;">🛑 ${fmtPosPrice(hardSlPrice)}</span>
+          <span style="color:#34d399;font-weight:700;display:flex;align-items:center;gap:3px;">
+            🛡️ ${fmtPosPrice(ratchetPrice)} ${isRiskFree ? '<span style="font-size:8px;padding:0 3px;border-radius:2px;background:rgba(16,185,129,0.25);color:#10b981;">LOCK</span>' : ''}
+          </span>
+        </div>
       </div>
     </div>
 
     <!-- Range Progress Gauge -->
     <div class="pos-gauge-wrap">
       <div class="pos-gauge-header">
-        <span class="pos-gauge-bound sl">${p.stopLoss > 0 ? '🛑 ' + fmtPosPrice(p.stopLoss) : (p.estimatedLiquidationPrice ? '⚠️ ' + fmtPosPrice(p.estimatedLiquidationPrice) + ' (Liq)' : 'No SL')}</span>
-        <span class="pos-gauge-mid">${hasTpSl ? Math.round(progress) + '% to Target' : 'Position Active'}</span>
+        <span class="pos-gauge-bound sl" style="display:inline-flex;gap:4px;align-items:center;">
+          <span style="color:#ef4444;font-weight:700;" title="Hard On-chain Stop Loss">🛑 ${fmtPosPrice(hardSlPrice)}</span>
+          <span style="color:var(--text3);">·</span>
+          <span style="color:#10b981;font-weight:700;" title="Soft Dynamic Ratchet">🛡️ ${fmtPosPrice(ratchetPrice)}</span>
+        </span>
+        <span class="pos-gauge-mid">${hasTpSl ? Math.round(progress) + '% to Target' : (isRiskFree ? '🔒 Breakeven Locked' : 'Dual Armor Active')}</span>
         <span class="pos-gauge-bound tp">${p.takeProfit > 0 ? '🎯 ' + fmtPosPrice(p.takeProfit) : 'Manual Exit'}</span>
       </div>
       <div class="pos-gauge-track">
@@ -14521,7 +14618,8 @@
           <span class="pos-lvl-tag tp" title="Take Profit Target">🎯 TP: <b>${p.takeProfit > 0 ? fmtPosPrice(p.takeProfit) : '—'}</b></span>
           <span class="pos-lvl-tag entry" title="Average Entry Price">⚓ Entry: <b>${fmtPosPrice(p.entryPrice)}</b></span>
           <span class="pos-lvl-tag mark" title="Live Mark Price">⚡ Mark: <b>${fmtPosPrice(currentPrice)}</b></span>
-          <span class="pos-lvl-tag sl" title="Stop Loss / Liquidation">🛑 SL: <b>${p.stopLoss > 0 ? fmtPosPrice(p.stopLoss) : (p.estimatedLiquidationPrice ? fmtPosPrice(p.estimatedLiquidationPrice) : '—')}</b></span>
+          <span class="pos-lvl-tag sl" style="border-color:rgba(239,68,68,0.5);color:#ef4444;" title="Hard On-Chain Stop Loss">🛑 Hard SL: <b>${fmtPosPrice(hardSlPrice)}</b></span>
+          <span class="pos-lvl-tag" style="border:1px solid rgba(16,185,129,0.5);background:rgba(16,185,129,0.12);color:#10b981;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;" title="Soft Dynamic Trailing Ratchet">🛡️ Ratchet: <b>${fmtPosPrice(ratchetPrice)}</b></span>
         </div>
       </div>
       <div class="pos-canvas-box">
@@ -14564,15 +14662,15 @@
       <div style="margin-bottom:7px">${(p.strategyTags || []).map(t => `<span class="strategy-tag">${t}</span>`).join('')}</div>
       <div class="strategy-stats">
         <div class="strategy-stat">
-          <div class="strategy-stat-val" style="color:var(--green)">+${(p.estimatedProfitPct || 0).toFixed(1)}%</div>
+          <div class="strategy-stat-val" style="color:var(--green)">+${cardEstProfit.toFixed(1)}%</div>
           <div class="strategy-stat-lbl">EST PROFIT</div>
         </div>
         <div class="strategy-stat">
-          <div class="strategy-stat-val" style="color:var(--red)">-${(p.estimatedLossPct || 0).toFixed(1)}%</div>
+          <div class="strategy-stat-val" style="color:var(--red)">-${cardEstLoss.toFixed(1)}%</div>
           <div class="strategy-stat-lbl">EST LOSS</div>
         </div>
         <div class="strategy-stat">
-          <div class="strategy-stat-val" style="color:var(--cyan)">${(p.estimatedWinRatePct || 0).toFixed(0)}%</div>
+          <div class="strategy-stat-val" style="color:var(--cyan)">${cardEstWinRate.toFixed(0)}%</div>
           <div class="strategy-stat-lbl">WIN RATE</div>
         </div>
       </div>
@@ -14844,19 +14942,60 @@
       renderHistory(rawHistoryTrades);
     }
 
+    async function syncOnChainTradesHistory(event) {
+      if (event) event.stopPropagation();
+      const btn = document.getElementById('sync-history-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Syncing Decibel...';
+      }
+      try {
+        const res = await fetch(API + '/api/trades/sync', { method: 'POST' });
+        const data = await res.json();
+        const synList = Array.isArray(data) ? data : (data?.trades || []);
+        if (synList && synList.length) {
+          lastTrades = synList;
+          renderHistory(synList);
+        } else {
+          const fresh = await fetch(API + '/api/trades').then(r => r.json());
+          const list = Array.isArray(fresh) ? fresh : (fresh?.trades || []);
+          if (list.length) {
+            lastTrades = list;
+            renderHistory(list);
+          }
+        }
+      } catch (err) {
+        console.error('History sync failed:', err);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '🔄 Sync On-Chain Trades';
+        }
+      }
+    }
+
     function renderHistory(trades) {
-      if (trades && Array.isArray(trades)) {
-        rawHistoryTrades = trades;
+      const list = Array.isArray(trades)
+        ? trades
+        : (Array.isArray(trades?.trades)
+            ? trades.trades
+            : (Array.isArray(trades?.data)
+                ? trades.data
+                : (Array.isArray(rawHistoryTrades) ? rawHistoryTrades : [])));
+      if (Array.isArray(list) && list.length > 0) {
+        rawHistoryTrades = list;
         try {
-          localStorage.setItem('alpha_trades_cache', JSON.stringify(trades));
+          localStorage.setItem('alpha_trades_cache', JSON.stringify(list));
         } catch (e) {}
+      } else if (Array.isArray(trades) && trades.length === 0) {
+        rawHistoryTrades = [];
       }
       const tbody = document.getElementById('history-tbody');
       const histMeta = document.getElementById('history-meta');
       if (!tbody) return;
 
       if (!rawHistoryTrades || !rawHistoryTrades.length) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text3);">No on-chain trades yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text3);">No on-chain trades yet. Click "🔄 Sync On-Chain Trades" to fetch recent settled fills.</td></tr>';
         if (histMeta) histMeta.textContent = '0 trades';
         return;
       }
