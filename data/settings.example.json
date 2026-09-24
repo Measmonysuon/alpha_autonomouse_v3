@@ -1,0 +1,34 @@
+{
+  "credentials": {
+    "decibelDelegateKey": "",
+    "decibelSubaccount": "",
+    "decibelNodeApiKey": "",
+    "decibelOwnerAddress": "",
+    "network": "mainnet"
+  },
+  "decibelSubaccount": "",
+  "decibelPrivateKey": "",
+  "decibelNetwork": "mainnet",
+  "ai": {
+    "enabled": true,
+    "provider": "gemini",
+    "model": "gemini-2.5-flash",
+    "apiKey": ""
+  },
+  "trading": {
+    "budgetUsd": 30,
+    "maxPositionUsd": 10,
+    "maxLeverage": 5,
+    "paperTrading": true
+  },
+  "telegram": {
+    "botToken": "",
+    "chatId": "",
+    "enabled": false
+  },
+  "security": {
+    "adminPassword": ""
+  },
+  "isConfigured": false,
+  "onboarded": false
+}

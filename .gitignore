@@ -1,0 +1,43 @@
+# ─── Secrets & Environment Files — NEVER commit ─────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+scripts/publish-release.js
+
+# ─── Runtime Data & State ───────────────────────────────────────
+data/*.json
+!data/settings.example.json
+!data/decibel-markets.json
+data/*.db
+data/*.db-*
+data/*.bak
+data/data/
+data/candles/
+
+# ─── Releases & Archives ────────────────────────────────────────
+release/
+*.zip
+*.tar.gz
+
+# ─── Logs & Scratchpads ─────────────────────────────────────────
+logs/
+*.log
+scratch/
+backups/
+
+# ─── Node / Build Output ────────────────────────────────────────
+node_modules
+node_modules/
+dist/
+dist
+build/
+__pycache__/
+*.pyc
+.venv/
+
+# ─── OS Files ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

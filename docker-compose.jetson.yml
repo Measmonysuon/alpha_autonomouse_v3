@@ -1,0 +1,44 @@
+services:
+  trading-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: decibel-trading-agent
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - OLLAMA_BASE_URL=http://127.0.0.1:11434
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./dist:/app/dist
+      - ./dashboard:/app/dashboard
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://127.0.0.1:5000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  gui-bridge:
+    image: ubuntu:22.04
+    container_name: jetson-gui-bridge
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /:/host
+      - /run/systemd/system:/run/systemd/system
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - ./data:/data
+      - ./scripts/jetson-gui-bridge.sh:/entrypoint.sh
+    entrypoint: [ "/entrypoint.sh" ]

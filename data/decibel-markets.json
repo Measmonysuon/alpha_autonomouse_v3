@@ -1,0 +1,659 @@
+{
+  "MEGA/USD": {
+    "name": "MEGA/USD",
+    "address": "0x11e39b4b5e3b88bcdaba2b31fa24037b7a910848d4e24f86d14e1df04cfd44f",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "CHIP/USD": {
+    "name": "CHIP/USD",
+    "address": "0x41e625ce4d11f63c462fc2f460ba7672dde3875e7a3f1ff5cb171f3d52e89d3",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "HYPE/USD": {
+    "name": "HYPE/USD",
+    "address": "0xc6b3fa01e6ee89b04fe3960d8d6377ebbe6caa8e47d87c2120dae1492044df2",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MSTR/USD": {
+    "name": "MSTR/USD",
+    "address": "0xcbba96c62fa179b522d8ae59a9486bab2cc36a91ae84fdc53489f655a82cb38",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "COPPER/USD": {
+    "name": "COPPER/USD",
+    "address": "0xf86fe23cca2ffc309a2712739963aeccbe1faf51a5a7afbfba5b0ede96992db",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "TSLA/USD": {
+    "name": "TSLA/USD",
+    "address": "0x11eecf0add3d26c4fb60ff2ea5617e73b8b5bf09fd981893bbc757407bd7551b",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "LIT/USD": {
+    "name": "LIT/USD",
+    "address": "0x1224d7626a51abdf110859d1f9404ad31be4ce5f57865439af46a7ed1caeac3e",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "FARTCOIN/USD": {
+    "name": "FARTCOIN/USD",
+    "address": "0x185f846107e7942b2b7f640f3c558f7db5865da3e30531f75bfb083038bfd610",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "NFLX/USD": {
+    "name": "NFLX/USD",
+    "address": "0x18a16e41203ebc40dcc26db65de703055b24ef10c08efcc501c17221f6724457",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "GOLD/USD": {
+    "name": "GOLD/USD",
+    "address": "0x18f396fb79ae57d2cb235c7f599433b441c96bd177eddb56c7782d2ef237bcae",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "XPL/USD": {
+    "name": "XPL/USD",
+    "address": "0x2d2116e2ebf7dc3f3873573474ce5251ca4a092b027c24b7d6c57f0b488ea243",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "WLFI/USD": {
+    "name": "WLFI/USD",
+    "address": "0x2f9cd9ceca483d847849d33d095b3e35ca333403f670e5eee65879356c0d569d",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ADA/USD": {
+    "name": "ADA/USD",
+    "address": "0x386bfa4f18abc8ca926b7ade89ad5aaad34cf9a0a8bd828b7059f17b252f8607",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "CRCL/USD": {
+    "name": "CRCL/USD",
+    "address": "0x44112e383d95f32ff726dc685943258ede0260dbb6c4239cce4455817ed7a0fb",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "TAO/USD": {
+    "name": "TAO/USD",
+    "address": "0x447062b56259df18ed4dd8fff890bc9e8ab8497af0c48e9ab3cfb97ea43361ab",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "EWY/USD": {
+    "name": "EWY/USD",
+    "address": "0x4aab2fc83d5cee7de9cf4c9b4b90f8c5c47dc56292c31188ce00364d42f2de51",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MU/USD": {
+    "name": "MU/USD",
+    "address": "0x4c212c1adb16bd2f3a2bb74806e71e98532da233ee94b4df39b71b78fbb2d5a1",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "GOOGL/USD": {
+    "name": "GOOGL/USD",
+    "address": "0x4c2e018abb313c0ff4a6f55f9f0b0d2b7169b18337749237d6f7434af1386291",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "DRAM/USD": {
+    "name": "DRAM/USD",
+    "address": "0x56e2216c054b37e1ea9ab7c07c3fb97da77e7936dbe2f6f8776f70ebe4d3c00b",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "AAVE/USD": {
+    "name": "AAVE/USD",
+    "address": "0x5cfcf06f3c133d71a0cc967736a03848be99919f7eca30fba94f4015a3a7267a",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "BTC/USD": {
+    "name": "BTC/USD",
+    "address": "0x5e0e16f34adfb4b316f8d532d68acbfa206826feaaa418d3938046bdc2044861",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ASML/USD": {
+    "name": "ASML/USD",
+    "address": "0x5e87c5b95fba04d44c399d028e03f02d2625a38ef5c25507985c3ec5b891b473",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "INTC/USD": {
+    "name": "INTC/USD",
+    "address": "0x60e902ea3db5ab1cad2c8f5fa2de1a03fb07500af431f8a975bcc5f4e34735c5",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "QCOM/USD": {
+    "name": "QCOM/USD",
+    "address": "0x66ffb0ea07b50fb4b9250fa1e22d165a5454048311ec7ec353635d7c3bf2db3f",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "AVAX/USD": {
+    "name": "AVAX/USD",
+    "address": "0x696289fb9fe35b78a7803fcd67e47f8e941d192b119196af62d89a3245f7e378",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "COIN/USD": {
+    "name": "COIN/USD",
+    "address": "0x696fa01d9b8b0ab91a710eed0587779450a13c64dcb3113db6cbe4d9ff792fe5",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "CBRS/USD": {
+    "name": "CBRS/USD",
+    "address": "0x6bd12af7a226a16437b3c3b6129045c9c44a419d1ed9ff422bfd111340d1d171",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ARM/USD": {
+    "name": "ARM/USD",
+    "address": "0x70f469b6532853ca3cce1ec4c66c2fc2aab2bc64b3e286501031d921a67cf47d",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "WTIOIL/USD": {
+    "name": "WTIOIL/USD",
+    "address": "0x731bd3aec9fe6598539eefeb4c77b784f5b47201453bd6ad0f3f6de6effc28fa",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SKHYNIX/USD": {
+    "name": "SKHYNIX/USD",
+    "address": "0x7387f27a8042de2c952bae9da12a0213404225b9a7833daa5ab40012510ebce7",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MSFT/USD": {
+    "name": "MSFT/USD",
+    "address": "0x7a4f28cc8e9d72614cff0522c15e6603b0a8d14706ea53e1458586a25bf36122",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "BABA/USD": {
+    "name": "BABA/USD",
+    "address": "0x7fedb9f425fc07844ab253745761bbed742d647b183355068c422b60abbada2c",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "PUMP/USD": {
+    "name": "PUMP/USD",
+    "address": "0x81019eb8511f3add359a4560c9be2ee3d68c69c4f6b01a38fcf11f634c886bee",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "QQQ/USD": {
+    "name": "QQQ/USD",
+    "address": "0x8eef5222689f00c4fcbbaec2ff3f3e92ab41d8b89f1828c2f779700fc0e82eac",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SNDK/USD": {
+    "name": "SNDK/USD",
+    "address": "0x90a6dc9f2ccbd29742afdefe3a89a0d4e7125c1ac3d8a5fffa3b8cb589d6e799",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ETH/USD": {
+    "name": "ETH/USD",
+    "address": "0x96c3c2e77041264d082d03365e9c346fbc6be9c9428a401be8e70dcb60dc60c6",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "UBER/USD": {
+    "name": "UBER/USD",
+    "address": "0x9ab308bfde9f625697576723ef0fc8ed86a816f50e909dc4eb0a950b17c80a5c",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MRNA/USD": {
+    "name": "MRNA/USD",
+    "address": "0x9badfcb283a7878c8c86e88059472a2553634d790a284c3538d629220ce35f15",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "BNB/USD": {
+    "name": "BNB/USD",
+    "address": "0xa0b805baf5e69adbb717e3daefe71f5ebaae708dd480fbb964ad324f9c5e6490",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "LDO/USD": {
+    "name": "LDO/USD",
+    "address": "0xa6475e3a90b70efabb65d7fe4855db29812b6596d2f4789c0492a173a1b72794",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "HOOD/USD": {
+    "name": "HOOD/USD",
+    "address": "0xa8580b4a105e27e3ca2b3890525148825dfd4b56ee8be19d493c9743f248418d",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "KPEPE/USD": {
+    "name": "kPEPE/USD",
+    "address": "0xadd54349a08430067cd5a6e32815faaf9d9f595a6e44bdc59d553a2b61fe1ac1",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "TRUMP/USD": {
+    "name": "TRUMP/USD",
+    "address": "0xae0378bc77fa1b8af3549024a91415342fcce604e75ad0621515b1c3c965e20e",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ZEC/USD": {
+    "name": "ZEC/USD",
+    "address": "0xaef108ea0590464effd25054e2e1b66b6ea8be088c479da63518983e4728282b",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "META/USD": {
+    "name": "META/USD",
+    "address": "0xb140b7b98d21f0d2a001160c3a08ed928a79fa743bbe5578010918fab6305876",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "UNI/USD": {
+    "name": "UNI/USD",
+    "address": "0xb2dc1614214ffbb0eba2b112404184332b6b1d63754b3e601dcda2eac0299d72",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SPY/USD": {
+    "name": "SPY/USD",
+    "address": "0xb4c1717658713ad5cffab87b6921ca51b66e753e2249c58089cf0631248ec6f9",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "NVDA/USD": {
+    "name": "NVDA/USD",
+    "address": "0xba75819769a69d5d98fbc038ab964bea5ac691168bdcbb0a8815412c60527bb6",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "DELL/USD": {
+    "name": "DELL/USD",
+    "address": "0xc14841a32ba6869dbadf72bb8a86fa5d9fc5538bb8e48fab679b7068f6b9d6f9",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "PLTR/USD": {
+    "name": "PLTR/USD",
+    "address": "0xc210b8eac08d8d18541f86864186ec46df61c5253ea06a3707a12f5abdd20b05",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "NEAR/USD": {
+    "name": "NEAR/USD",
+    "address": "0xc29172db08345aceadb2306320c3239a212d55fdb6c728109a0de62864c4a02f",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "AAPL/USD": {
+    "name": "AAPL/USD",
+    "address": "0xc591c3c4529461b64b6a41567e8be44b6a13765f653af22b038a8e7b8b76d878",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "AMD/USD": {
+    "name": "AMD/USD",
+    "address": "0xc749b195b4939ffa4fce7e02a5e7729784162c18527495fda1054e6ed6b899ce",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "LLY/USD": {
+    "name": "LLY/USD",
+    "address": "0xc97664f20260fc89070fa40bd37d63739f1b2d63d85d50a4a8da842b01a3b5d1",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SAMSUNG/USD": {
+    "name": "SAMSUNG/USD",
+    "address": "0xcb445b0c43a53355820c96b7f8b1d4304957a033af0492f7dbfe425bd288b219",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MON/USD": {
+    "name": "MON/USD",
+    "address": "0xcd4aa24184878b4d741ecd5ff8cabfb71a04ca8ff1aacb52d7e7fd6c0ae51b33",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "LINK/USD": {
+    "name": "LINK/USD",
+    "address": "0xcf99921aced56e32ddc907b9b16bf13601ac247e0090adc4cc728b6fa9e770cf",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SPCX/USD": {
+    "name": "SPCX/USD",
+    "address": "0xd279aca832542e097082d3905739983c74497d8f34319938464d94db4c8314c2",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "XRP/USD": {
+    "name": "XRP/USD",
+    "address": "0xd3223402bb7b156fad9a645a8c114a5e08eda8e492a38e42db1b0df1d3ba1058",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ORCL/USD": {
+    "name": "ORCL/USD",
+    "address": "0xd3f6b50b589bdf4cbc32fca69f8c7675cd281a157d78746a48c91dc63a3634f4",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "DOGE/USD": {
+    "name": "DOGE/USD",
+    "address": "0xd62d10d1ef0cbe2103b5bd479691ac38222a85140fcbe7c2dc66ed23bdef58ae",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SILVER/USD": {
+    "name": "SILVER/USD",
+    "address": "0xd71460d804aea8f0fe0e284ce11bd84273076d5a1c13a985d7deb7ce2e6d4efe",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "APT/USD": {
+    "name": "APT/USD",
+    "address": "0xda8615922bac85a53811e845ce39110713be6d80366f4477d5427002ac0162e3",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MORPHO/USD": {
+    "name": "MORPHO/USD",
+    "address": "0xdcd6c6ff77409f5a7825094965fa5f75d6086ec3e529bab782d3f2d49863c6b2",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "MRVL/USD": {
+    "name": "MRVL/USD",
+    "address": "0xdd9b09a0c92f1ea6bb56cd304f0c8a637723a4f251c28bf0d85799b2df2c15f4",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SOL/USD": {
+    "name": "SOL/USD",
+    "address": "0xdf3f9b3241aaf20c47e99eac29f3ff2f736e40644c856e0db612a22e62b847f3",
+    "tickSize": 10000,
+    "minSize": 200000,
+    "lotSize": 10000,
+    "sizeDecimals": 7,
+    "priceDecimals": 6
+  },
+  "ZRO/USD": {
+    "name": "ZRO/USD",
+    "address": "0xe191d266c868d52b71e0f51d87ce04bddd1238aacf8236e3967735da22074b97",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "AMZN/USD": {
+    "name": "AMZN/USD",
+    "address": "0xe20f26fa09b7bde2c735d897379d93adc3ccd330120a05e760b3fa45bcaeb284",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "IBM/USD": {
+    "name": "IBM/USD",
+    "address": "0xe302b7b7500015e961d68fbbdebbe68d62fb10ad82e92158efe795bdb4b4cd46",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "SUI/USD": {
+    "name": "SUI/USD",
+    "address": "0xe7da11926e61dbd227170d1271f73bfaf9f5aab7605fac1ae62541dd3810ae76",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "TRX/USD": {
+    "name": "TRX/USD",
+    "address": "0xe8b16194b75213292454fcff0b890e2f3289e40904d2edcd1b2e491464540c73",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "ENA/USD": {
+    "name": "ENA/USD",
+    "address": "0xea66271149165e2345aae2fee6f323ec33ce4ec1bceaf96b98e44e848f15d7ce",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  },
+  "NATGAS/USD": {
+    "name": "NATGAS/USD",
+    "address": "0xf8e0db24683f4cf611e262aa1720e324cdfc5d4b4e15be485ddbe47054b737e1",
+    "tickSize": 100,
+    "minSize": 100000,
+    "lotSize": 10000,
+    "sizeDecimals": 5,
+    "priceDecimals": 6
+  }
+}

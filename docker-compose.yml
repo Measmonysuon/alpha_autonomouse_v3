@@ -1,0 +1,41 @@
+services:
+  trading-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: alpha-client-v3:local
+    container_name: alpha-client-v3
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - HEALTH_PORT=5000
+      - CLIENT_ID=alpha_client_v2
+      - CLIENT_NAME=Finland Server - Decibel Account
+      - SIM_PIPELINE_URL=${SIM_PIPELINE_URL:-https://simlab.measmony.me/api/pipeline/alpha-bundle}
+      - SIM_TELEMETRY_URL=${SIM_TELEMETRY_URL:-https://simlab.measmony.me/api/pipeline/telemetry}
+      - SIM_PIPELINE_FALLBACK_URL=${SIM_PIPELINE_FALLBACK_URL:-https://simlab.measmony.me/api/pipeline/alpha-bundle}
+      - SIM_TELEMETRY_FALLBACK_URL=${SIM_TELEMETRY_FALLBACK_URL:-https://simlab.measmony.me/api/pipeline/telemetry}
+      - SIMLAB_SERVER_URL=${SIMLAB_SERVER_URL:-https://simlab.measmony.me}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Port 5050 eliminates macOS AirPlay/ControlCenter port 5000 collision
+      - "5050:5000"
+    volumes:
+      - ./src:/app/src
+      - ./dashboard:/app/dashboard
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
