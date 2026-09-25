@@ -9944,21 +9944,21 @@
         </div>
       </div>
 
-      <!-- Modal Tabs Navigation (Tab 2: Live Position Radar, Tab 3: Supercharge Learning & Audit) -->
+      <!-- Modal Tabs Navigation (Tab 1: Live Position Radar, Tab 2: Supercharge Learning & Audit, Tab 3: In-Trade Controls) -->
       <div class="harvest-modal-tabs">
-        <button class="harvest-modal-tab active" id="btn-htab-controls" onclick="switchHarvestModalTab('controls')">
-          ⚙️ In-Trade Controls
-        </button>
-        <button class="harvest-modal-tab" id="btn-htab-radar" onclick="switchHarvestModalTab('radar')">
+        <button class="harvest-modal-tab active" id="btn-htab-radar" onclick="switchHarvestModalTab('radar')">
           🎯 Live Position Radar
         </button>
         <button class="harvest-modal-tab" id="btn-htab-learning" onclick="switchHarvestModalTab('learning')">
           🧠 Supercharge Learning &amp; Audit
         </button>
+        <button class="harvest-modal-tab" id="btn-htab-controls" onclick="switchHarvestModalTab('controls')">
+          ⚙️ In-Trade Controls
+        </button>
       </div>
 
       <div class="intel-body" style="padding: 16px; max-height: 80vh; overflow-y: auto;">
-        <!-- Tab 1: In-Trade Controls -->
+        <!-- Tab 1: Live Position Radar -->
         <div id="htab-content-controls" style="display:flex; flex-direction:column; gap:14px;">
           <!-- Portfolio Invariant Bar -->
           <div class="harvest-control-card"
@@ -11741,6 +11741,7 @@
       const modal = document.getElementById('harvest-modal-backdrop');
       if (!modal) return;
       modal.style.display = 'flex';
+      switchHarvestModalTab('radar');
       updateHarvestControlInputLocks();
       refreshHarvestModalData();
     }
@@ -11754,7 +11755,7 @@
     }
 
     function switchHarvestModalTab(tab) {
-      const tabs = ['controls', 'radar', 'learning'];
+      const tabs = ['radar', 'learning', 'controls'];
       for (const t of tabs) {
         const btn = document.getElementById('btn-htab-' + t);
         const content = document.getElementById('htab-content-' + t);
@@ -11933,25 +11934,25 @@
       // Style
       selectHarvestExecutionStyle(cfg.executionStyle || 'PARTIAL_FIRST', /* forceByData */ true);
 
-      // 2. Learning & Audit Tab State (Populated only when Supercharge is active)
-      const audit = isSupercharged && (harv.audit || learn?.learning?.harvestAudit) ? (harv.audit || learn?.learning?.harvestAudit) : {
+      // 2. Learning & Audit Tab State (Populated for both Standalone and Supercharged modes)
+      const audit = (harv && harv.audit) || (learn && learn.learning && learn.learning.harvestAudit) || {
         totalEvaluated: 0,
         reversalsAvoidedCount: 0,
         runnersCapturedCount: 0,
         continuationsMissedCount: 0,
-        avgEfficiencyPct: isSupercharged ? 100 : 0,
-        aiHarvesterRecommendation: isSupercharged ? 'Harvest exits are aligned with current market volatility.' : 'Supercharge Disconnected: Connect in Supercharge tab to activate real-time calibrations.',
+        avgEfficiencyPct: 100,
+        aiHarvesterRecommendation: 'Harvest exits are aligned with current market volatility.',
         evaluations: [],
       };
 
       const elRev = document.getElementById('audit-val-reversals');
-      if (elRev) elRev.textContent = isSupercharged ? (audit.reversalsAvoidedCount || 0) : '—';
+      if (elRev) elRev.textContent = audit.reversalsAvoidedCount ?? 0;
       const elRun = document.getElementById('audit-val-runners');
-      if (elRun) elRun.textContent = isSupercharged ? (audit.runnersCapturedCount || 0) : '—';
+      if (elRun) elRun.textContent = audit.runnersCapturedCount ?? 0;
       const elMis = document.getElementById('audit-val-missed');
-      if (elMis) elMis.textContent = isSupercharged ? (audit.continuationsMissedCount || 0) : '—';
+      if (elMis) elMis.textContent = audit.continuationsMissedCount ?? 0;
       const elEff = document.getElementById('audit-val-efficiency');
-      if (elEff) elEff.textContent = isSupercharged ? ((audit.avgEfficiencyPct || 100) + '%') : 'Inactive';
+      if (elEff) elEff.textContent = (audit.avgEfficiencyPct ?? 100) + '%';
 
       const elRec = document.getElementById('harvest-audit-recommendation');
       if (elRec) elRec.textContent = audit.aiHarvesterRecommendation || 'Harvest exits are aligned with current market volatility.';
@@ -15210,8 +15211,12 @@
     `;
       }
 
-      // Filter
+      // Filter out pure entry fill stubs ($0 PnL open events) so history displays active open positions and settled trades (Client v1 blueprint)
       const filtered = normalized.filter(t => {
+        const isOpenFillStub = (t.isOpenFill || String(t.action || '').toUpperCase().startsWith('OPEN')) && t.pnl === 0 && !t.closed_at && !t.exit_price && !t.exitReason && !t.exit_reason;
+        if (isOpenFillStub) {
+          return false;
+        }
         if (currentHistoryFilter === 'auto') return !t.isManual;
         if (currentHistoryFilter === 'manual') return !!t.isManual;
         return true;
@@ -15237,28 +15242,33 @@
         // Close reason badge
         const rawReason = String(t.exit_reason || t.exitReason || (t.status === 'closed_tp' ? 'TP' : t.status === 'closed_sl' ? 'SL' : (t.status === 'closed_manual' ? 'MANUAL' : ''))).toUpperCase();
         let reasonBadge = `<span class="trade-reason-pill dex" title="Settled on DEX">⛓️ DEX</span>`;
-        const isProfitableExit = Number(t.pnl) >= 0;
-        const isRunnerWin = Number(t.pnl) > 0.05;
-        if (t.status === 'open') {
+        const pnlNum = Number(t.pnl || 0);
+        const isProfitableExit = pnlNum > 0.005;
+        const isLossExit = pnlNum < -0.005;
+        const isRunnerWin = pnlNum > 0.05;
+
+        if (t.status === 'open' || t.status === 'OPEN') {
           reasonBadge = `<span class="trade-reason-pill open" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);color:#38bdf8;" title="Active Open Position">🟢 ACTIVE</span>`;
         } else if (rawReason.includes('TRAILING') || (rawReason.includes('SL') && isRunnerWin)) {
           reasonBadge = `<span class="trade-reason-pill harvest" title="Trailing Stop Protected Profit">🌾 TRAILING SL</span>`;
-        } else if (rawReason.includes('BREAKEVEN') || ((rawReason.includes('SL') || rawReason === 'CLOSED_SL') && (t.breakevenMoved || t.breakeven_moved || isProfitableExit))) {
+        } else if (rawReason.includes('BREAKEVEN') || (rawReason.includes('SL') && !isLossExit && !isRunnerWin && pnlNum >= 0)) {
           reasonBadge = `<span class="trade-reason-pill be" title="Breakeven Stop Hit">🛡️ BREAKEVEN</span>`;
-        } else if (rawReason.includes('TP') || t.status === 'closed_tp') {
-          reasonBadge = `<span class="trade-reason-pill tp" title="Take Profit Hit">🎯 TP</span>`;
         } else if (rawReason.includes('HARVEST')) {
           reasonBadge = `<span class="trade-reason-pill harvest" title="Master Harvester Take-Profit">🌾 HARVEST</span>`;
-        } else if (rawReason.includes('SL') || t.status === 'closed_sl' || t.pnl < 0) {
+        } else if (rawReason.includes('TP') || t.status === 'closed_tp' || (rawReason.includes('DEX') && isProfitableExit)) {
+          reasonBadge = `<span class="trade-reason-pill tp" title="Take Profit Hit">🎯 TP</span>`;
+        } else if (rawReason.includes('SL') || t.status === 'closed_sl' || (rawReason.includes('DEX') && isLossExit)) {
           reasonBadge = `<span class="trade-reason-pill sl" title="Stop Loss Hit">🛑 SL</span>`;
         } else if (rawReason.includes('LIQ')) {
           reasonBadge = `<span class="trade-reason-pill liq" title="On-Chain Liquidation">⚠️ LIQ</span>`;
         } else if (rawReason.includes('STAGNATION') || rawReason.includes('TIME')) {
           reasonBadge = `<span class="trade-reason-pill time" title="Time Stagnation Exit">⏱️ TIME</span>`;
-        } else if (rawReason.includes('MANUAL')) {
+        } else if (rawReason.includes('MANUAL') || t.isManual) {
           reasonBadge = `<span class="trade-reason-pill manual" title="Manual User / External DEX Close">👤 MANUAL</span>`;
-        } else if (t.pnl > 0) {
+        } else if (isProfitableExit) {
           reasonBadge = `<span class="trade-reason-pill tp" title="Take Profit Hit">🎯 TP</span>`;
+        } else if (isLossExit) {
+          reasonBadge = `<span class="trade-reason-pill sl" title="Stop Loss Hit">🛑 SL</span>`;
         }
 
         const subaccount = (window._subaccount || lastState?.subaccount || '0xcc2a2641d3246ace078fb1792c4ae203cbf3587235bdb2257acc2fb2f8275b19');

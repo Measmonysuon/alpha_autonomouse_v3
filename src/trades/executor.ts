@@ -456,23 +456,32 @@ export class TradeExecutor {
           (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status === 'open',
         );
 
-        // If not found open, check if a recent closed trade can be revived rather than creating a duplicate
+        // If not found open, check if a recent closed trade can be revived (only if un-intentional RPC dropout)
         if (!existing) {
           const recentClosed = this.tradesCache.find(
             (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status !== 'open' && (t.closedAt ? Date.now() - t.closedAt < 600000 : false),
           );
           if (recentClosed) {
-            recentClosed.status = 'open';
-            delete recentClosed.closedAt;
-            delete recentClosed.exitPrice;
-            delete recentClosed.exitReason;
-            // Guard: If Stop Loss was unset or invalid, initialize to safe default
-            if (recentClosed.stopLoss <= 0) {
-              recentClosed.stopLoss = hardSl;
+            const isIntentionalClose = recentClosed.exitReason && !['ON_CHAIN_DEX_CLOSE', 'DEX_EXTERNAL', 'EXTERNAL_INDEXER_DROPOUT'].includes(recentClosed.exitReason);
+            if (!isIntentionalClose && (recentClosed.closedAt ? Date.now() - recentClosed.closedAt < 30000 : false)) {
+              recentClosed.status = 'open';
+              delete recentClosed.closedAt;
+              delete recentClosed.exitPrice;
+              delete recentClosed.exitReason;
+              if (recentClosed.stopLoss <= 0) {
+                recentClosed.stopLoss = hardSl;
+              }
+              existing = recentClosed;
+              modified = true;
+              logger.info(`🔄 [RECONCILE] Restored persistent open position: ${existing.symbol} ${existing.action} (id: ${existing.id})`);
+            } else if (isIntentionalClose) {
+              logger.warn(`⚠️ [RECONCILE] Position ${pos.symbol} was intentionally closed locally (${recentClosed.exitReason}) but remains in DEX state. Retrying on-chain close...`);
+              mcpClient.closePosition(pos.symbol).catch((err: any) => {
+                logger.error(`[RECONCILE] Failed to retry on-chain close for ${pos.symbol}: ${err.message}`);
+              });
+              // Do NOT set existing and do NOT ingest a duplicate trade
+              continue;
             }
-            existing = recentClosed;
-            modified = true;
-            logger.info(`🔄 [RECONCILE] Restored persistent open position: ${existing.symbol} ${existing.action} (id: ${existing.id})`);
           }
         }
 
@@ -956,11 +965,11 @@ export class TradeExecutor {
       } catch { }
     }
 
-    // Maker-First: place tightly at mark price (+/- 0.03%) to act as Maker (0% taker fees)
-    // If refPrice is available, use GTC limit order (TIF 0) so it rests or fills cleanly without aborting
-    const makerOffset = 0.0003;
+    // Immediate-Or-Cancel (IOC, TIF 2): execute instantly at mark price with 0.2% slippage buffer
+    // Prevents unfilled limit orders from resting on the orderbook while local state tracks as open
+    const takerSlippage = 0.002;
     const limitPrice = refPrice > 0
-      ? (isBuy ? refPrice * (1 - makerOffset) : refPrice * (1 + makerOffset))
+      ? (isBuy ? refPrice * (1 + takerSlippage) : refPrice * (1 - takerSlippage))
       : 0;
 
     const chainPrice = limitPrice > 0
@@ -988,7 +997,7 @@ export class TradeExecutor {
 
     const clientOrderId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-    logger.info(`⚡ [ON-CHAIN GTC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (GTC Limit Order)`);
+    logger.info(`⚡ [ON-CHAIN IOC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (IOC Market Execution)`);
 
     const sendTx = async (): Promise<string> => {
       const client = this.getAptos();
@@ -1003,7 +1012,7 @@ export class TradeExecutor {
             chainPrice,
             chainSize,
             isBuy,
-            0, // TimeInForce: 0 = GoodTillCanceled (GTC)
+            2, // TimeInForce: 2 = ImmediateOrCancel (IOC)
             false,
             clientOrderId,
             null, // stop_price

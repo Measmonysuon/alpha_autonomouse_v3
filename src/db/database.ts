@@ -414,19 +414,19 @@ class TradeDatabase {
             this.db.prepare(`
               UPDATE trades 
               SET tx_version = COALESCE(?, tx_version),
-                  exit_price = ?,
-                  closed_at = ?,
+                  exit_price = CASE WHEN ? > 0 THEN ? ELSE exit_price END,
+                  closed_at = CASE WHEN closed_at IS NULL OR closed_at = 0 THEN ? ELSE closed_at END,
                   fee_usd = fee_usd + ?,
-                  realized_pnl = ?,
-                  status = ?,
-                  exit_reason = ?,
-                  strategy_name = ?,
+                  realized_pnl = CASE WHEN realized_pnl = 0 THEN ? ELSE realized_pnl END,
+                  status = CASE WHEN status IS NOT NULL AND status != '' AND status NOT IN ('closed', 'CLOSED') THEN status ELSE ? END,
+                  exit_reason = CASE WHEN exit_reason IS NOT NULL AND exit_reason != '' AND exit_reason != 'ON_CHAIN_DEX_CLOSE' THEN exit_reason ELSE ? END,
+                  strategy_name = COALESCE(strategy_name, ?),
                   is_manual = CASE WHEN ? = 1 THEN 0 ELSE is_manual END,
-                  raw_onchain_data = ?,
-                  action = ?,
-                  side = ?
+                  raw_onchain_data = COALESCE(raw_onchain_data, ?),
+                  action = COALESCE(action, ?),
+                  side = COALESCE(side, ?)
               WHERE id = ?
-            `).run(txVersion || null, price, timestamp, fee, pnl, finalStatus, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
+            `).run(txVersion || null, price, price, timestamp, fee, pnl, finalStatus.toLowerCase(), smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
           } else {
             // Open fill updates entry parameters
             this.db.prepare(`

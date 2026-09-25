@@ -84,6 +84,35 @@ export interface PositionHarvesterInfo {
   isManual?: boolean;
 }
 
+export interface HarvestEvaluationRecord {
+  id: string;
+  symbol: string;
+  action: 'LONG' | 'SHORT';
+  harvestType: '50%_SCALE_OUT' | 'FULL_HARVEST' | 'MANUAL_HARVEST' | 'SWEEP_ALL' | 'POSITION_CLOSE';
+  entryPrice: number;
+  exitPrice: number;
+  netPnlUsd: number;
+  netPnlPct: number;
+  score: number;
+  factors: string[];
+  timestamp: number;
+  mfePostExitPct?: number;
+  maePostExitPct?: number;
+  marketOutcome?: 'REVERSED_AVOIDED_LOSS' | 'CONTINUED_RUNNER_CAPTURED' | 'CONTINUED_MISSED_PROFIT' | 'CHOP_STAGNANT';
+  evaluatedAt?: number;
+}
+
+export interface PostHarvestAuditSummary {
+  totalEvaluated: number;
+  reversalsAvoidedCount: number;
+  continuationsMissedCount: number;
+  runnersCapturedCount: number;
+  chopStagnantCount: number;
+  avgEfficiencyPct: number;
+  aiHarvesterRecommendation: string;
+  evaluations: HarvestEvaluationRecord[];
+}
+
 export interface PortfolioHarvesterState {
   config: HarvesterConfig;
   status: 'ARMED' | 'MONITORING' | 'TRIGGER_READY' | 'PAUSED';
@@ -93,6 +122,7 @@ export interface PortfolioHarvesterState {
   positions: Record<string, PositionHarvesterInfo>;
   positionsList: PositionHarvesterInfo[];
   lastHarvestAt?: number;
+  audit?: PostHarvestAuditSummary;
 }
 
 export interface SimHarvesterCalibration {
@@ -555,6 +585,8 @@ export class PortfolioHarvester {
       status = 'ARMED';
     }
 
+    const audit = this.auditPostHarvestExits(livePrices);
+
     return {
       config: this.config,
       status,
@@ -564,6 +596,158 @@ export class PortfolioHarvester {
       positions: positionsMap,
       positionsList,
       lastHarvestAt: this.lastHarvestAt,
+      audit,
+    };
+  }
+
+  private loadHarvestEvaluations(): HarvestEvaluationRecord[] {
+    try {
+      const EVALUATIONS_FILE_PATH = path.resolve(process.cwd(), 'data/harvest-evaluations.json');
+      if (fs.existsSync(EVALUATIONS_FILE_PATH)) {
+        const raw = fs.readFileSync(EVALUATIONS_FILE_PATH, 'utf-8');
+        return JSON.parse(raw);
+      }
+    } catch (err: any) {
+      logger.error(`❌ [HARVEST EVAL] Failed to load evaluations: ${err.message}`);
+    }
+    return [];
+  }
+
+  private saveHarvestEvaluations(records: HarvestEvaluationRecord[]): void {
+    try {
+      const EVALUATIONS_FILE_PATH = path.resolve(process.cwd(), 'data/harvest-evaluations.json');
+      fs.mkdirSync(path.dirname(EVALUATIONS_FILE_PATH), { recursive: true });
+      fs.writeFileSync(EVALUATIONS_FILE_PATH, JSON.stringify(records.slice(-200), null, 2), 'utf-8');
+    } catch (err: any) {
+      logger.error(`❌ [HARVEST EVAL] Failed to save evaluations: ${err.message}`);
+    }
+  }
+
+  public recordHarvestEvaluation(
+    record: Omit<HarvestEvaluationRecord, 'id'> & { id?: string }
+  ): HarvestEvaluationRecord {
+    const evaluations = this.loadHarvestEvaluations();
+    const newRecord: HarvestEvaluationRecord = {
+      id: record.id || `heval-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      ...record,
+      timestamp: record.timestamp || Date.now(),
+      evaluatedAt: Date.now(),
+    };
+    evaluations.push(newRecord);
+    this.saveHarvestEvaluations(evaluations);
+    logger.info(
+      `📝 [HARVEST EVAL RECORD] Recorded exit evaluation for ${newRecord.symbol} (${newRecord.harvestType}) at $${newRecord.exitPrice}. ` +
+      `Net P&L: +$${newRecord.netPnlUsd.toFixed(2)} (${newRecord.netPnlPct}%). Score: ${newRecord.score}`
+    );
+    return newRecord;
+  }
+
+  public auditPostHarvestExits(livePrices: Record<string, number> = {}): PostHarvestAuditSummary {
+    const evaluations = this.loadHarvestEvaluations();
+    let changed = false;
+
+    // Auto-ingest any closed trades from tradeExecutor into evaluations
+    try {
+      const closedTrades = tradeExecutor.getClosedTrades();
+      for (const ct of closedTrades) {
+        const exists = evaluations.some((e) => e.id === ct.id || (e.symbol === ct.symbol && Math.abs(e.timestamp - (ct.closedAt || ct.openedAt)) < 5000));
+        if (!exists && ct.exitPrice && ct.exitPrice > 0) {
+          evaluations.push({
+            id: ct.id,
+            symbol: ct.symbol,
+            action: ct.action,
+            harvestType: ct.exitReason?.includes('HARVEST') ? 'FULL_HARVEST' : (ct.tp1Hit ? '50%_SCALE_OUT' : 'POSITION_CLOSE'),
+            entryPrice: ct.entryPrice,
+            exitPrice: ct.exitPrice,
+            netPnlUsd: ct.pnlUsd || 0,
+            netPnlPct: ct.pnlPct || 0,
+            score: ct.confidence || 75,
+            factors: [ct.exitReason || ct.status || 'CLOSED'],
+            timestamp: ct.closedAt || Date.now(),
+            evaluatedAt: Date.now(),
+          });
+          changed = true;
+        }
+      }
+    } catch {}
+
+    let reversalsAvoided = 0;
+    let continuationsMissed = 0;
+    let runnersCaptured = 0;
+    let chopStagnant = 0;
+    const now = Date.now();
+
+    for (const rec of evaluations) {
+      const currentPrice = livePrices[rec.symbol] || livePrices[rec.symbol.replace('-', '/')] || this.lastLivePrices[rec.symbol] || rec.exitPrice;
+      if (!currentPrice || rec.exitPrice <= 0) {
+        if (rec.marketOutcome === 'REVERSED_AVOIDED_LOSS') reversalsAvoided++;
+        else if (rec.marketOutcome === 'CONTINUED_MISSED_PROFIT') continuationsMissed++;
+        else if (rec.marketOutcome === 'CONTINUED_RUNNER_CAPTURED') runnersCaptured++;
+        else if (rec.marketOutcome === 'CHOP_STAGNANT') chopStagnant++;
+        continue;
+      }
+
+      const isLong = rec.action === 'LONG';
+      const postExitMovePct = isLong
+        ? ((currentPrice - rec.exitPrice) / rec.exitPrice) * 100
+        : ((rec.exitPrice - currentPrice) / rec.exitPrice) * 100;
+
+      const pullbackToEntryPct = isLong
+        ? ((rec.entryPrice - currentPrice) / rec.entryPrice) * 100
+        : ((currentPrice - rec.entryPrice) / rec.entryPrice) * 100;
+
+      if (rec.mfePostExitPct === undefined || postExitMovePct > rec.mfePostExitPct) {
+        rec.mfePostExitPct = Number(postExitMovePct.toFixed(2));
+        changed = true;
+      }
+      if (rec.maePostExitPct === undefined || -postExitMovePct > rec.maePostExitPct) {
+        rec.maePostExitPct = Number((-postExitMovePct).toFixed(2));
+        changed = true;
+      }
+
+      if (pullbackToEntryPct >= 0 || postExitMovePct <= -1.0) {
+        rec.marketOutcome = 'REVERSED_AVOIDED_LOSS';
+        reversalsAvoided++;
+      } else if (postExitMovePct >= 1.5) {
+        if (rec.harvestType === '50%_SCALE_OUT') {
+          rec.marketOutcome = 'CONTINUED_RUNNER_CAPTURED';
+          runnersCaptured++;
+        } else {
+          rec.marketOutcome = 'CONTINUED_MISSED_PROFIT';
+          continuationsMissed++;
+        }
+      } else {
+        rec.marketOutcome = 'CHOP_STAGNANT';
+        chopStagnant++;
+      }
+      rec.evaluatedAt = now;
+      changed = true;
+    }
+
+    if (changed) {
+      this.saveHarvestEvaluations(evaluations);
+    }
+
+    const total = evaluations.length;
+    const efficientExits = reversalsAvoided + runnersCaptured + chopStagnant;
+    const avgEfficiencyPct = total > 0 ? Number(((efficientExits / total) * 100).toFixed(1)) : 100;
+
+    let recommendation = 'Harvest system operating in balance. Banked profits safely while maintaining runner participation.';
+    if (reversalsAvoided > continuationsMissed * 2 && reversalsAvoided > 0) {
+      recommendation = `🎯 HIGH DEFENSIVE VALUE: Harvest exits prevented giving back profits in ${reversalsAvoided} trades that subsequently reversed. Keep current thresholds.`;
+    } else if (continuationsMissed > reversalsAvoided && continuationsMissed >= 2) {
+      recommendation = `💡 PROFIT RUNAWAY DETECTED: Market continued in favorable direction on ${continuationsMissed} full exits. Recommend switching Execution Style to '50% Scale-Out' to capture runners.`;
+    }
+
+    return {
+      totalEvaluated: total,
+      reversalsAvoidedCount: reversalsAvoided,
+      continuationsMissedCount: continuationsMissed,
+      runnersCapturedCount: runnersCaptured,
+      chopStagnantCount: chopStagnant,
+      avgEfficiencyPct,
+      aiHarvesterRecommendation: recommendation,
+      evaluations: evaluations.slice(-20).reverse(),
     };
   }
 
