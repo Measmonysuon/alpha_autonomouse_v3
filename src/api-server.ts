@@ -1394,6 +1394,17 @@ function triggerBackgroundOnChainSync(): void {
             entry_rationale: found.entryRationale || found.notes || '15m Structure: Institutional Break of Structure (BOS) trend continuation (+5%)\n1h Macro Trend: Aligned with directional momentum\nOrder Book: Ask-depth absorbed, high RVOL regime\nAI Shield Verdict: PASS with conviction bonus awarded',
             exit_reason: found.exitReason || found.notes || (pnl > 0.05 ? 'ON_CHAIN_TP' : (pnl > 0 ? 'BREAKEVEN' : (pnl < 0 ? 'ON_CHAIN_SL' : 'DEX_SETTLED'))),
             tx_version: found.txHash || found.tx_version,
+            takeProfit: found.takeProfit,
+            takeProfit1: found.takeProfit1,
+            takeProfit2: found.takeProfit2,
+            stopLoss: found.stopLoss,
+            hardStopLoss: found.hardStopLoss,
+            softRatchetPrice: found.softRatchetPrice,
+            tp1Hit: found.tp1Hit,
+            breakevenMoved: found.breakevenMoved,
+            partialRealizedPnlUsd: found.partialRealizedPnlUsd,
+            lifecycleEvents: found.lifecycleEvents || [],
+            exitSummary: found.exitSummary || '',
           };
         }
       }

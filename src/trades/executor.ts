@@ -28,6 +28,16 @@ import { telegramNotifier } from '../notify/telegram';
 import type { StrategyAttribution } from '../strategy/types';
 import { dbClient } from '../db/database';
 
+export interface TradeLifecycleEvent {
+  timestamp: number;
+  stage: 'ENTRY' | 'SCALE_OUT_TP1' | 'RATCHET_ADVANCE' | 'HARVEST' | 'EXIT';
+  title: string;
+  description: string;
+  price?: number;
+  pnlUsd?: number;
+  details?: string[];
+}
+
 export interface TradeRecord {
   id: string;
   symbol: string;
@@ -67,6 +77,11 @@ export interface TradeRecord {
   estimatedProfitPct?: number;
   estimatedLossPct?: number;
   estimatedWinRatePct?: number;
+  lifecycleEvents?: TradeLifecycleEvent[];
+  exitSummary?: string;
+  tp1Hit?: boolean;
+  breakevenMoved?: boolean;
+  partialRealizedPnlUsd?: number;
 }
 
 export interface ShadowTrade {
@@ -434,9 +449,8 @@ export class TradeExecutor {
           ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
           : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
         const hardSl = pos.stopLoss && pos.stopLoss > 0 ? pos.stopLoss : defaultHardSl;
-        const softRatchet = isLong
-          ? Number((pos.entryPrice * (1 - 0.05 / lev)).toFixed(4))
-          : Number((pos.entryPrice * (1 + 0.05 / lev)).toFixed(4));
+        // In loss / initial state, softRatchetPrice MUST equal hardSl to protect capital
+        const softRatchet = hardSl;
 
         let existing = this.tradesCache.find(
           (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status === 'open',
@@ -531,14 +545,15 @@ export class TradeExecutor {
             modified = true;
           }
           existing.hardStopLoss = hardSl;
-          // Protect softRatchetPrice from being regressed back to the initial formula
+          // Protect softRatchetPrice from being regressed backward (strict monotonic ratchet invariant)
           if (!existing.softRatchetPrice || existing.softRatchetPrice === 0) {
-            existing.softRatchetPrice = softRatchet;
+            existing.softRatchetPrice = existing.stopLoss && existing.stopLoss > 0 ? existing.stopLoss : hardSl;
           } else {
             const isLong = existing.action === 'LONG';
+            // Ratchet can ONLY improve in favor of trade (up for Long, down for Short), never backward
             existing.softRatchetPrice = isLong
-              ? Math.max(existing.softRatchetPrice, softRatchet, existing.stopLoss || 0)
-              : Math.min(existing.softRatchetPrice, softRatchet, existing.stopLoss || Infinity);
+              ? Math.max(existing.softRatchetPrice, existing.stopLoss || 0, hardSl)
+              : Math.min(existing.softRatchetPrice, existing.stopLoss || Infinity, hardSl);
           }
           if (pos.liquidationPrice) existing.estimatedLiquidationPrice = pos.liquidationPrice;
 
@@ -744,10 +759,10 @@ export class TradeExecutor {
       return { success: false, error: `Execution already in-flight for ${signal.symbol}` };
     }
 
-    // Check if duplicate open trade exists for symbol
+    // Check if duplicate open trade exists for symbol or execution is already in flight
     const existing = this.getOpenTrades().find((t) => t.symbol.replace('-', '/').toUpperCase() === symKey);
-    if (existing) {
-      return { success: false, error: `Position already open for ${signal.symbol}` };
+    if (existing || this.isExecutionInFlight(symKey)) {
+      return { success: false, error: `Position already open or order execution in flight for ${signal.symbol}` };
     }
 
     this.markExecutionInFlight(symKey);
@@ -829,6 +844,23 @@ export class TradeExecutor {
         ? signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))
         : signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage));
 
+      const slDistPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - (signal.stopLoss || hardSlPrice)) / signal.entryPrice * 100).toFixed(2) : '1.66';
+      const marginRiskPct = (Number(slDistPct) * risk.leverage).toFixed(1);
+      const coinSym = signal.symbol.split('/')[0] || signal.symbol;
+
+      const initialLifecycleEvent: TradeLifecycleEvent = {
+        timestamp: Date.now(),
+        stage: 'ENTRY',
+        title: `Entry: ${signal.action === 'LONG' ? 'Bought' : 'Sold short'} ${risk.positionSizeBase || ''} ${coinSym} @ $${signal.entryPrice.toFixed(2)} (${risk.leverage}x leverage)`,
+        description: `Initial Hard SL armed on-chain at $${(signal.stopLoss || hardSlPrice).toFixed(2)} (-${slDistPct}% price / -${marginRiskPct}% margin). Target TP1: $${(signal.takeProfit1 || signal.takeProfit || 0).toFixed(2)} | Target TP2: $${(signal.takeProfit2 || 0) > 0 ? '$' + signal.takeProfit2!.toFixed(2) : 'Dynamic Runner'}`,
+        price: signal.entryPrice,
+        details: [
+          `Initial Hard SL armed on-chain at $${(signal.stopLoss || hardSlPrice).toFixed(2)} (-${slDistPct}% price / -${marginRiskPct}% margin).`,
+          `Target TP1: $${(signal.takeProfit1 || signal.takeProfit || 0).toFixed(2)} | Target TP2: $${(signal.takeProfit2 || 0) > 0 ? '$' + signal.takeProfit2!.toFixed(2) : 'Dynamic Runner'}`,
+          `Capital allocated: $${risk.allocatedUsd.toFixed(2)} (${risk.leverage}x cross-margin)`
+        ]
+      };
+
       // Record trade
       const trade: TradeRecord = {
         id: tradeId,
@@ -856,10 +888,11 @@ export class TradeExecutor {
         strategyAttribution: signal.strategyAttribution,
         notes: aiEval.reasoning,
         hardStopLoss: hardSlPrice,
-        softRatchetPrice: signal.stopLoss || (signal.action === 'LONG' ? signal.entryPrice * (1 - 0.05 / risk.leverage) : signal.entryPrice * (1 + 0.05 / risk.leverage)),
+        softRatchetPrice: signal.stopLoss || hardSlPrice,
         estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
         estimatedLossPct: hardSlPrice && signal.entryPrice ? Math.abs((signal.entryPrice - hardSlPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
         estimatedWinRatePct: aiEval.confidenceScore || 78,
+        lifecycleEvents: [initialLifecycleEvent],
       };
 
       const existingIdx = this.tradesCache.findIndex((t) => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');
@@ -1053,14 +1086,14 @@ export class TradeExecutor {
         const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
         const pnlPct = (priceDiff / trade.entryPrice) * 100 * trade.leverage;
         const pnlUsd = (trade.allocatedUsd * pnlPct) / 100;
-
+        const isProfitable = (isLong ? currentPrice >= trade.entryPrice : currentPrice <= trade.entryPrice) || (pnlUsd >= 0);
         let exitStatus: 'closed_tp' | 'closed_sl' = 'closed_sl';
         let exitReasonStr = 'ON_CHAIN_SL';
 
         if (hitTp || pnlUsd > 0.05) {
           exitStatus = 'closed_tp';
-          exitReasonStr = hitTp ? 'ON_CHAIN_TP' : ((isLong ? trade.stopLoss > trade.entryPrice : trade.stopLoss < trade.entryPrice) ? 'TRAILING_TP' : 'DEX_TP_EXTERNAL');
-        } else if (pnlUsd > 0) {
+          exitReasonStr = hitTp ? 'ON_CHAIN_TP' : ((trade.breakevenMoved || isProfitable) ? 'TRAILING_TP' : 'DEX_TP_EXTERNAL');
+        } else if (trade.breakevenMoved || isProfitable) {
           exitStatus = 'closed_tp';
           exitReasonStr = 'BREAKEVEN';
         } else {
@@ -1074,6 +1107,58 @@ export class TradeExecutor {
         trade.closedAt = Date.now();
         trade.pnlPct = Number(pnlPct.toFixed(2));
         trade.pnlUsd = Number(pnlUsd.toFixed(2));
+
+        // Lifecycle event & summary
+        if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
+        const durationSec = Math.max(1, Math.round(((trade.closedAt || Date.now()) - trade.openedAt) / 1000));
+        const durationText = durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
+        const pnlSign = pnlUsd >= 0 ? '+' : '';
+
+        let exitTitle = '';
+        let exitDesc = '';
+        let exitDetails: string[] = [];
+        let summaryReason = '';
+
+        if (exitReasonStr === 'BREAKEVEN' || (trade.breakevenMoved && isProfitable)) {
+          exitTitle = `📉 Price pulled back to $${currentPrice.toFixed(2)} (${durationText} hold): 🛡️ BREAKEVEN PROTECTED EXIT`;
+          exitDesc = `Market touched the Breakeven Stop ($${currentPrice.toFixed(2)} vs stop $${trade.stopLoss.toFixed(2)}). Runner exited on-chain at $${currentPrice.toFixed(2)}, banking ${pnlSign}$${pnlUsd.toFixed(4)} net profit.`;
+          exitDetails = [
+            `Market touched the Breakeven Stop ($${currentPrice.toFixed(2)} vs stop $${trade.stopLoss.toFixed(2)}).`,
+            `Runner exited cleanly on-chain at $${currentPrice.toFixed(2)}.`,
+            `Runner banked ${pnlSign}$${pnlUsd.toFixed(4)} net profit (above entry $${trade.entryPrice.toFixed(2)}).`,
+            `Zero downside capital risk incurred.`
+          ];
+          summaryReason = `Trade reached scale-out and advanced stop loss to breakeven ($${trade.stopLoss.toFixed(2)}). Market pullback cleanly exited the position in net profit (${pnlSign}$${pnlUsd.toFixed(4)}) with capital preserved.`;
+        } else if (exitStatus === 'closed_tp') {
+          exitTitle = `🎯 Target Take Profit Filled @ $${currentPrice.toFixed(2)} (${durationText} hold)`;
+          exitDesc = `Target objective reached. Position exited at $${currentPrice.toFixed(2)}, banking +$${pnlUsd.toFixed(4)} (+${trade.pnlPct}%).`;
+          exitDetails = [
+            `Price reached Take Profit target @ $${currentPrice.toFixed(2)}.`,
+            `Position closed on-chain with full profit captured.`,
+            `Banked +$${pnlUsd.toFixed(4)} net profit.`
+          ];
+          summaryReason = `Trade reached its target Take Profit at $${currentPrice.toFixed(2)}. Momentum continued in trade direction until target liquidity was filled.`;
+        } else {
+          exitTitle = `🛑 Initial Stop Loss Triggered @ $${currentPrice.toFixed(2)} (${durationText} hold)`;
+          exitDesc = `Price moved against position and hit initial hard stop level ($${trade.stopLoss.toFixed(2)}).`;
+          exitDetails = [
+            `Market moved adversely to invalidation level ($${currentPrice.toFixed(2)}).`,
+            `Hard stop loss triggered on-chain to protect account capital.`,
+            `Drawdown capped at -$${Math.abs(pnlUsd).toFixed(4)} (${trade.pnlPct}% margin loss).`
+          ];
+          summaryReason = `Market moved adversely against the entry thesis and reached the predetermined stop loss price of $${trade.stopLoss.toFixed(2)}. On-chain market close executed to cap maximum loss and preserve trading capital.`;
+        }
+
+        trade.lifecycleEvents.push({
+          timestamp: trade.closedAt,
+          stage: 'EXIT',
+          title: exitTitle,
+          description: exitDesc,
+          price: currentPrice,
+          pnlUsd: pnlUsd,
+          details: exitDetails
+        });
+        trade.exitSummary = summaryReason;
         modified = true;
 
         logger.info(

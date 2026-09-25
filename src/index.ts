@@ -20,9 +20,11 @@ import { startSimPipelineConsumer, stopSimPipelineConsumer } from './pipeline/si
 import { startTelemetryFeeder, stopTelemetryFeeder } from './pipeline/telemetry-feeder';
 import { telegramNotifier } from './notify/telegram';
 import { resolveNodeApiKey } from './utils/node-key-resolver';
+import { mcpClient } from './mcp/client';
 
 let isRunning = false;
 let mainLoopTimer: NodeJS.Timeout | null = null;
+let positionPollTimer: NodeJS.Timeout | null = null;
 let cycleCount = 0;
 
 // Per-pair 1h kline cache with TTL — refreshed every 5 minutes in background
@@ -312,6 +314,20 @@ async function runTradingCycle(): Promise<void> {
     );
   }
 
+  // Ensure all open positions have a price in livePrices even if outside watchPairs
+  for (const t of tradeExecutor.getOpenTrades()) {
+    if (!livePrices[t.symbol]) {
+      if (agentState.markets[t.symbol]?.markPrice) {
+        livePrices[t.symbol] = agentState.markets[t.symbol].markPrice;
+      } else {
+        try {
+          const p = await mcpClient.getPrice(t.symbol);
+          if (p?.markPrice) livePrices[t.symbol] = p.markPrice;
+        } catch {}
+      }
+    }
+  }
+
   // 5. Monitor Open Positions (Enforce Dynamic TP/SL & Trailing Harvester)
   tradeExecutor.monitorOpenTrades(livePrices);
   portfolioHarvester.evaluate(livePrices);
@@ -430,6 +446,36 @@ async function bootstrap(): Promise<void> {
       logger.error(`Trading loop iteration failed: ${err.message}`);
     }
   }, config.POLL_INTERVAL_MS);
+
+  // Position monitor — ultra-fast poll (3s) when positions are active, 15s when idle
+  const positionLoop = async (): Promise<void> => {
+    if (!isRunning) return;
+    try {
+      const openTrades = tradeExecutor.getOpenTrades();
+      if (openTrades.length > 0) {
+        const openPrices: Record<string, number> = {};
+        for (const t of openTrades) {
+          const sym = t.symbol;
+          if (agentState.markets[sym]?.markPrice) {
+            openPrices[sym] = agentState.markets[sym].markPrice;
+          } else {
+            try {
+              const p = await mcpClient.getPrice(sym);
+              if (p?.markPrice) openPrices[sym] = p.markPrice;
+            } catch {}
+          }
+        }
+        tradeExecutor.monitorOpenTrades(openPrices);
+        portfolioHarvester.evaluate(openPrices);
+      }
+    } catch (err: any) {
+      logger.debug(`[FAST POSITION MONITOR] Error in cycle: ${err.message}`);
+    }
+    const hasOpen = tradeExecutor.getOpenTrades().length > 0;
+    const nextPoll = hasOpen ? 3_000 : 15_000;
+    positionPollTimer = setTimeout(positionLoop, nextPoll);
+  };
+  positionLoop();
 }
 
 // ─── Graceful Shutdown ─────────────────────────────────────────────────────────
@@ -440,6 +486,7 @@ function shutdown(): void {
   isRunning = false;
 
   if (mainLoopTimer) clearInterval(mainLoopTimer);
+  if (positionPollTimer) clearTimeout(positionPollTimer);
   telegramNotifier.stopPolling();
   stopSimPipelineConsumer();
   stopTelemetryFeeder();

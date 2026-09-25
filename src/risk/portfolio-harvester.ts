@@ -310,13 +310,40 @@ export class PortfolioHarvester {
 
       if (shouldHarvest) {
         if (this.config.executionStyle === 'FULL_CLOSE_ONLY') {
+          const symKey = trade.symbol.replace('-', '/').toUpperCase();
+          tradeExecutor.markExecutionInFlight(symKey);
           trade.status = 'closed_tp';
+          trade.exitPrice = currentPrice;
           trade.closedAt = Date.now();
+          trade.exitReason = 'PORTFOLIO_HARVEST';
+          trade.pnlPct = Number(pnlPct.toFixed(2));
+          trade.pnlUsd = Number(pnlUsd.toFixed(2));
+
+          if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
+          trade.lifecycleEvents.push({
+            timestamp: trade.closedAt,
+            stage: 'HARVEST',
+            title: `🌾 Full Profit Harvest Executed @ $${currentPrice.toFixed(4)}`,
+            description: `Portfolio Harvester banked +$${pnlUsd.toFixed(2)} (+${pnlPct.toFixed(2)}%) to lock in realized gains.`,
+            price: currentPrice,
+            pnlUsd: pnlUsd,
+            details: [
+              `Target profit threshold reached (+${pnlPct.toFixed(2)}%).`,
+              `Execution style: FULL_CLOSE_ONLY.`,
+              `Net PnL banked: +$${pnlUsd.toFixed(2)}.`
+            ]
+          });
+          trade.exitSummary = `Portfolio Profit Harvester banked +${pnlPct.toFixed(2)}% (+$${pnlUsd.toFixed(2)}) as market conditions met harvest criteria.`;
+
           tradeExecutor.saveTrades();
           if (!trade.isPaper) {
             mcpClient.closePosition(trade.symbol).catch((err: any) => {
               logger.warn(`Could not close on-chain position for ${trade.symbol} during harvest: ${err.message}`);
+            }).finally(() => {
+              setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
             });
+          } else {
+            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 1000);
           }
           logger.info(`🌾 [PROFIT HARVEST: FULL CLOSE] ${trade.symbol} banked at +${pnlPct.toFixed(2)}% (+$${pnlUsd.toFixed(2)} USD). Mode: ${this.config.syncMode}`);
           tradeExecutor.notifyTradeClosed(trade);
@@ -441,13 +468,36 @@ export class PortfolioHarvester {
         recommendation = 'HARVEST';
         factors.push('🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital');
         if (this.config.enabled && !trade.isPaper) {
-          mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during defensive bleed cut: ${err.message}`);
-          });
+          const symKey = trade.symbol.replace('-', '/').toUpperCase();
+          tradeExecutor.markExecutionInFlight(symKey);
           trade.status = 'closed_sl';
+          trade.exitPrice = currentPrice;
           trade.closedAt = Date.now();
           trade.exitReason = 'DEFENSIVE_BLEED_CUT';
+          trade.pnlPct = Number(pnlPct.toFixed(2));
+          trade.pnlUsd = Number(pnlUsd.toFixed(2));
+
+          if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
+          trade.lifecycleEvents.push({
+            timestamp: trade.closedAt,
+            stage: 'EXIT',
+            title: `🩸 Defensive Bleed Cut @ $${currentPrice.toFixed(4)}`,
+            description: `Liberated capital before max SL hit. Drawdown capped at ${pnlPct.toFixed(2)}%.`,
+            price: currentPrice,
+            pnlUsd: pnlUsd,
+            details: [
+              `Vulnerability score high (${score}/100).`,
+              `Adverse bleed detected. Exited on-chain to protect capital.`
+            ]
+          });
+          trade.exitSummary = `Defensive bleed cut executed to stop capital hemorrhage before hitting full hard stop loss. Capital liberated.`;
+
           tradeExecutor.saveTrades();
+          mcpClient.closePosition(trade.symbol).catch((err: any) => {
+            logger.warn(`Could not close on-chain position for ${trade.symbol} during defensive bleed cut: ${err.message}`);
+          }).finally(() => {
+            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
+          });
           logger.warn(`🩸 [DEFENSIVE BLEED CUT] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% to stop capital hemorrhage.`);
           tradeExecutor.notifyTradeClosed(trade);
         }
@@ -530,14 +580,40 @@ export class PortfolioHarvester {
     for (const trade of openTrades) {
       const isTarget = action === 'SWEEP_ALL' ? (trade.pnlUsd || 0) > 0 : trade.symbol === targetSymbol;
       if (isTarget) {
+        const symKey = trade.symbol.replace('-', '/').toUpperCase();
+        const exitPriceVal = this.lastLivePrices[trade.symbol] || trade.entryPrice;
+        tradeExecutor.markExecutionInFlight(symKey);
         trade.status = 'closed_tp';
+        trade.exitPrice = exitPriceVal;
         trade.closedAt = Date.now();
+        trade.exitReason = action === 'SWEEP_ALL' ? 'SWEEP_ALL_PROFIT' : 'MANUAL_HARVEST';
         harvestedUsd += (trade.pnlUsd || 0);
         closedCount++;
+
+        if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
+        trade.lifecycleEvents.push({
+          timestamp: trade.closedAt,
+          stage: 'HARVEST',
+          title: `🌾 ${action === 'SWEEP_ALL' ? 'Basket Profit Sweep' : 'Manual Harvest'} @ $${exitPriceVal.toFixed(4)}`,
+          description: `Banked +$${(trade.pnlUsd || 0).toFixed(2)} realized profit via Harvester command.`,
+          price: exitPriceVal,
+          pnlUsd: trade.pnlUsd,
+          details: [
+            `Operator / algorithmic harvest trigger: ${action}.`,
+            `On-chain market close dispatched to Decibel DEX.`,
+            `Net profit banked: +$${(trade.pnlUsd || 0).toFixed(2)}.`
+          ]
+        });
+        trade.exitSummary = `${action === 'SWEEP_ALL' ? 'All profitable positions closed simultaneously' : 'Manual operator harvest'} banking +$${(trade.pnlUsd || 0).toFixed(2)} in net profit.`;
+
         if (!trade.isPaper) {
           mcpClient.closePosition(trade.symbol).catch((err: any) => {
             logger.warn(`Could not close on-chain position for ${trade.symbol} during manual harvest: ${err.message}`);
+          }).finally(() => {
+            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
           });
+        } else {
+          setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 1000);
         }
       }
     }
