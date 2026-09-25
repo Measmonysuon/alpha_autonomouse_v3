@@ -53,6 +53,12 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
+    if (directives.regime && (directives.regime.includes('BEAR') || directives.regime.includes('DUMP') || String(directives.notes || '').includes('SHORT ONLY')) && action === 'LONG') {
+      const reason = `🛑 Direction LONG is strictly BANNED in ${directives.regime} / SHORT ONLY regime. Trade rejected to protect capital.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
     // ── 2. Rejection Wick Tolerance Check ──────────────────────────────────────
     const wickTolerance = directives.bullTrapUpperWickPct || 50;
     if (action === 'LONG' && signal.indicators.upperWickPct > wickTolerance) {
