@@ -102,6 +102,12 @@ function createCleanDataDir(targetDir) {
     JSON.stringify({ trades: [], shadowTrades: [], lastUpdated: 0 }, null, 2),
     'utf8'
   );
+  if (fs.existsSync(path.join(ROOT_DIR, 'data', 'decibel-markets.json'))) {
+    fs.copyFileSync(
+      path.join(ROOT_DIR, 'data', 'decibel-markets.json'),
+      path.join(dataDir, 'decibel-markets.json')
+    );
+  }
 }
 
 // ── 3. Build macOS Package ───────────────────────────────────────────────────

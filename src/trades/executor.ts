@@ -103,6 +103,7 @@ export class TradeExecutor {
   private missingOnChainCount: Map<string, number> = new Map();
   private missingFirstSeenAt: Map<string, number> = new Map();
   private inFlightSymbols: Set<string> = new Set();
+  private configuredLeverages: Map<string, number> = new Map();
 
   constructor() {
     this.ensureDataDirectory();
@@ -120,6 +121,26 @@ export class TradeExecutor {
 
   public isExecutionInFlight(symbol: string): boolean {
     return this.inFlightSymbols.has(symbol.replace('-', '/').toUpperCase());
+  }
+
+  /**
+   * Ensure leverage is configured on Decibel DEX subaccount for the market before trading
+   */
+  public async ensureLeverageConfigured(symbol: string, targetLeverage: number): Promise<void> {
+    const symKey = symbol.replace('-', '/').toUpperCase();
+    const desired = Math.max(1, Math.min(100, Math.round(targetLeverage)));
+    if (this.configuredLeverages.get(symKey) === desired) {
+      return;
+    }
+
+    try {
+      logger.info(`⚙️ [EXECUTOR] Configuring on-chain leverage for ${symKey} to ${desired}x (cross margin)...`);
+      await mcpClient.setLeverage(symKey, desired, 'cross');
+      this.configuredLeverages.set(symKey, desired);
+      logger.info(`✅ [EXECUTOR] On-chain leverage successfully set to ${desired}x for ${symKey}`);
+    } catch (err: any) {
+      logger.warn(`⚠️ [EXECUTOR] Failed to set leverage for ${symKey}: ${err.message}. Proceeding with trade.`);
+    }
   }
 
   public onTradeClosed(listener: (trade: TradeRecord) => void): void {
@@ -272,8 +293,8 @@ export class TradeExecutor {
           const rawStatus = (st.status || 'closed').toLowerCase();
           const status: 'open' | 'closed_tp' | 'closed_sl' | 'closed_manual' =
             rawStatus.includes('open') ? 'open' :
-            rawStatus.includes('tp') ? 'closed_tp' :
-            rawStatus.includes('sl') ? 'closed_sl' : 'closed_manual';
+              rawStatus.includes('tp') ? 'closed_tp' :
+                rawStatus.includes('sl') ? 'closed_sl' : 'closed_manual';
 
           const netPnl = Number((Number(st.realized_pnl || 0) - Number(st.fee_usd || 0)).toFixed(2));
           const existing = cacheMap.get(st.id);
@@ -359,7 +380,7 @@ export class TradeExecutor {
             confidence: t.confidence,
             exit_reason: t.exitReason || t.notes,
           });
-        } catch {}
+        } catch { }
       }
     } catch (err: any) {
       logger.error(`Failed to write ${TRADES_FILE_PATH}: ${err.message}`);
@@ -385,7 +406,7 @@ export class TradeExecutor {
     }
     try {
       if (!mcpClient.isConnected()) {
-        await mcpClient.connect().catch(() => {});
+        await mcpClient.connect().catch(() => { });
       }
       const onChainList = await mcpClient.getPositions();
       if (!Array.isArray(onChainList)) return this.getOpenTrades();
@@ -407,6 +428,16 @@ export class TradeExecutor {
           continue;
         }
 
+        const lev = Math.max(1, pos.leverage || 1);
+        const isLong = pos.action === 'LONG' || pos.side === 'buy';
+        const defaultHardSl = isLong
+          ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
+          : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
+        const hardSl = pos.stopLoss && pos.stopLoss > 0 ? pos.stopLoss : defaultHardSl;
+        const softRatchet = isLong
+          ? Number((pos.entryPrice * (1 - 0.05 / lev)).toFixed(4))
+          : Number((pos.entryPrice * (1 + 0.05 / lev)).toFixed(4));
+
         let existing = this.tradesCache.find(
           (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status === 'open',
         );
@@ -421,35 +452,15 @@ export class TradeExecutor {
             delete recentClosed.closedAt;
             delete recentClosed.exitPrice;
             delete recentClosed.exitReason;
-            // Guard: If Stop Loss was inverted (e.g. LONG with SL >= entryPrice or above market), reset to safe breakeven floor
-            if (recentClosed.action === 'LONG' && recentClosed.stopLoss > 0) {
-              const breakevenFloor = Number((recentClosed.entryPrice * 1.0025).toFixed(4));
-              if (recentClosed.stopLoss > recentClosed.entryPrice * 1.01) {
-                recentClosed.stopLoss = breakevenFloor;
-                logger.info(`🛡️ [RECONCILE] Resetting inverted stopLoss for restored ${recentClosed.symbol} LONG to breakeven ($${breakevenFloor})`);
-              }
-            } else if (recentClosed.action === 'SHORT' && recentClosed.stopLoss > 0) {
-              const breakevenFloor = Number((recentClosed.entryPrice * 0.9975).toFixed(4));
-              if (recentClosed.stopLoss < recentClosed.entryPrice * 0.99) {
-                recentClosed.stopLoss = breakevenFloor;
-                logger.info(`🛡️ [RECONCILE] Resetting inverted stopLoss for restored ${recentClosed.symbol} SHORT to breakeven ($${breakevenFloor})`);
-              }
+            // Guard: If Stop Loss was unset or invalid, initialize to safe default
+            if (recentClosed.stopLoss <= 0) {
+              recentClosed.stopLoss = hardSl;
             }
             existing = recentClosed;
             modified = true;
             logger.info(`🔄 [RECONCILE] Restored persistent open position: ${existing.symbol} ${existing.action} (id: ${existing.id})`);
           }
         }
-
-        const lev = Math.max(1, pos.leverage || 1);
-        const isLong = pos.action === 'LONG' || pos.side === 'buy';
-        const defaultHardSl = isLong
-          ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
-          : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
-        const hardSl = pos.stopLoss && pos.stopLoss > 0 ? pos.stopLoss : defaultHardSl;
-        const softRatchet = isLong
-          ? Number((pos.entryPrice * (1 - 0.05 / lev)).toFixed(4))
-          : Number((pos.entryPrice * (1 + 0.05 / lev)).toFixed(4));
 
         if (!existing) {
           const newTrade: TradeRecord = {
@@ -501,16 +512,34 @@ export class TradeExecutor {
             existing.takeProfit = pos.takeProfit;
             modified = true;
           }
-          if (pos.stopLoss && pos.stopLoss !== existing.stopLoss) {
-            existing.stopLoss = pos.stopLoss;
-            modified = true;
+          if (pos.stopLoss && pos.stopLoss > 0) {
+            const localSl = existing.stopLoss || 0;
+            const isLong = existing.action === 'LONG';
+            // Protect ratcheted / trailing SL:
+            // Only adopt on-chain SL if local SL is unset (0),
+            // OR if on-chain SL is strictly MORE protective than local ratcheted SL
+            const isMoreProtective = localSl === 0 ||
+              (isLong ? pos.stopLoss > localSl : pos.stopLoss < localSl);
+            if (isMoreProtective && pos.stopLoss !== existing.stopLoss) {
+              logger.info(`🛡️ [RECONCILE] Updating ${existing.symbol} SL from DEX: $${existing.stopLoss} → $${pos.stopLoss} (more protective)`);
+              existing.stopLoss = pos.stopLoss;
+              modified = true;
+            }
           }
           if (pos.entryPrice && Math.abs(pos.entryPrice - existing.entryPrice) > 0.0001) {
             existing.entryPrice = pos.entryPrice;
             modified = true;
           }
           existing.hardStopLoss = hardSl;
-          existing.softRatchetPrice = softRatchet;
+          // Protect softRatchetPrice from being regressed back to the initial formula
+          if (!existing.softRatchetPrice || existing.softRatchetPrice === 0) {
+            existing.softRatchetPrice = softRatchet;
+          } else {
+            const isLong = existing.action === 'LONG';
+            existing.softRatchetPrice = isLong
+              ? Math.max(existing.softRatchetPrice, softRatchet, existing.stopLoss || 0)
+              : Math.min(existing.softRatchetPrice, softRatchet, existing.stopLoss || Infinity);
+          }
           if (pos.liquidationPrice) existing.estimatedLiquidationPrice = pos.liquidationPrice;
 
           const curLev = existing.leverage || pos.leverage || 1;
@@ -562,7 +591,7 @@ export class TradeExecutor {
           if (missed >= 6 && durationMissingMs >= 20000) {
             const pnl = trade.pnlUsd || 0;
             const smartStatus = pnl > 0.05 ? 'closed_tp' : (pnl < 0 ? 'closed_sl' : 'closed_manual');
-            const smartReason = 'MANUAL_DEX_CLOSE';
+            const smartReason = smartStatus === 'closed_tp' ? 'ON_CHAIN_TP_FILL' : (smartStatus === 'closed_sl' ? 'ON_CHAIN_SL_HIT' : 'ON_CHAIN_DEX_CLOSE');
             logger.info(`🔔 [RECONCILE] Position ${trade.symbol} confirmed no longer active on-chain after ${missed} checks (${Math.round(durationMissingMs / 1000)}s) — marking as ${smartStatus} (${smartReason})`);
             trade.status = smartStatus;
             trade.closedAt = Date.now();
@@ -735,100 +764,103 @@ export class TradeExecutor {
 
       const side = signal.action === 'LONG' ? 'buy' : 'sell';
       const isPaper = config.PAPER_TRADING || !this.aptosAccount;
-    const tradeId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const tradeId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-    logger.info(
-      `🚀 [EXECUTING] ${isPaper ? 'PAPER' : 'LIVE'} ${signal.symbol} ${signal.action} | ` +
-      `Entry: $${signal.entryPrice} | TP: $${signal.takeProfit.toFixed(4)} | ` +
-      `SL: $${signal.stopLoss.toFixed(4)} | Size: $${risk.positionSizeUsd.toFixed(2)} (${risk.leverage}x)`,
-    );
+      logger.info(
+        `🚀 [EXECUTING] ${isPaper ? 'PAPER' : 'LIVE'} ${signal.symbol} ${signal.action} | ` +
+        `Entry: $${signal.entryPrice} | TP: $${signal.takeProfit.toFixed(4)} | ` +
+        `SL: $${signal.stopLoss.toFixed(4)} | Size: $${risk.positionSizeUsd.toFixed(2)} (${risk.leverage}x)`,
+      );
 
-    let orderId = tradeId;
-    let txHash = isPaper ? `paper_tx_${Date.now()}` : '';
+      let orderId = tradeId;
+      let txHash = isPaper ? `paper_tx_${Date.now()}` : '';
 
-    if (!isPaper && this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
-      if (this.cachedOnChainBalance.lastChecked > 0 && this.cachedOnChainBalance.aptBalance < 0.002) {
-        const addr = this.aptosAccount?.accountAddress?.toString() || 'delegate wallet';
-        logger.warn(
-          `⛽ [NO GAS] ${signal.symbol} ${signal.action} blocked — delegate wallet (${addr}) ` +
-          `has ${this.cachedOnChainBalance.aptBalance.toFixed(4)} APT. Top up with 0.05+ APT on Aptos Mainnet to enable live trading.`
-        );
-        return { success: false, error: `Delegate gas wallet (${addr}) has 0 APT` };
-      }
-      try {
-        const liveResult = await this.executeOnChain(signal.symbol, side, risk.positionSizeBase, signal.entryPrice);
-        orderId = liveResult.orderId;
-        txHash = liveResult.txHash;
-
-        // Attach on-chain TP/SL directly onto Decibel DEX order book
-        if (signal.takeProfit > 0 || signal.stopLoss > 0) {
-          logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | SL: $${signal.stopLoss} on ${signal.symbol}...`);
-          try {
-            await mcpClient.setTpSl({
-              symbol: signal.symbol,
-              tpTrigger: signal.takeProfit,
-              slTrigger: signal.stopLoss,
-            });
-            logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
-          } catch (tpErr: any) {
-            logger.warn(`⚠️ [ON-CHAIN TP/SL] Failed to immediately attach TP/SL: ${tpErr.message}`);
-          }
-        }
-      } catch (err: any) {
-        const isGasFee = err.message?.includes('INSUFFICIENT_BALANCE_FOR_TRANSACTION_FEE') || err.message?.includes('INSUFFICIENT_BALANCE');
-        const isMktNotFound = err.message?.includes('Market details not found') || err.message?.includes('Not connected');
-        if (isGasFee) {
+      if (!isPaper && this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
+        if (this.cachedOnChainBalance.lastChecked > 0 && this.cachedOnChainBalance.aptBalance < 0.002) {
           const addr = this.aptosAccount?.accountAddress?.toString() || 'delegate wallet';
           logger.warn(
             `⛽ [NO GAS] ${signal.symbol} ${signal.action} blocked — delegate wallet (${addr}) ` +
-            `has 0 APT. Fund it with APT on Aptos Mainnet to enable live trading.`
+            `has ${this.cachedOnChainBalance.aptBalance.toFixed(4)} APT. Top up with 0.05+ APT on Aptos Mainnet to enable live trading.`
           );
-        } else if (isMktNotFound) {
-          logger.warn(`⚠️ [TRADE BLOCKED] ${signal.symbol}: ${err.message}. Check DEX connection or pair availability.`);
-        } else {
-          logger.error(`❌ [EXECUTOR] On-chain Decibel transaction failed: ${err.message}`);
+          return { success: false, error: `Delegate gas wallet (${addr}) has 0 APT` };
         }
-        return { success: false, error: err.message };
+        try {
+          // Ensure on-chain leverage is explicitly configured on Decibel DEX before opening
+          await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
+
+          const liveResult = await this.executeOnChain(signal.symbol, side, risk.positionSizeBase, signal.entryPrice, risk.leverage);
+          orderId = liveResult.orderId;
+          txHash = liveResult.txHash;
+
+          // Attach on-chain TP/SL directly onto Decibel DEX order book
+          if (signal.takeProfit > 0 || signal.stopLoss > 0) {
+            logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | SL: $${signal.stopLoss} on ${signal.symbol}...`);
+            try {
+              await mcpClient.setTpSl({
+                symbol: signal.symbol,
+                tpTrigger: signal.takeProfit,
+                slTrigger: signal.stopLoss,
+              });
+              logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
+            } catch (tpErr: any) {
+              logger.warn(`⚠️ [ON-CHAIN TP/SL] Failed to immediately attach TP/SL: ${tpErr.message}`);
+            }
+          }
+        } catch (err: any) {
+          const isGasFee = err.message?.includes('INSUFFICIENT_BALANCE_FOR_TRANSACTION_FEE') || err.message?.includes('INSUFFICIENT_BALANCE');
+          const isMktNotFound = err.message?.includes('Market details not found') || err.message?.includes('Not connected');
+          if (isGasFee) {
+            const addr = this.aptosAccount?.accountAddress?.toString() || 'delegate wallet';
+            logger.warn(
+              `⛽ [NO GAS] ${signal.symbol} ${signal.action} blocked — delegate wallet (${addr}) ` +
+              `has 0 APT. Fund it with APT on Aptos Mainnet to enable live trading.`
+            );
+          } else if (isMktNotFound) {
+            logger.warn(`⚠️ [TRADE BLOCKED] ${signal.symbol}: ${err.message}. Check DEX connection or pair availability.`);
+          } else {
+            logger.error(`❌ [EXECUTOR] On-chain Decibel transaction failed: ${err.message}`);
+          }
+          return { success: false, error: err.message };
+        }
       }
-    }
 
-    // Hard Stop Loss barrier (15% margin max risk)
-    const hardSlPrice = signal.action === 'LONG'
-      ? signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))
-      : signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage));
+      // Hard Stop Loss barrier (15% margin max risk)
+      const hardSlPrice = signal.action === 'LONG'
+        ? signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))
+        : signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage));
 
-    // Record trade
-    const trade: TradeRecord = {
-      id: tradeId,
-      symbol: signal.symbol,
-      side,
-      action: signal.action as 'LONG' | 'SHORT',
-      entryPrice: signal.entryPrice,
-      takeProfit: signal.takeProfit,
-      takeProfit1: signal.takeProfit1,
-      takeProfit2: signal.takeProfit2,
-      isDualTp: signal.isDualTp,
-      stopLoss: signal.stopLoss,
-      sizeUsd: risk.positionSizeUsd,
-      sizeBase: risk.positionSizeBase,
-      leverage: risk.leverage,
-      allocatedUsd: risk.allocatedUsd,
-      confidence: aiEval.confidenceScore,
-      orderId,
-      txHash,
-      status: 'open',
-      isPaper,
-      openedAt: Date.now(),
-      strategyName: signal.strategyName || risk.directivesUsed.activeStrategy,
-      regime: risk.directivesUsed.regime,
-      strategyAttribution: signal.strategyAttribution,
-      notes: aiEval.reasoning,
-      hardStopLoss: hardSlPrice,
-      softRatchetPrice: signal.stopLoss || (signal.action === 'LONG' ? signal.entryPrice * (1 - 0.05 / risk.leverage) : signal.entryPrice * (1 + 0.05 / risk.leverage)),
-      estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
-      estimatedLossPct: hardSlPrice && signal.entryPrice ? Math.abs((signal.entryPrice - hardSlPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
-      estimatedWinRatePct: aiEval.confidenceScore || 78,
-    };
+      // Record trade
+      const trade: TradeRecord = {
+        id: tradeId,
+        symbol: signal.symbol,
+        side,
+        action: signal.action as 'LONG' | 'SHORT',
+        entryPrice: signal.entryPrice,
+        takeProfit: signal.takeProfit,
+        takeProfit1: signal.takeProfit1,
+        takeProfit2: signal.takeProfit2,
+        isDualTp: signal.isDualTp,
+        stopLoss: signal.stopLoss,
+        sizeUsd: risk.positionSizeUsd,
+        sizeBase: risk.positionSizeBase,
+        leverage: risk.leverage,
+        allocatedUsd: risk.allocatedUsd,
+        confidence: aiEval.confidenceScore,
+        orderId,
+        txHash,
+        status: 'open',
+        isPaper,
+        openedAt: Date.now(),
+        strategyName: signal.strategyName || risk.directivesUsed.activeStrategy,
+        regime: risk.directivesUsed.regime,
+        strategyAttribution: signal.strategyAttribution,
+        notes: aiEval.reasoning,
+        hardStopLoss: hardSlPrice,
+        softRatchetPrice: signal.stopLoss || (signal.action === 'LONG' ? signal.entryPrice * (1 - 0.05 / risk.leverage) : signal.entryPrice * (1 + 0.05 / risk.leverage)),
+        estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
+        estimatedLossPct: hardSlPrice && signal.entryPrice ? Math.abs((signal.entryPrice - hardSlPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
+        estimatedWinRatePct: aiEval.confidenceScore || 78,
+      };
 
       const existingIdx = this.tradesCache.findIndex((t) => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');
       if (existingIdx >= 0) {
@@ -864,6 +896,7 @@ export class TradeExecutor {
     side: 'buy' | 'sell',
     size: number,
     entryPrice: number,
+    targetLeverage?: number,
   ): Promise<{ orderId: string; txHash: string }> {
     if (!this.aptos || !this.aptosAccount) {
       throw new Error('Aptos SDK signer uninitialized');
@@ -887,7 +920,7 @@ export class TradeExecutor {
       try {
         const p = await mcpClient.getPrice(symbol);
         refPrice = p.markPrice || p.lastPrice || 0;
-      } catch {}
+      } catch { }
     }
 
     // Maker-First: place tightly at mark price (+/- 0.03%) to act as Maker (0% taker fees)
@@ -907,6 +940,17 @@ export class TradeExecutor {
     }
     if (market.minSize && chainSize < market.minSize) {
       chainSize = market.minSize;
+    }
+
+    // Double-check effective notional to prevent decimal misconfigurations from inflating positions
+    const effectiveBase = chainSize / Math.pow(10, market.sizeDecimals);
+    const effectiveNotional = effectiveBase * (refPrice > 0 ? refPrice : entryPrice);
+    const maxAllowedNotional = Math.max(config.BUDGET_USD * (targetLeverage || config.MAX_LEVERAGE) * 1.5, 200);
+
+    if (effectiveNotional > maxAllowedNotional) {
+      const err = `CRITICAL ON-CHAIN GUARD: Order notional ($${effectiveNotional.toFixed(2)}) exceeds safety cap ($${maxAllowedNotional.toFixed(2)})! Base size=${effectiveBase} ${symbol}, sizeDecimals=${market.sizeDecimals}. Order aborted.`;
+      logger.error(`🛑 ${err}`);
+      throw new Error(err);
     }
 
     const clientOrderId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1191,7 +1235,7 @@ export class TradeExecutor {
     this.saveTrades();
     try {
       dbClient.clearAllTrades();
-    } catch {}
+    } catch { }
     logger.info('🧹 [EXECUTOR] All trades and positions reset to empty. Budget allocation is now $0.');
   }
 

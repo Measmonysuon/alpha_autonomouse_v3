@@ -990,16 +990,14 @@ export class DecibelMCPClient {
       return rawTrades.map((t: any) => {
         const marketAddr = (t.market || '').toLowerCase();
         const symbol = this.getSymbolForMarket(marketAddr) || this.marketMap.get(marketAddr) || t.symbol || (marketAddr.length > 10 ? `${marketAddr.slice(0, 6)}...${marketAddr.slice(-4)}` : 'DEX');
-        const isAgent = Boolean(
-          t.client_order_id &&
-          (String(t.client_order_id).startsWith('agent-') ||
-           String(t.client_order_id).startsWith('decibel-') ||
-           String(t.client_order_id).startsWith('close-'))
+        const isExplicitManual = Boolean(
+          t.client_order_id && String(t.client_order_id).startsWith('manual-user-override')
         );
+        const isAgent = !isExplicitManual;
         return {
           ...t,
           symbol,
-          isManual: !isAgent,
+          isManual: isExplicitManual,
           tradeType: isAgent ? 'AUTO' : 'MANUAL',
           timestamp: t.transaction_unix_ms || Date.now(),
         };

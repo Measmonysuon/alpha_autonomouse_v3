@@ -1289,6 +1289,14 @@ function syncTradesToSqlite(trades: any[]): void {
         }
       }
 
+      const isExplicitManual = Boolean(
+        t.isManual === true || (t.orderId && String(t.orderId).startsWith('manual-user-override'))
+      );
+      let stratName = t.strategyName || t.strategy_name;
+      if (!isExplicitManual && (!stratName || stratName === 'Manual Decibel Trade')) {
+        stratName = 'Turtle Soup & Liquidity Grab';
+      }
+
       dbClient.upsertTrade({
         id: t.id,
         client_order_id: t.orderId || t.id,
@@ -1296,7 +1304,7 @@ function syncTradesToSqlite(trades: any[]): void {
         symbol: t.symbol,
         side: t.side || 'buy',
         action: t.action || 'LONG',
-        is_manual: (t.isManual || t.notes?.includes('Manual') || t.strategyName?.includes('Manual')) ? 1 : 0,
+        is_manual: isExplicitManual ? 1 : 0,
         entry_price: Number(t.entryPrice || t.entry_price || 0),
         exit_price: t.exitPrice ? Number(t.exitPrice) : (t.exit_price ? Number(t.exit_price) : undefined),
         size: Number(t.sizeBase || t.size || 0),
@@ -1307,7 +1315,7 @@ function syncTradesToSqlite(trades: any[]): void {
         status: tradeStatus,
         opened_at: Number(t.openedAt || t.opened_at || Date.now()),
         closed_at: t.closedAt ? Number(t.closedAt) : (t.closed_at ? Number(t.closed_at) : undefined),
-        strategy_name: t.strategyName || t.strategy_name,
+        strategy_name: stratName,
         confidence: t.confidence,
         exit_reason: exitReason,
       });

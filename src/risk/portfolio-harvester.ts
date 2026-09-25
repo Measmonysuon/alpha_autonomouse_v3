@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { tradeExecutor } from '../trades/executor';
+import { tradeExecutor, TradeRecord } from '../trades/executor';
 import { mcpClient } from '../mcp/client';
 import { logger } from '../utils/logger';
 import { getSimPairDirective } from '../strategy/manager';
@@ -129,6 +129,8 @@ export class PortfolioHarvester {
 
   private lastHarvestAt?: number;
   private lastLivePrices: Record<string, number> = {};
+  private lastSlPushTime: Record<string, number> = {};
+  private lastPushedSl: Record<string, number> = {};
 
   constructor() {
     this.loadConfig();
@@ -237,10 +239,11 @@ export class PortfolioHarvester {
           : Math.max(0, ((trade.stopLoss - currentPrice) / currentPrice) * 100);
       }
 
-      // Initial risk distance
-      const stopDistance = Math.abs(trade.entryPrice - (trade.stopLoss || (isLong ? trade.entryPrice * 0.985 : trade.entryPrice * 1.015)));
+      // Initial risk distance (calculated against original hard SL, not moving ratcheted stop)
+      const initialSl = trade.hardStopLoss || (isLong ? trade.entryPrice * 0.985 : trade.entryPrice * 1.015);
+      const stopDistance = Math.abs(trade.entryPrice - initialSl);
       const riskRMultiple = stopDistance > 0 ? (Math.abs(currentPrice - trade.entryPrice) / stopDistance) : 0;
-      
+
       // Autonomous Anti-Hunt R: Check per-pair Sim Lab directive first, fallback to Harvester config
       const pairDir = this.config.syncMode === 'SIM_LAB_SYNC' ? getSimPairDirective(trade.symbol) : null;
       const targetR = pairDir?.accelerateBreakevenR || this.config.accelerateBreakevenR || 1.35;
@@ -283,14 +286,18 @@ export class PortfolioHarvester {
 
         if (isLong && trade.stopLoss < breakevenFloor - 0.0001 && breakevenFloor < currentPrice) {
           trade.stopLoss = breakevenFloor;
+          trade.softRatchetPrice = breakevenFloor;
           breakevenLocked = true;
           tradeExecutor.saveTrades();
           logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} LONG stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Mode: ${this.config.syncMode}${pairDir?.accelerateBreakevenR ? ' - Pair Autonomous R' : ''})`);
+          this.pushStopLossOnChain(trade);
         } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > breakevenFloor + 0.0001) && breakevenFloor > currentPrice) {
           trade.stopLoss = breakevenFloor;
+          trade.softRatchetPrice = breakevenFloor;
           breakevenLocked = true;
           tradeExecutor.saveTrades();
           logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} SHORT stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Mode: ${this.config.syncMode}${pairDir?.accelerateBreakevenR ? ' - Pair Autonomous R' : ''})`);
+          this.pushStopLossOnChain(trade);
         } else if (isLong ? trade.stopLoss >= breakevenFloor - 0.0001 : trade.stopLoss <= breakevenFloor + 0.0001) {
           breakevenLocked = true;
         }
@@ -329,14 +336,18 @@ export class PortfolioHarvester {
 
           if (isLong && trade.stopLoss < lockedProfitFloor - 0.0001 && lockedProfitFloor < currentPrice) {
             trade.stopLoss = lockedProfitFloor;
+            trade.softRatchetPrice = lockedProfitFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
             logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} LONG trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}%`);
+            this.pushStopLossOnChain(trade);
           } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > lockedProfitFloor + 0.0001) && lockedProfitFloor > currentPrice) {
             trade.stopLoss = lockedProfitFloor;
+            trade.softRatchetPrice = lockedProfitFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
             logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} SHORT trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}%`);
+            this.pushStopLossOnChain(trade);
           }
         }
       }
@@ -390,7 +401,7 @@ export class PortfolioHarvester {
           const dirs = standaloneEngine.getDirectives();
           if (dirs.regime === 'TRENDING_BULL') trend1h = 'BULLISH_1H_TREND';
           else if (dirs.regime === 'TRENDING_BEAR') trend1h = 'BEARISH_1H_TREND';
-        } catch {}
+        } catch { }
       }
       if (trend1h) {
         const isTrendAligned = (isLong && trend1h === 'BULLISH_1H_TREND') || (!isLong && trend1h === 'BEARISH_1H_TREND');
@@ -555,6 +566,33 @@ export class PortfolioHarvester {
       harvestedUsd: 0,
       message: action === 'SWEEP_ALL' ? 'No open positions currently in net profit.' : `Position ${targetSymbol} not found or not in profit.`,
     };
+  }
+
+  private pushStopLossOnChain(trade: TradeRecord): void {
+    if (trade.isPaper) return;
+    const now = Date.now();
+    const sym = trade.symbol;
+    const lastTime = this.lastSlPushTime[sym] || 0;
+    const lastSl = this.lastPushedSl[sym] || 0;
+
+    // Minimum 10 seconds between pushes to avoid tx queue spam & sequence number conflicts
+    if (now - lastTime < 10000) return;
+
+    // Minimum meaningful price change (0.05%)
+    if (lastSl > 0 && Math.abs(trade.stopLoss - lastSl) / lastSl < 0.0005) return;
+
+    this.lastSlPushTime[sym] = now;
+    this.lastPushedSl[sym] = trade.stopLoss;
+
+    mcpClient.setTpSl({
+      symbol: trade.symbol,
+      slTrigger: trade.stopLoss,
+      tpTrigger: trade.takeProfit > 0 ? trade.takeProfit : undefined,
+    }).then(() => {
+      logger.info(`🔗 [ON-CHAIN SL SYNC] Successfully pushed ratcheted SL ($${trade.stopLoss}) to Decibel for ${trade.symbol}`);
+    }).catch((err: any) => {
+      logger.warn(`⚠️ [ON-CHAIN SL SYNC] Failed to push ratcheted SL to Decibel for ${trade.symbol}: ${err.message}`);
+    });
   }
 }
 

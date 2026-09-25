@@ -220,8 +220,8 @@ class TradeDatabase {
         SET is_manual = 0, 
             strategy_name = 'Turtle Soup & Liquidity Grab', 
             strategy_tags = '["template_turtle_soup"]' 
-        WHERE is_manual = 1 
-          AND (strategy_name = 'Manual Decibel Trade' OR strategy_name IS NULL OR strategy_name = '');
+        WHERE (strategy_name = 'Manual Decibel Trade' OR strategy_name IS NULL OR strategy_name = '')
+          AND (client_order_id IS NULL OR client_order_id NOT LIKE 'manual-user-override%');
       `);
     } catch {}
   }
@@ -369,15 +369,27 @@ class TradeDatabase {
           LIMIT 1
         `).get(clientOrderId, clientOrderId, txVersion || '') as any;
 
-        // 2. If close fill and no exact match by ID, match active OPEN trade on same symbol
+        // 2. If close fill and no exact match by ID, match active or recently closed trade on same symbol
         if (!existing && isClose) {
           existing = this.db.prepare(`
             SELECT * FROM trades
             WHERE (symbol = ? OR symbol = ? OR symbol = ?)
-              AND status = 'OPEN'
+              AND status IN ('OPEN', 'open', 'CLOSED_MANUAL', 'closed_manual')
             ORDER BY opened_at DESC
             LIMIT 1
           `).get(normSymbol, altSymbol, rawSym) as any;
+
+          // If still not matched, check trades on this symbol within 24h window
+          if (!existing) {
+            existing = this.db.prepare(`
+              SELECT * FROM trades
+              WHERE (symbol = ? OR symbol = ? OR symbol = ?)
+                AND ABS(COALESCE(closed_at, opened_at) - ?) < 86400000
+                AND id NOT LIKE 'txn-%'
+              ORDER BY ABS(COALESCE(closed_at, opened_at) - ?) ASC
+              LIMIT 1
+            `).get(normSymbol, altSymbol, rawSym, timestamp, timestamp) as any;
+          }
         }
 
         // 3. If open fill and no exact match by ID, check if a closed trade without entry_price exists
@@ -393,6 +405,12 @@ class TradeDatabase {
 
         if (existing) {
           if (isClose) {
+            const finalStatus = pnl > 0.01 ? 'CLOSED_TP' : (pnl < -0.01 ? 'CLOSED_SL' : 'CLOSED');
+            const smartReason = pnl > 0.01 ? 'TRAILING_TP' : (pnl < -0.01 ? 'STOP_LOSS' : 'ON_CHAIN_DEX_CLOSE');
+            const stratName = (!existing.strategy_name || existing.strategy_name === 'Manual Decibel Trade') && isAgent
+              ? 'Turtle Soup & Liquidity Grab'
+              : (existing.strategy_name || (isAgent ? 'Turtle Soup & Liquidity Grab' : 'Manual Decibel Trade'));
+
             this.db.prepare(`
               UPDATE trades 
               SET tx_version = COALESCE(?, tx_version),
@@ -400,12 +418,15 @@ class TradeDatabase {
                   closed_at = ?,
                   fee_usd = fee_usd + ?,
                   realized_pnl = ?,
-                  status = 'CLOSED',
+                  status = ?,
+                  exit_reason = ?,
+                  strategy_name = ?,
+                  is_manual = CASE WHEN ? = 1 THEN 0 ELSE is_manual END,
                   raw_onchain_data = ?,
                   action = ?,
                   side = ?
               WHERE id = ?
-            `).run(txVersion || null, price, timestamp, fee, pnl, JSON.stringify(oct), action, side, existing.id);
+            `).run(txVersion || null, price, timestamp, fee, pnl, finalStatus, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
           } else {
             // Open fill updates entry parameters
             this.db.prepare(`

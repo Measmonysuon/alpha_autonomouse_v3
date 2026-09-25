@@ -15,6 +15,7 @@ import { superchargeClient } from './simlab/supercharge-client';
 import { tradeExecutor } from './trades/executor';
 import { portfolioHarvester } from './engine/harvester';
 import { startApiServer, agentState, registerScanTrigger, seedMarketsForPairs } from './api-server';
+import { getSimPairDirective } from './strategy/manager';
 import { startSimPipelineConsumer, stopSimPipelineConsumer } from './pipeline/sim-consumer';
 import { startTelemetryFeeder, stopTelemetryFeeder } from './pipeline/telemetry-feeder';
 import { telegramNotifier } from './notify/telegram';
@@ -119,10 +120,16 @@ async function runTradingCycle(): Promise<void> {
               }))
             : undefined;
 
+          const simDir = getSimPairDirective(symbol);
+          const orderflow = simDir?.orderflow;
+          const fundingRate = typeof orderflow?.fundingRate === 'number' ? orderflow.fundingRate : 0.0001;
+          const oiChange24h = typeof orderflow?.oiChange24h === 'number' ? orderflow.oiChange24h : 0.0;
+          const lsRatio = typeof orderflow?.lsRatio === 'number' ? orderflow.lsRatio : 1.0;
+
           const signal = standaloneEngine.evaluateSetup(symbol, klines, cached1hBars, {
-            fundingRate: 0.01,
-            oiChange24h: 1.2,
-            lsRatio: 1.05,
+            fundingRate,
+            oiChange24h,
+            lsRatio,
           });
 
           // Market metrics
@@ -187,9 +194,9 @@ async function runTradingCycle(): Promise<void> {
             action,
             confidence,
             riskLevel,
-            fundingRate: 0.01,
-            coinglassOIChange: 1.2,
-            coinglassLSRatio: 1.05,
+            fundingRate,
+            coinglassOIChange: oiChange24h,
+            coinglassLSRatio: lsRatio,
             strategyName: signal.strategyName,
             candlestick: {
               rsi14: ind.rsi14,

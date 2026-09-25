@@ -125,6 +125,15 @@ export class RiskGuard {
 
     const leverage = Math.min(signal.suggestedLeverage || 3, config.MAX_LEVERAGE || 5);
     const positionSizeUsd = targetAllocUsd * leverage;
+
+    // Safety sanity check: block anomalous sizing beyond configured budget x maxLeverage
+    const maxAllowedNotional = (config.BUDGET_USD * (config.MAX_LEVERAGE || 5)) * 1.10;
+    if (positionSizeUsd > maxAllowedNotional) {
+      const reason = `🛑 Safety Cap: Sizing calculation anomaly ($${positionSizeUsd.toFixed(2)}) exceeds absolute max allowable notional ($${maxAllowedNotional.toFixed(2)}). Order aborted.`;
+      logger.error(`[Risk Guard] ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
     const positionSizeBase = signal.entryPrice > 0 ? positionSizeUsd / signal.entryPrice : 0;
 
     return {
