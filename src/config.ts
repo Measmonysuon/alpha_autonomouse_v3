@@ -57,9 +57,14 @@ const configSchema = z.object({
     if (sub && sub.startsWith('0x') && !sub.includes('your_') && sub.length >= 10) {
       return `desk-${sub.slice(2, 10)}`;
     }
-    return 'alpha_client_v2';
+    try {
+      const { resolveMachineId } = require('./utils/machine-id');
+      return resolveMachineId().clientId;
+    } catch {
+      return `v3-${Date.now().toString(36)}`;
+    }
   }),
-  CLIENT_NAME: z.string().default(() => envOrFallback('CLIENT_NAME') || 'Alpha Autonomous Client v2'),
+  CLIENT_NAME: z.string().default(() => envOrFallback('CLIENT_NAME') || 'Alpha Autonomous Client v3'),
   CLIENT_API_KEY: z.string().default(() => envOrFallback('CLIENT_API_KEY', 'SIMLAB_CONNECTION_TOKEN', 'SIMLAB_KEY') || ''),
   AUTONOMOUS_MODE: z.literal('full').default('full'),
   MIN_CONFIDENCE_PCT: z.coerce.number().default(75),
@@ -348,29 +353,42 @@ export const config = {
 //     → preserve current ID to avoid breaking the boundClientId license binding.
 (function resolveSwarmIdentity() {
   const explicitEnvId = process.env.CLIENT_ID ? process.env.CLIENT_ID.trim() : '';
-  if (explicitEnvId) {
+  const GENERIC_DEFAULTS = [
+    'desk-v2-local',
+    'alpha-client-v2',
+    'alpha_client_v2',
+    'alpha-client-v3',
+    'alpha_client_v3',
+    'desk-01-jetson',
+    'desk-local-test',
+  ];
+
+  const currentId = (explicitEnvId || config.CLIENT_ID || '').trim();
+  const isGenericId = GENERIC_DEFAULTS.includes(currentId.toLowerCase());
+  const isMissingId = !currentId;
+
+  // 1. If operator explicitly configured a custom, non-generic ID in .env → always respect it!
+  if (explicitEnvId && !isGenericId) {
     config.CLIENT_ID = explicitEnvId;
     return;
   }
 
-  const GENERIC_DEFAULTS = ['desk-v2-local', 'alpha-client-v2'];
-  const currentId = config.CLIENT_ID.trim();
-  const isGenericId = GENERIC_DEFAULTS.includes(currentId.toLowerCase());
-  const isMissingId = !currentId;
-
+  // 2. Operator has a custom or subaccount-derived ID already set
   if (!isGenericId && !isMissingId) {
-    // Operator has a custom or subaccount-derived ID — respect it, just audit-log identity
-    const { persistIdentity } = require('./utils/machine-id');
-    return; // Nothing to do
+    return;
   }
 
   // ── Check if already a stable persisted identity on disk ────────────────────
-  // This covers existing users who ran a previous build that wrote identity.json
   const identityFilePath = require('path').resolve(process.cwd(), 'data/identity.json');
   try {
     if (require('fs').existsSync(identityFilePath)) {
       const saved = JSON.parse(require('fs').readFileSync(identityFilePath, 'utf8'));
-      if (saved?.clientId && typeof saved.clientId === 'string') {
+      if (
+        saved?.clientId &&
+        typeof saved.clientId === 'string' &&
+        !GENERIC_DEFAULTS.includes(saved.clientId.toLowerCase()) &&
+        (saved.clientId.startsWith('v3-') || saved.clientId.startsWith('desk-'))
+      ) {
         config.CLIENT_ID = saved.clientId;
         process.stdout.write(
           `\n🆔 [MACHINE IDENTITY] Restored stable CLIENT_ID from disk: ${saved.clientId} (Method: ${saved.method || 'persisted'})\n`
@@ -381,24 +399,21 @@ export const config = {
   } catch { /* unreadable — continue to generate */ }
 
   // ── Check if this user already has a Sim Lab license key saved ───────────────
-  // If yes, they are an EXISTING user: do NOT change their ID or we break their
-  // boundClientId license binding in simlab-api-licenses.json.
   const hasSimLabKey = Boolean(
     (config.SIMLAB_KEY && config.SIMLAB_KEY.trim().startsWith('simlab_live_')) ||
     (config.CLIENT_API_KEY && config.CLIENT_API_KEY.trim().startsWith('simlab_live_'))
   );
 
-  if (hasSimLabKey && isGenericId) {
+  if (hasSimLabKey && isGenericId && explicitEnvId) {
     // Existing user with generic ID + active license → preserve their ID as-is.
-    // Sim Lab already knows them by this ID; a change would break license matching.
+    config.CLIENT_ID = explicitEnvId;
     process.stdout.write(
-      `\n🆔 [MACHINE IDENTITY] Existing Sim Lab user detected — preserving CLIENT_ID: ${currentId} to maintain license binding.\n` +
-      `   ⚠️  Consider setting a unique CLIENT_ID in .env to avoid conflicts with other users.\n`
+      `\n🆔 [MACHINE IDENTITY] Existing Sim Lab user detected — preserving CLIENT_ID: ${explicitEnvId} to maintain license binding.\n`
     );
     return;
   }
 
-  // ── Brand-new install: generate machine-stable ID ────────────────────────────
+  // ── Brand-new install or generic collision install: generate machine-stable ID ──
   const apiHint = (config.CLIENT_API_KEY || config.SIMLAB_KEY || '').slice(0, 8);
   const { resolveMachineId: resolve } = require('./utils/machine-id');
   const identity = resolve(apiHint);
@@ -406,7 +421,7 @@ export const config = {
 
   const method = identity.method === 'mac_hash' ? 'MAC Hash' : 'Persisted UUID';
   process.stdout.write(
-    `\n🆔 [MACHINE IDENTITY] New CLIENT_ID assigned: ${identity.clientId} (Method: ${method}, Stable: ${identity.isStable})\n`
+    `\n🆔 [MACHINE IDENTITY] Unique CLIENT_ID assigned: ${identity.clientId} (Method: ${method}, Stable: ${identity.isStable})\n`
   );
 })();
 

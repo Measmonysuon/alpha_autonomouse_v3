@@ -23,7 +23,7 @@ import os from 'os';
 import path from 'path';
 
 const IDENTITY_FILE = path.resolve(process.cwd(), 'data/identity.json');
-const ID_PREFIX = 'v2';
+const ID_PREFIX = 'v3';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -742,9 +742,9 @@ export class SimLabSuperchargeClient {
       // ── Client & Routing Identity ──
       token: this.rawToken,
       keyId: this.keyId,
-      clientId: config.CLIENT_ID || (cleanSubaccount ? `alpha_client_${cleanSubaccount.slice(0, 10)}` : 'desk-01-jetson'),
-      clientName: config.CLIENT_NAME || 'ALPHA AUTONOMOUS TRADER',
-      clientVersion: '1.0.0',
+      clientId: config.CLIENT_ID || (cleanSubaccount ? `desk-${cleanSubaccount.slice(2, 10)}` : 'v3-standalone'),
+      clientName: config.CLIENT_NAME || (isClientConfigured() ? 'Alpha Autonomous Client v3' : 'Alpha Client v3 (Pre-Onboard)'),
+      clientVersion: '3.0.0',
       operatingMode: this.isConnected ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
       isSimLabConnected: this.isConnected,
       timestamp: Date.now(),
@@ -933,7 +933,7 @@ export class SimLabSuperchargeClient {
           authHeaders['Authorization'] = `Bearer ${this.rawToken}`;
           authHeaders['x-api-key'] = this.rawToken;
         }
-        authHeaders['x-client-id'] = config.CLIENT_ID || 'alpha_client_v2';
+        authHeaders['x-client-id'] = config.CLIENT_ID || 'v3-client';
 
         const bundleRes = await axios.get(`${targetBaseUrl}/api/pipeline/alpha-bundle`, {
           headers: authHeaders,

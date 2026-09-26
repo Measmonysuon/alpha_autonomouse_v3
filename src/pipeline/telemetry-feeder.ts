@@ -392,8 +392,8 @@ export async function pushInstantVeto(
     const instantPayload: any = {
       ...(basePayload || {}),
       timestamp: Date.now(),
-      clientId: config.CLIENT_ID || 'alpha_client_v2',
-      botId: config.CLIENT_ID || 'alpha_client_v2',
+      clientId: config.CLIENT_ID || 'v3-client',
+      botId: config.CLIENT_ID || 'v3-client',
       botName: config.CLIENT_NAME || 'Alpha Autonomous Client v3',
       source: 'live_mainnet',
       triggerReason: 'instant_trap_veto',
@@ -407,7 +407,7 @@ export async function pushInstantVeto(
     };
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'X-Client-Id': config.CLIENT_ID || 'alpha_client_v2',
+      'X-Client-Id': config.CLIENT_ID || 'v3-client',
     };
     if (config.CLIENT_API_KEY) {
       headers['Authorization'] = `Bearer ${config.CLIENT_API_KEY}`;
