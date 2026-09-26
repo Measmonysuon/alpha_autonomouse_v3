@@ -5,7 +5,7 @@
   "main": "desktop/main.js",
   "scripts": {
     "build": "rm -rf dist && tsc --project tsconfig.json",
-    "build:release": "node scripts/build-release.js",
+    "build:release": "node scripts/build-release.js --skip-electron",
     "build:desktop": "npm run build && electron-builder",
     "desktop": "electron desktop/main.js",
     "start": "node dist/index.js",
