@@ -638,6 +638,7 @@ export class TradeExecutor {
             trade.exitReason = smartReason;
             this.missingOnChainCount.delete(symNorm);
             this.missingFirstSeenAt.delete(symNorm);
+            this.saveTrades();
             this.notifyTradeClosed(trade);
             modified = true;
           } else {
@@ -1232,6 +1233,9 @@ export class TradeExecutor {
             setTimeout(() => this.clearExecutionInFlight(symKey), 8000);
           });
         }
+
+        // Commit trade state immediately to SQLite and disk before firing telemetry and alerts
+        this.saveTrades();
 
         // Send real-time Telegram alert
         telegramNotifier.notifyTradeClosed(trade).catch(() => { });
