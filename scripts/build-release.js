@@ -214,12 +214,16 @@ try {
 }
 
 // ── 7. Build Native Electron Desktop Application Packages (.dmg & .exe) ─────
-console.log('🖥️ Step 7: Packaging Electron Native Desktop Applications (.dmg & .exe)...');
-try {
-  execSync('npx electron-builder --mac dmg --win nsis', { cwd: ROOT_DIR, stdio: 'inherit' });
-  console.log('✅ Electron desktop application build complete.');
-} catch (err) {
-  console.warn('⚠️ Desktop installer packaging notice:', err.message);
+if (process.argv.includes('--skip-electron') || process.env.SKIP_ELECTRON === 'true') {
+  console.log('⏩ Step 7: Skipping Electron desktop application build (--skip-electron).');
+} else {
+  console.log('🖥️ Step 7: Packaging Electron Native Desktop Applications (.dmg & .exe)...');
+  try {
+    execSync('npx electron-builder --mac dmg --win nsis', { cwd: ROOT_DIR, stdio: 'inherit' });
+    console.log('✅ Electron desktop application build complete.');
+  } catch (err) {
+    console.warn('⚠️ Desktop installer packaging notice:', err.message);
+  }
 }
 
 console.log('\n================================================================================');

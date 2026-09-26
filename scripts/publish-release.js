@@ -88,8 +88,6 @@ async function main() {
 - **Self-Healing Connectivity**: Resilient auto-reconnect backoff loop ensuring zero manual intervention during Sim Lab server maintenance.
 
 #### 📦 Downloadable Packages:
-- \`Alpha Autonomous Client v3-3.0.0-arm64.dmg\` (macOS Apple Silicon Desktop App)
-- \`Alpha Autonomous Client v3 Setup 3.0.0.exe\` (Windows Desktop Installer)
 - \`alpha-client-v3-macos.zip\` (macOS Standalone 1-Click Bundle)
 - \`alpha-client-v3-windows.zip\` (Windows Standalone 1-Click Bundle)
 - \`alpha-client-v3-docker.zip\` (Docker Production Compose Bundle)`;
@@ -122,12 +120,8 @@ async function main() {
   const releaseDir = path.resolve(__dirname, '../release');
   const releaseFiles = fs.readdirSync(releaseDir).filter(f => {
     const ext = path.extname(f).toLowerCase();
-    return (ext === '.zip' || ext === '.dmg' || ext === '.exe') && !fs.statSync(path.join(releaseDir, f)).isDirectory();
-  }).sort((a, b) => {
-    if (a.endsWith('.zip') && !b.endsWith('.zip')) return -1;
-    if (!a.endsWith('.zip') && b.endsWith('.zip')) return 1;
-    return a.localeCompare(b);
-  });
+    return ext === '.zip' && !fs.statSync(path.join(releaseDir, f)).isDirectory();
+  }).sort();
 
   // Delete existing assets if re-uploading
   if (release.assets && release.assets.length > 0) {
