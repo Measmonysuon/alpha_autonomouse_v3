@@ -35,36 +35,39 @@ function apiRequest(method, endpoint, body) {
   });
 }
 
+const { execSync } = require('child_process');
+
 function uploadAsset(uploadUrl, filePath) {
-  return new Promise((resolve, reject) => {
-    const fileName = path.basename(filePath);
-    const fileStats = fs.statSync(filePath);
-    const urlStr = uploadUrl.replace('{?name,label}', `?name=${encodeURIComponent(fileName)}`);
-    const url = new URL(urlStr);
+  const fileName = path.basename(filePath);
+  const fileStats = fs.statSync(filePath);
+  const cleanUrl = uploadUrl.replace('{?name,label}', `?name=${encodeURIComponent(fileName)}`);
 
-    let contentType = 'application/octet-stream';
-    if (fileName.endsWith('.zip')) contentType = 'application/zip';
-    else if (fileName.endsWith('.dmg')) contentType = 'application/x-apple-diskimage';
-    else if (fileName.endsWith('.exe')) contentType = 'application/vnd.microsoft.portable-executable';
+  let contentType = 'application/octet-stream';
+  if (fileName.endsWith('.zip')) contentType = 'application/zip';
+  else if (fileName.endsWith('.dmg')) contentType = 'application/x-apple-diskimage';
+  else if (fileName.endsWith('.exe')) contentType = 'application/vnd.microsoft.portable-executable';
 
-    const req = https.request({
-      hostname: url.hostname,
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Node-Release-Uploader',
-        'Authorization': `token ${TOKEN}`,
-        'Content-Type': contentType,
-        'Content-Length': fileStats.size
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const curlCmd = `curl -s -S -X POST ` +
+        `-H "Authorization: token ${TOKEN}" ` +
+        `-H "Content-Type: ${contentType}" ` +
+        `-H "User-Agent: Node-Release-Uploader" ` +
+        `--data-binary @"${filePath}" ` +
+        `"${cleanUrl}"`;
+
+      const output = execSync(curlCmd, { maxBuffer: 100 * 1024 * 1024, encoding: 'utf-8' });
+      const parsed = JSON.parse(output || '{}');
+      if (parsed.id || parsed.state === 'uploaded') {
+        return { status: 201, body: parsed };
+      } else if (parsed.errors) {
+        console.warn(`Attempt ${attempt} upload error for ${fileName}:`, parsed.message || parsed.errors);
       }
-    }, (res) => {
-      let buf = '';
-      res.on('data', chunk => buf += chunk);
-      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(buf || '{}') }));
-    });
-    req.on('error', reject);
-    fs.createReadStream(filePath).pipe(req);
-  });
+    } catch (err) {
+      console.warn(`Attempt ${attempt} failed for ${fileName}:`, err.message);
+    }
+  }
+  return { status: 500, body: {} };
 }
 
 async function main() {
@@ -120,6 +123,10 @@ async function main() {
   const releaseFiles = fs.readdirSync(releaseDir).filter(f => {
     const ext = path.extname(f).toLowerCase();
     return (ext === '.zip' || ext === '.dmg' || ext === '.exe') && !fs.statSync(path.join(releaseDir, f)).isDirectory();
+  }).sort((a, b) => {
+    if (a.endsWith('.zip') && !b.endsWith('.zip')) return -1;
+    if (!a.endsWith('.zip') && b.endsWith('.zip')) return 1;
+    return a.localeCompare(b);
   });
 
   // Delete existing assets if re-uploading
