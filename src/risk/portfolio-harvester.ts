@@ -488,6 +488,38 @@ export class PortfolioHarvester {
         factors.push(`🩸 Adverse Bleed Decay: Drawdown ${pnlPct.toFixed(1)}% without breakeven (+${weights.adverseBleedMax}pts)`);
       }
 
+      // ── Time Stagnation Decay: +5 pts per hour after 2 hours without breakeven ──
+      const holdTimeMs = trade.openedAt ? Date.now() - trade.openedAt : 0;
+      const holdHours = holdTimeMs > 0 ? (holdTimeMs / (1000 * 60 * 60)) : (trade.barsHeld ? trade.barsHeld * 0.25 : 0);
+
+      if (holdHours >= 2.0 && !breakevenLocked) {
+        const hoursPast2 = holdHours - 2.0;
+        const stagnationPts = Math.min(25, Math.floor(hoursPast2) * 5 + 5);
+        score += stagnationPts;
+        factors.push(`⏱️ Stagnation Decay: Open ${holdHours.toFixed(1)}h without breakeven (+${stagnationPts}pts)`);
+      }
+
+      // ── Stagnation SL Ratchet (Tightens SL closer on prolonged adverse chop after 2.5h) ─────
+      if (holdHours >= 2.5 && pnlPct < 0 && score >= 75 && !breakevenLocked && trade.stopLoss && currentPrice > 0) {
+        const initialStopDistance = Math.abs(trade.entryPrice - trade.stopLoss);
+        if (initialStopDistance > 0) {
+          const tightenedStopPrice = isLong
+            ? trade.entryPrice - (initialStopDistance * 0.6) // reduce risk window by 40%
+            : trade.entryPrice + (initialStopDistance * 0.6);
+
+          const isTighter = isLong
+            ? (tightenedStopPrice > trade.stopLoss && tightenedStopPrice < currentPrice)
+            : (tightenedStopPrice < trade.stopLoss && tightenedStopPrice > currentPrice);
+
+          if (isTighter) {
+            trade.stopLoss = Number(tightenedStopPrice.toFixed(4));
+            factors.push(`⏱️ Stagnation SL Tightened: Risk window reduced by 40% after ${holdHours.toFixed(1)}h chop`);
+            logger.info(`⏱️ [STAGNATION RATCHET] ${trade.symbol} stop loss tightened to $${trade.stopLoss} after ${holdHours.toFixed(1)}h stagnation.`);
+            this.pushStopLossOnChain(trade);
+          }
+        }
+      }
+
       score = Math.min(95, Math.max(15, Math.round(score)));
 
       let recommendation: 'HARVEST' | 'RUNNER' | 'HOLD' = 'HOLD';
@@ -497,22 +529,26 @@ export class PortfolioHarvester {
         recommendation = 'RUNNER';
       }
 
-      // ── Defensive Bleed Cutting (Saves capital from slow bleed positions) ──────
-      // Calibrated to 15% margin loss (matching the Dual-Layer Hard Stop Loss armor).
-      // Never prematurely close trades protected by on-chain Hard SL or manual on-chain trades.
+      // ── Defensive Bleed & Stagnation Cutting (Saves capital from slow bleed / zombie trades) ──
       const isManual = Boolean(trade.notes?.includes('Manual') || trade.strategyName?.includes('Manual'));
       const hasOnChainArmor = Boolean((trade.hardStopLoss && trade.hardStopLoss > 0) || isManual || trade.strategyName?.includes('On-Chain'));
       const isBleedingOut = !hasOnChainArmor && pnlPct <= -15.0 && score >= (this.config.harvestScoreThreshold || 75) && !breakevenLocked;
-      if (isBleedingOut && this.config.enableDefensiveCut !== false) {
+      const isStagnantBleed = !isManual && holdHours >= 3.5 && pnlPct <= -3.0 && score >= 85 && !breakevenLocked;
+
+      if ((isBleedingOut || isStagnantBleed) && this.config.enableDefensiveCut !== false) {
         recommendation = 'HARVEST';
-        factors.push('🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital');
+        const isStagCut = isStagnantBleed && !isBleedingOut;
+        factors.push(isStagCut
+          ? `⏱️ STAGNATION TIME-CUT: Prolonged adverse chop (${holdHours.toFixed(1)}h, ${pnlPct.toFixed(1)}% PnL), liberating capital`
+          : '🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital'
+        );
         if (this.config.enabled && !trade.isPaper) {
           const symKey = trade.symbol.replace('-', '/').toUpperCase();
           tradeExecutor.markExecutionInFlight(symKey);
           trade.status = 'closed_sl';
           trade.exitPrice = currentPrice;
           trade.closedAt = Date.now();
-          trade.exitReason = 'DEFENSIVE_BLEED_CUT';
+          trade.exitReason = isStagCut ? 'STAGNATION_TIME_CUT' : 'DEFENSIVE_BLEED_CUT';
           trade.pnlPct = Number(pnlPct.toFixed(2));
           trade.pnlUsd = Number(pnlUsd.toFixed(2));
 
@@ -520,24 +556,24 @@ export class PortfolioHarvester {
           trade.lifecycleEvents.push({
             timestamp: trade.closedAt,
             stage: 'EXIT',
-            title: `🩸 Defensive Bleed Cut @ $${currentPrice.toFixed(4)}`,
-            description: `Liberated capital before max SL hit. Drawdown capped at ${pnlPct.toFixed(2)}%.`,
+            title: isStagCut ? `⏱️ Stagnation Time-Cut @ $${currentPrice.toFixed(4)}` : `🩸 Defensive Bleed Cut @ $${currentPrice.toFixed(4)}`,
+            description: `Liberated capital after ${holdHours.toFixed(1)}h stagnation. Drawdown capped at ${pnlPct.toFixed(2)}%.`,
             price: currentPrice,
             pnlUsd: pnlUsd,
             details: [
               `Vulnerability score high (${score}/100).`,
-              `Adverse bleed detected. Exited on-chain to protect capital.`
+              `Stagnation time decay limit exceeded (${holdHours.toFixed(1)}h). Exited on-chain to protect capital.`
             ]
           });
-          trade.exitSummary = `Defensive bleed cut executed to stop capital hemorrhage before hitting full hard stop loss. Capital liberated.`;
+          trade.exitSummary = `${isStagCut ? 'Stagnation cut' : 'Defensive bleed cut'} executed after ${holdHours.toFixed(1)}h. Capital liberated for fresh opportunities.`;
 
           tradeExecutor.saveTrades();
           mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during defensive bleed cut: ${err.message}`);
+            logger.warn(`Could not close on-chain position for ${trade.symbol} during ${trade.exitReason}: ${err.message}`);
           }).finally(() => {
             setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
           });
-          logger.warn(`🩸 [DEFENSIVE BLEED CUT] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% to stop capital hemorrhage.`);
+          logger.warn(`⏱️ [${trade.exitReason}] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% after ${holdHours.toFixed(1)}h to liberate capital.`);
           tradeExecutor.notifyTradeClosed(trade);
         }
       }

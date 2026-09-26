@@ -1294,13 +1294,17 @@ function dbTradeToFrontendTrade(t: DbTrade): any {
     allocatedUsd: t.allocated_usd,
     allocated_usd: t.allocated_usd,
     leverage: t.leverage,
-    realized_pnl_amount: t.realized_pnl,
-    pnlUsd: t.realized_pnl,
+    realized_pnl_amount: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
+    pnlUsd: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
+    netPnlUsd: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
+    net_pnl: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
+    grossPnlUsd: Number(Number(t.realized_pnl || 0).toFixed(4)),
+    gross_pnl: Number(Number(t.realized_pnl || 0).toFixed(4)),
     pnlPct: t.realized_pnl_pct,
     realized_pnl_pct: t.realized_pnl_pct,
-    fee_amount: t.fee_usd,
-    feeUsd: t.fee_usd,
-    fee_usd: t.fee_usd,
+    fee_amount: Number(Number(t.fee_usd || 0).toFixed(4)),
+    feeUsd: Number(Number(t.fee_usd || 0).toFixed(4)),
+    fee_usd: Number(Number(t.fee_usd || 0).toFixed(4)),
     status: (t.status || 'closed').toLowerCase(),
     openedAt: t.opened_at,
     opened_at: t.opened_at,
@@ -1352,6 +1356,9 @@ function syncTradesToSqlite(trades: any[]): void {
         stratName = 'Turtle Soup & Liquidity Grab';
       }
 
+      const fee = t.feeUsd !== undefined ? Number(t.feeUsd) : (t.fee_amount !== undefined ? Number(t.fee_amount) : (t.fee_usd !== undefined ? Number(t.fee_usd) : 0));
+      const grossPnl = t.grossPnlUsd !== undefined ? Number(t.grossPnlUsd) : (t.gross_pnl !== undefined ? Number(t.gross_pnl) : pnl);
+
       dbClient.upsertTrade({
         id: t.id,
         client_order_id: t.orderId || t.id,
@@ -1365,7 +1372,8 @@ function syncTradesToSqlite(trades: any[]): void {
         size: Number(t.sizeBase || t.size || 0),
         allocated_usd: Number(t.allocatedUsd || t.allocated_usd || 0),
         leverage: Number(t.leverage || 1),
-        realized_pnl: pnl,
+        realized_pnl: grossPnl,
+        fee_usd: fee,
         realized_pnl_pct: t.pnlPct !== undefined ? Number(t.pnlPct) : (t.realized_pnl_pct !== undefined ? Number(t.realized_pnl_pct) : 0),
         status: tradeStatus,
         opened_at: Number(t.openedAt || t.opened_at || Date.now()),

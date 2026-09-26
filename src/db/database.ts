@@ -46,6 +46,9 @@ export interface SegmentedDbStats {
   losses: number;
   winRate: number;
   totalPnlUsd: number;
+  netPnlUsd: number;
+  grossPnlUsd: number;
+  totalFeesUsd: number;
   totalProfitUsd: number;
   totalLossUsd: number;
 
@@ -54,6 +57,7 @@ export interface SegmentedDbStats {
   autoLosses: number;
   autoWinRate: number;
   autoPnlUsd: number;
+  autoGrossPnlUsd?: number;
   autoProfitUsd: number;
   autoLossUsd: number;
 
@@ -62,6 +66,7 @@ export interface SegmentedDbStats {
   manualLosses: number;
   manualWinRate: number;
   manualPnlUsd: number;
+  manualGrossPnlUsd?: number;
   manualProfitUsd: number;
   manualLossUsd: number;
 }
@@ -324,6 +329,8 @@ class TradeDatabase {
       return ta - tb;
     });
 
+    const openQueues = new Map<string, Array<{ size: number; fee: number; price: number; time: number }>>();
+
     for (const oct of sorted) {
       const clientOrderId = String(oct.client_order_id || '');
       const isAgent = oct.isManual !== undefined
@@ -356,6 +363,32 @@ class TradeDatabase {
       const rawSym = oct.symbol || 'DEX';
       const normSymbol = rawSym.replace('-', '/').toUpperCase();
       const altSymbol = rawSym.replace('/', '-').toUpperCase();
+
+      let roundTripFee = fee;
+      if (isOpen) {
+        const q = openQueues.get(normSymbol) || [];
+        q.push({ size, fee, price, time: timestamp });
+        openQueues.set(normSymbol, q);
+      } else if (isClose) {
+        let closeRemaining = size;
+        let matchedOpenFee = 0;
+        const q = openQueues.get(normSymbol) || [];
+        while (closeRemaining > 0 && q.length > 0) {
+          const top = q[0];
+          if (top.size <= closeRemaining + 1e-6) {
+            matchedOpenFee += top.fee;
+            closeRemaining -= top.size;
+            q.shift();
+          } else {
+            const ratio = closeRemaining / top.size;
+            matchedOpenFee += top.fee * ratio;
+            top.fee -= top.fee * ratio;
+            top.size -= closeRemaining;
+            closeRemaining = 0;
+          }
+        }
+        roundTripFee = Number((matchedOpenFee + fee).toFixed(6));
+      }
 
       if (this.db) {
         // 1. Try matching by exact client_order_id or tx_version
@@ -426,7 +459,7 @@ class TradeDatabase {
                   action = COALESCE(action, ?),
                   side = COALESCE(side, ?)
               WHERE id = ?
-            `).run(txVersion || null, price, price, timestamp, fee, pnl, finalStatus, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
+            `).run(txVersion || null, price, price, timestamp, roundTripFee, pnl, finalStatus, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
           } else {
             // Open fill updates entry parameters
             this.db.prepare(`
@@ -468,7 +501,7 @@ class TradeDatabase {
         allocated_usd: (price * size),
         leverage: 1,
         realized_pnl: pnl,
-        fee_usd: fee,
+        fee_usd: isClose ? roundTripFee : fee,
         status: isClose ? 'CLOSED' : 'OPEN',
         opened_at: timestamp,
         closed_at: isClose ? timestamp : undefined,
@@ -602,11 +635,13 @@ class TradeDatabase {
       const calc = (arr: DbTrade[]) => {
         const wins = arr.filter((t) => (t.realized_pnl || 0) > 0).length;
         const losses = arr.filter((t) => (t.realized_pnl || 0) < 0).length;
-        const totalPnl = arr.reduce((acc, t) => acc + (t.realized_pnl || 0), 0);
+        const grossPnl = arr.reduce((acc, t) => acc + (t.realized_pnl || 0), 0);
+        const fees = arr.reduce((acc, t) => acc + (t.fee_usd || 0), 0);
+        const netPnl = grossPnl - fees;
         const profit = arr.reduce((acc, t) => acc + ((t.realized_pnl || 0) > 0 ? (t.realized_pnl || 0) : 0), 0);
         const loss = arr.reduce((acc, t) => acc + ((t.realized_pnl || 0) < 0 ? (t.realized_pnl || 0) : 0), 0);
         const winRate = arr.length > 0 ? (wins / arr.length) * 100 : 0;
-        return { count: arr.length, wins, losses, winRate, totalPnl, profit, loss };
+        return { count: arr.length, wins, losses, winRate, totalPnl: netPnl, grossPnl, netPnl, fees, profit, loss };
       };
 
       const tStats = calc(closed);
@@ -619,6 +654,9 @@ class TradeDatabase {
         losses: tStats.losses,
         winRate: Math.round(tStats.winRate * 10) / 10,
         totalPnlUsd: Math.round(tStats.totalPnl * 100) / 100,
+        netPnlUsd: Math.round(tStats.netPnl * 100) / 100,
+        grossPnlUsd: Math.round(tStats.grossPnl * 100) / 100,
+        totalFeesUsd: Math.round(tStats.fees * 100) / 100,
         totalProfitUsd: Math.round(tStats.profit * 100) / 100,
         totalLossUsd: Math.round(tStats.loss * 100) / 100,
 
@@ -627,6 +665,7 @@ class TradeDatabase {
         autoLosses: aStats.losses,
         autoWinRate: Math.round(aStats.winRate * 10) / 10,
         autoPnlUsd: Math.round(aStats.totalPnl * 100) / 100,
+        autoGrossPnlUsd: Math.round(aStats.grossPnl * 100) / 100,
         autoProfitUsd: Math.round(aStats.profit * 100) / 100,
         autoLossUsd: Math.round(aStats.loss * 100) / 100,
 
@@ -635,6 +674,7 @@ class TradeDatabase {
         manualLosses: mStats.losses,
         manualWinRate: Math.round(mStats.winRate * 10) / 10,
         manualPnlUsd: Math.round(mStats.totalPnl * 100) / 100,
+        manualGrossPnlUsd: Math.round(mStats.grossPnl * 100) / 100,
         manualProfitUsd: Math.round(mStats.profit * 100) / 100,
         manualLossUsd: Math.round(mStats.loss * 100) / 100,
       };
@@ -643,9 +683,11 @@ class TradeDatabase {
     const totalStmt = this.db.prepare(`
       SELECT
         COUNT(*) as count,
-        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-        COALESCE(SUM(realized_pnl), 0) as totalPnl,
+        SUM(CASE WHEN (realized_pnl - COALESCE(fee_usd, 0)) > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN (realized_pnl - COALESCE(fee_usd, 0)) < 0 THEN 1 ELSE 0 END) as losses,
+        COALESCE(SUM(realized_pnl - COALESCE(fee_usd, 0)), 0) as netPnl,
+        COALESCE(SUM(realized_pnl), 0) as grossPnl,
+        COALESCE(SUM(fee_usd), 0) as totalFees,
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) as profit,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) as loss
       FROM trades
@@ -656,9 +698,11 @@ class TradeDatabase {
     const autoStmt = this.db.prepare(`
       SELECT
         COUNT(*) as count,
-        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-        COALESCE(SUM(realized_pnl), 0) as totalPnl,
+        SUM(CASE WHEN (realized_pnl - COALESCE(fee_usd, 0)) > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN (realized_pnl - COALESCE(fee_usd, 0)) < 0 THEN 1 ELSE 0 END) as losses,
+        COALESCE(SUM(realized_pnl - COALESCE(fee_usd, 0)), 0) as netPnl,
+        COALESCE(SUM(realized_pnl), 0) as grossPnl,
+        COALESCE(SUM(fee_usd), 0) as totalFees,
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) as profit,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) as loss
       FROM trades
@@ -669,9 +713,11 @@ class TradeDatabase {
     const manualStmt = this.db.prepare(`
       SELECT
         COUNT(*) as count,
-        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-        COALESCE(SUM(realized_pnl), 0) as totalPnl,
+        SUM(CASE WHEN (realized_pnl - COALESCE(fee_usd, 0)) > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN (realized_pnl - COALESCE(fee_usd, 0)) < 0 THEN 1 ELSE 0 END) as losses,
+        COALESCE(SUM(realized_pnl - COALESCE(fee_usd, 0)), 0) as netPnl,
+        COALESCE(SUM(realized_pnl), 0) as grossPnl,
+        COALESCE(SUM(fee_usd), 0) as totalFees,
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) as profit,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) as loss
       FROM trades
@@ -688,7 +734,10 @@ class TradeDatabase {
       wins: total.wins || 0,
       losses: total.losses || 0,
       winRate: Math.round(winRate * 10) / 10,
-      totalPnlUsd: Math.round((total.totalPnl || 0) * 100) / 100,
+      totalPnlUsd: Math.round((total.netPnl || 0) * 100) / 100, // Net Realized PnL (aligned with Decibel)
+      netPnlUsd: Math.round((total.netPnl || 0) * 100) / 100,
+      grossPnlUsd: Math.round((total.grossPnl || 0) * 100) / 100,
+      totalFeesUsd: Math.round((total.totalFees || 0) * 100) / 100,
       totalProfitUsd: Math.round((total.profit || 0) * 100) / 100,
       totalLossUsd: Math.round((total.loss || 0) * 100) / 100,
 
@@ -696,7 +745,8 @@ class TradeDatabase {
       autoWins: auto.wins || 0,
       autoLosses: auto.losses || 0,
       autoWinRate: Math.round(autoWinRate * 10) / 10,
-      autoPnlUsd: Math.round((auto.totalPnl || 0) * 100) / 100,
+      autoPnlUsd: Math.round((auto.netPnl || 0) * 100) / 100,
+      autoGrossPnlUsd: Math.round((auto.grossPnl || 0) * 100) / 100,
       autoProfitUsd: Math.round((auto.profit || 0) * 100) / 100,
       autoLossUsd: Math.round((auto.loss || 0) * 100) / 100,
 
@@ -704,7 +754,8 @@ class TradeDatabase {
       manualWins: manual.wins || 0,
       manualLosses: manual.losses || 0,
       manualWinRate: Math.round(manualWinRate * 10) / 10,
-      manualPnlUsd: Math.round((manual.totalPnl || 0) * 100) / 100,
+      manualPnlUsd: Math.round((manual.netPnl || 0) * 100) / 100,
+      manualGrossPnlUsd: Math.round((manual.grossPnl || 0) * 100) / 100,
       manualProfitUsd: Math.round((manual.profit || 0) * 100) / 100,
       manualLossUsd: Math.round((manual.loss || 0) * 100) / 100,
     };

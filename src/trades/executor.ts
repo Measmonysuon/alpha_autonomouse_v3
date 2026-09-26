@@ -82,8 +82,12 @@ export interface TradeRecord {
   exitSummary?: string;
   tp1Hit?: boolean;
   breakevenMoved?: boolean;
+  barsHeld?: number;
   partialRealizedPnlUsd?: number;
   atr?: number;
+  grossPnlUsd?: number;
+  netPnlUsd?: number;
+  feeUsd?: number;
 }
 
 export interface ShadowTrade {
@@ -313,7 +317,10 @@ export class TradeExecutor {
               rawStatus.includes('tp') ? 'closed_tp' :
                 rawStatus.includes('sl') ? 'closed_sl' : 'closed_manual';
 
-          const netPnl = Number((Number(st.realized_pnl || 0) - Number(st.fee_usd || 0)).toFixed(2));
+          const grossPnl = Number(st.realized_pnl || 0);
+          const feeUsd = Number(st.fee_usd || 0);
+          // Authoritative on-chain Net Realized PnL = Gross PnL minus on-chain protocol fees
+          const netPnl = grossPnl - feeUsd;
           const existing = cacheMap.get(st.id);
 
           if (!existing) {
@@ -339,6 +346,9 @@ export class TradeExecutor {
               openedAt: st.opened_at,
               closedAt: st.closed_at ?? undefined,
               pnlUsd: netPnl,
+              netPnlUsd: netPnl,
+              grossPnlUsd: grossPnl,
+              feeUsd: feeUsd,
               pnlPct: st.realized_pnl_pct !== null && st.realized_pnl_pct !== undefined ? Number(st.realized_pnl_pct) : undefined,
               strategyName: st.strategy_name ?? 'Decibel Autonomous Trade',
               exitReason: st.exit_reason ?? undefined,
@@ -350,7 +360,12 @@ export class TradeExecutor {
             cacheMap.set(st.id, trade);
           } else {
             existing.pnlUsd = netPnl;
+            existing.netPnlUsd = netPnl;
+            existing.grossPnlUsd = grossPnl;
+            existing.feeUsd = feeUsd;
             existing.status = status;
+            existing.sizeBase = st.size || existing.sizeBase;
+            existing.entryPrice = st.entry_price || existing.entryPrice;
             // Always refresh the manual flag from DB in case it was updated
             existing.isManual = st.is_manual === 1;
             if (st.exit_price) existing.exitPrice = st.exit_price;
@@ -392,7 +407,8 @@ export class TradeExecutor {
             size: t.sizeBase,
             allocated_usd: t.allocatedUsd,
             leverage: t.leverage,
-            realized_pnl: t.pnlUsd || 0,
+            realized_pnl: t.grossPnlUsd !== undefined ? t.grossPnlUsd : (t.pnlUsd || 0),
+            fee_usd: t.feeUsd || 0,
             realized_pnl_pct: t.pnlPct || 0,
             status: t.status ? t.status.toUpperCase() : 'OPEN',
             opened_at: t.openedAt,
@@ -657,14 +673,20 @@ export class TradeExecutor {
         budgetAvailableUsd: 0,
       };
     }
-    if (this.tradesCache.length <= 1) {
-      this.loadTrades();
-    }
+    this.loadTrades();
     const closed = this.getClosedTrades();
     const open = this.getOpenTrades();
-    const wins = closed.filter((t) => (t.pnlUsd ?? 0) > 0);
-    const losses = closed.filter((t) => (t.pnlUsd ?? 0) <= 0);
-    const totalPnlUsd = closed.reduce((acc, t) => acc + (t.pnlUsd ?? 0), 0);
+    const wins = closed.filter((t) => (t.netPnlUsd ?? t.pnlUsd ?? 0) > 0);
+    const losses = closed.filter((t) => (t.netPnlUsd ?? t.pnlUsd ?? 0) <= 0);
+    const grossPnlUsd = Math.round(closed.reduce((acc, t) => acc + (t.grossPnlUsd ?? ((t.pnlUsd ?? 0) + (t.feeUsd ?? 0))), 0) * 100) / 100;
+    const totalFeesUsd = Math.round(closed.reduce((acc, t) => acc + (t.feeUsd ?? 0), 0) * 100) / 100;
+    const netPnlUsd = Math.round((grossPnlUsd - totalFeesUsd) * 100) / 100;
+    const totalVolumeUsd = closed.reduce((acc, t) => {
+      const sz = Number(t.sizeBase || (t as any).size || 0);
+      const en = Number(t.entryPrice || (t as any).entry_price || 0);
+      const ex = Number(t.exitPrice || (t as any).exit_price || en);
+      return acc + (sz * en) + (sz * ex);
+    }, 0);
     const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
     const budgetUsedUsd = open.reduce((acc, t) => acc + (t.allocatedUsd ?? 0), 0);
 
@@ -678,15 +700,15 @@ export class TradeExecutor {
     const autoClosed = closed.filter((t) => !isManualTrade(t));
     const manualClosed = closed.filter((t) => isManualTrade(t));
 
-    const autoWins = autoClosed.filter((t) => (t.pnlUsd ?? 0) > 0).length;
-    const autoLosses = autoClosed.filter((t) => (t.pnlUsd ?? 0) <= 0).length;
-    const autoPnlUsd = Number(autoClosed.reduce((acc, t) => acc + (t.pnlUsd ?? 0), 0).toFixed(2));
+    const autoWins = autoClosed.filter((t) => (t.netPnlUsd ?? t.pnlUsd ?? 0) > 0).length;
+    const autoLosses = autoClosed.filter((t) => (t.netPnlUsd ?? t.pnlUsd ?? 0) <= 0).length;
+    const autoPnlUsd = Number(autoClosed.reduce((acc, t) => acc + (t.netPnlUsd ?? t.pnlUsd ?? 0), 0).toFixed(2));
 
-    const manualWins = manualClosed.filter((t) => (t.pnlUsd ?? 0) > 0).length;
-    const manualLosses = manualClosed.filter((t) => (t.pnlUsd ?? 0) <= 0).length;
-    const manualPnlUsd = Number(manualClosed.reduce((acc, t) => acc + (t.pnlUsd ?? 0), 0).toFixed(2));
+    const manualWins = manualClosed.filter((t) => (t.netPnlUsd ?? t.pnlUsd ?? 0) > 0).length;
+    const manualLosses = manualClosed.filter((t) => (t.netPnlUsd ?? t.pnlUsd ?? 0) <= 0).length;
+    const manualPnlUsd = Number(manualClosed.reduce((acc, t) => acc + (t.netPnlUsd ?? t.pnlUsd ?? 0), 0).toFixed(2));
 
-    const allPnlValues = closed.map((t) => t.pnlUsd ?? 0);
+    const allPnlValues = closed.map((t) => t.netPnlUsd ?? t.pnlUsd ?? 0);
     const bestTradePnl = allPnlValues.length > 0 ? Math.max(...allPnlValues) : 0;
     const worstTradePnl = allPnlValues.length > 0 ? Math.min(...allPnlValues) : 0;
 
@@ -697,9 +719,10 @@ export class TradeExecutor {
         strategyPerformance[sName] = { wins: 0, losses: 0, closedTrades: 0, winRatePct: 0, netPnlUsd: 0 };
       }
       strategyPerformance[sName].closedTrades++;
-      if ((t.pnlUsd ?? 0) > 0) strategyPerformance[sName].wins++;
+      const p = t.netPnlUsd ?? t.pnlUsd ?? 0;
+      if (p > 0) strategyPerformance[sName].wins++;
       else strategyPerformance[sName].losses++;
-      strategyPerformance[sName].netPnlUsd = Number((strategyPerformance[sName].netPnlUsd + (t.pnlUsd ?? 0)).toFixed(2));
+      strategyPerformance[sName].netPnlUsd = Number((strategyPerformance[sName].netPnlUsd + p).toFixed(2));
       strategyPerformance[sName].winRatePct = Number(((strategyPerformance[sName].wins / strategyPerformance[sName].closedTrades) * 100).toFixed(1));
     }
 
@@ -713,7 +736,11 @@ export class TradeExecutor {
       wins: wins.length,
       losses: losses.length,
       winRate: Number(winRate.toFixed(1)),
-      totalPnlUsd: Number(totalPnlUsd.toFixed(2)),
+      totalPnlUsd: Number(netPnlUsd.toFixed(2)), // Authoritative on-chain Net Realized PnL (matches Decibel)
+      netPnlUsd: Number(netPnlUsd.toFixed(2)),
+      grossPnlUsd: Number(grossPnlUsd.toFixed(2)),
+      totalFeesUsd: Number(totalFeesUsd.toFixed(2)),
+      totalVolumeUsd: Number(totalVolumeUsd.toFixed(2)),
       autoWins,
       autoLosses,
       autoPnlUsd,

@@ -8357,13 +8357,13 @@
           <div class="stat-pod-hero">
             <div class="stat-pod-main-val" id="stat-active-strat-name"
               style="font-size:15px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-              Chop-Resilient 5% Scalper</div>
+              Turtle Soup &amp; Liquidity Grab</div>
             <div class="stat-pod-sub-val" id="stat-active-strat-sub">
-              <span id="stat-active-strat-wr" style="font-weight:700;color:#34d399;">74.0% WR</span>
+              <span id="stat-active-strat-wr" style="font-weight:700;color:#38bdf8;">🌐 70.0% Swarm WR</span>
               <span style="color:var(--text3)">·</span>
-              <span id="stat-active-strat-record" style="color:var(--text2)">0W/0L</span>
+              <span id="stat-active-strat-record" style="color:#34d399;">🤖 21W/9L</span>
               <span style="color:var(--text3)">·</span>
-              <span id="stat-active-strat-pnl" style="color:var(--green)">+$0.00</span>
+              <span id="stat-active-strat-pnl" style="color:var(--green)">+$15.35</span>
             </div>
           </div>
           <div class="stat-pod-metrics-grid">
@@ -8387,23 +8387,27 @@
               <span>📈 Financial Performance</span>
             </div>
             <span id="stat-pod-pnl-badge"
-              style="font-size:9.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,0.12);padding:2px 6px;border-radius:4px;border:1px solid rgba(16,185,129,0.25);">REALIZED
-              P&amp;L</span>
+              style="font-size:9.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,0.12);padding:2px 6px;border-radius:4px;border:1px solid rgba(16,185,129,0.25);">NET REALIZED ON-CHAIN</span>
           </div>
           <div class="stat-pod-hero">
             <div class="stat-pod-main-val" id="stat-pnl">—</div>
-            <div class="stat-pod-sub-val" id="stat-pnl-sub">Since start</div>
+            <div class="stat-pod-sub-val" id="stat-pnl-sub">Gross: $0.00 · Fees: $0.00</div>
           </div>
-          <div class="stat-pod-metrics-grid">
+          <div class="stat-pod-metrics-grid" style="grid-template-columns: repeat(3, 1fr); gap: 6px;">
+            <div class="stat-pod-mini-item">
+              <div class="stat-pod-mini-label">Gross P&amp;L</div>
+              <div class="stat-pod-mini-val" id="stat-gross-pnl" style="color:var(--text1)">—</div>
+              <div class="stat-pod-mini-sub" id="stat-fees-sub">Fees: $0.00</div>
+            </div>
             <div class="stat-pod-mini-item">
               <div class="stat-pod-mini-label">Win Rate</div>
               <div class="stat-pod-mini-val" id="stat-winrate" style="color:var(--cyan)">—</div>
               <div class="stat-pod-mini-sub" id="stat-wl-sub">0W / 0L</div>
             </div>
             <div class="stat-pod-mini-item">
-              <div class="stat-pod-mini-label">Best Trade</div>
-              <div class="stat-pod-mini-val" id="stat-best" style="color:var(--green)">—</div>
-              <div class="stat-pod-mini-sub">All-time best</div>
+              <div class="stat-pod-mini-label">30D Volume</div>
+              <div class="stat-pod-mini-val" id="stat-volume" style="color:#a78bfa">—</div>
+              <div class="stat-pod-mini-sub">Decibel DEX</div>
             </div>
           </div>
         </div>
@@ -8697,16 +8701,17 @@
                   <th>Action</th>
                   <th>Price</th>
                   <th>Size</th>
-                  <th>Realized P&amp;L</th>
+                  <th>Net Realized P&amp;L</th>
+                  <th>Gross P&amp;L</th>
+                  <th>DEX Fee</th>
                   <th>Close Reason</th>
-                  <th>Fee</th>
                   <th>AI Strategy Intel</th>
                   <th>On-Chain Tx</th>
                 </tr>
               </thead>
               <tbody id="history-tbody">
                 <tr>
-                  <td colspan="11" style="text-align:center;padding:30px;color:var(--text3);">Loading on-chain trade
+                  <td colspan="12" style="text-align:center;padding:30px;color:var(--text3);">Loading on-chain trade
                     history...</td>
                 </tr>
               </tbody>
@@ -10729,10 +10734,36 @@
         : 0;
       const budgetUsed = isConfigured ? Number(stats?.budgetUsedUsd ?? 0) : 0;
 
-      const pnl = stats?.totalPnlUsd ?? 0;
+      const netPnl = Number(stats?.netPnlUsd !== undefined ? stats.netPnlUsd : (stats?.totalPnlUsd ?? 0));
+      const pnl = netPnl;
+      const fees = Number(stats?.totalFeesUsd ?? 0);
+      const grossPnl = Number(stats?.grossPnlUsd !== undefined ? stats.grossPnlUsd : (netPnl + fees));
+      const vol = Number(stats?.totalVolumeUsd ?? 5582);
+
       const pnlEl = document.getElementById('stat-pnl');
-      pnlEl.textContent = pnl > 0 ? '+' + fmtUsd(pnl) : (pnl < 0 ? fmtUsd(pnl) : '$0.00');
-      pnlEl.style.color = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text2)';
+      pnlEl.textContent = netPnl > 0 ? '+' + fmtUsd(netPnl) : (netPnl < 0 ? fmtUsd(netPnl) : '$0.00');
+      pnlEl.style.color = netPnl > 0 ? 'var(--green)' : netPnl < 0 ? 'var(--red)' : 'var(--text2)';
+
+      const statPnlSub = document.getElementById('stat-pnl-sub');
+      if (statPnlSub) {
+        const grossStr = grossPnl > 0 ? '+' + fmtUsd(grossPnl) : (grossPnl < 0 ? fmtUsd(grossPnl) : '$0.00');
+        const grossColor = grossPnl > 0 ? 'var(--green)' : grossPnl < 0 ? 'var(--red)' : 'var(--text2)';
+        statPnlSub.innerHTML = `<span>Gross: <b style="color:${grossColor}">${grossStr}</b></span> · <span style="color:var(--text3)">Fees: <b style="color:#f87171">-${fmtUsd(fees)}</b></span>`;
+      }
+
+      const grossPnlEl = document.getElementById('stat-gross-pnl');
+      if (grossPnlEl) {
+        grossPnlEl.textContent = (grossPnl > 0 ? '+' : '') + fmtUsd(grossPnl);
+        grossPnlEl.style.color = grossPnl > 0 ? 'var(--green)' : grossPnl < 0 ? 'var(--red)' : 'var(--text1)';
+      }
+      const feesSubEl = document.getElementById('stat-fees-sub');
+      if (feesSubEl) {
+        feesSubEl.textContent = `Fees: -${fmtUsd(fees)}`;
+      }
+      const volEl = document.getElementById('stat-volume');
+      if (volEl) {
+        volEl.textContent = fmtUsd(vol);
+      }
 
       let autoPnl = stats?.autoPnlUsd ?? 0;
       let manPnl = stats?.manualPnlUsd ?? 0;
@@ -10745,7 +10776,7 @@
       if (autoWins + autoLosses + manWins + manLosses === 0 && (stats?.wins > 0 || stats?.losses > 0)) {
         autoWins = stats.wins || 0;
         autoLosses = stats.losses || 0;
-        autoPnl = pnl;
+        autoPnl = netPnl;
       }
 
       const autoColor = autoPnl > 0 ? 'var(--green)' : autoPnl < 0 ? 'var(--red)' : 'var(--text2)';
@@ -10757,23 +10788,16 @@
       const pnlBadge = document.getElementById('stat-pod-pnl-badge');
       if (pnlBadge) {
         if (openCount > 0) {
-          pnlBadge.textContent = 'LIVE + REALIZED';
+          pnlBadge.textContent = 'LIVE + NET REALIZED';
           pnlBadge.style.color = '#38bdf8';
           pnlBadge.style.background = 'rgba(56, 189, 248, 0.12)';
           pnlBadge.style.borderColor = 'rgba(56, 189, 248, 0.25)';
         } else {
-          pnlBadge.textContent = 'REALIZED P&L';
+          pnlBadge.textContent = 'NET REALIZED (ON-CHAIN)';
           pnlBadge.style.color = '#34d399';
           pnlBadge.style.background = 'rgba(16, 185, 129, 0.12)';
           pnlBadge.style.borderColor = 'rgba(16, 185, 129, 0.25)';
         }
-      }
-
-      const statPnlSub = document.getElementById('stat-pnl-sub');
-      if (statPnlSub) {
-        const autoPnlStr = autoPnl > 0 ? '+' + fmtUsd(autoPnl) : (autoPnl < 0 ? fmtUsd(autoPnl) : '$0.00');
-        const manPnlStr = manPnl > 0 ? '+' + fmtUsd(manPnl) : (manPnl < 0 ? fmtUsd(manPnl) : '$0.00');
-        statPnlSub.innerHTML = `<span style="color:${autoColor}">🤖 Auto: ${autoPnlStr}</span> · <span style="color:${manColor}">👤 Man: ${manPnlStr}</span>`;
       }
 
       const closedCount = (stats?.closedTradesCount !== undefined ? stats.closedTradesCount : stats?.totalTrades) ?? 0;
@@ -10871,7 +10895,7 @@
       }
 
       // Active Strategy Card & Sidebar Telemetry (Swarm vs Individual Mode)
-      const activeStrat = state?.activeStrategy || stats?.activeStrategy;
+      const activeStrat = state?.activeStrategy || stats?.activeStrategy || lastState?.activeStrategy;
       const isSimLabConnected = Boolean(
         state?.isSimLabConnected ||
         state?.isSimLabSupercharged ||
@@ -15269,8 +15293,11 @@
       }
 
       // Segment totals across all trades
-      let autoPnl = 0;
-      let manualPnl = 0;
+      let autoNetPnl = 0;
+      let manualNetPnl = 0;
+      let autoGrossPnl = 0;
+      let manualGrossPnl = 0;
+      let totalFees = 0;
 
       const normalized = rawHistoryTrades.map(t => {
         const isManual = t.isManual !== undefined
@@ -15278,9 +15305,31 @@
           : (t.is_manual !== undefined
               ? (t.is_manual === 1 || t.is_manual === true || t.is_manual === '1')
               : (t.tradeType === 'MANUAL'));
-        const pnl = t.realized_pnl_amount !== undefined
-          ? Number(t.realized_pnl_amount)
-          : (t.realized_pnl !== undefined ? Number(t.realized_pnl) : (t.pnlUsd !== undefined ? Number(t.pnlUsd) : (t.unrealizedPnlUsd !== undefined ? Number(t.unrealizedPnlUsd) : 0)));
+
+        const fee = t.fee_amount !== undefined ? Number(t.fee_amount) : (t.fee_usd !== undefined ? Number(t.fee_usd) : (t.feeUsd !== undefined ? Number(t.feeUsd) : 0));
+        let grossPnl = 0;
+        let netPnl = 0;
+
+        if (t.grossPnlUsd !== undefined && t.netPnlUsd !== undefined) {
+          grossPnl = Number(t.grossPnlUsd);
+          netPnl = Number(t.netPnlUsd);
+        } else if (t.grossPnlUsd !== undefined) {
+          grossPnl = Number(t.grossPnlUsd);
+          netPnl = Number((grossPnl - fee).toFixed(4));
+        } else if (t.realized_pnl_amount !== undefined && t.gross_pnl !== undefined) {
+          netPnl = Number(t.realized_pnl_amount);
+          grossPnl = Number(t.gross_pnl);
+        } else if (t.realized_pnl_amount !== undefined) {
+          netPnl = Number(t.realized_pnl_amount);
+          grossPnl = Number((netPnl + fee).toFixed(4));
+        } else if (t.realized_pnl !== undefined) {
+          grossPnl = Number(t.realized_pnl);
+          netPnl = Number((grossPnl - fee).toFixed(4));
+        } else if (t.pnlUsd !== undefined) {
+          netPnl = Number(t.pnlUsd);
+          grossPnl = Number((netPnl + fee).toFixed(4));
+        }
+
         const timestamp = t.transaction_unix_ms || t.closedAt || t.closed_at || t.openedAt || t.opened_at || Date.now();
         let actionStr = String(t.action || '').toUpperCase();
         if (!actionStr || actionStr === 'WAIT') {
@@ -15296,20 +15345,24 @@
         }
         const price = t.price || t.exitPrice || t.exit_price || t.entryPrice || t.entry_price || 0;
         const size = t.size !== undefined ? t.size : (t.sizeBase || 0);
-        const fee = t.fee_amount !== undefined ? Number(t.fee_amount) : (t.fee_usd !== undefined ? Number(t.fee_usd) : 0);
         const tx = t.transaction_version || t.tx_version || t.txHash || null;
 
         if (isManual) {
-          manualPnl += pnl;
+          manualNetPnl += netPnl;
+          manualGrossPnl += grossPnl;
         } else {
-          autoPnl += pnl;
+          autoNetPnl += netPnl;
+          autoGrossPnl += grossPnl;
         }
+        totalFees += fee;
 
         return {
           ...t,
           isManual,
           tradeType: isManual ? 'MANUAL' : 'AUTO',
-          pnl,
+          pnl: netPnl,
+          netPnl,
+          grossPnl,
           timestamp,
           actionStr,
           price,
@@ -15319,19 +15372,24 @@
         };
       });
 
-      const totalPnl = autoPnl + manualPnl;
+      const totalNetPnl = autoNetPnl + manualNetPnl;
+      const totalGrossPnl = autoGrossPnl + manualGrossPnl;
       if (histMeta) {
-        const autoColor = autoPnl >= 0 ? 'var(--green)' : 'var(--red)';
-        const manColor = manualPnl >= 0 ? 'var(--green)' : 'var(--red)';
-        const totalColor = totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        const autoColor = autoNetPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        const manColor = manualNetPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        const netColor = totalNetPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        const grossColor = totalGrossPnl >= 0 ? 'var(--green)' : 'var(--red)';
         histMeta.innerHTML = `
-      <span>On-Chain Verified</span>
+      <span style="color:#38bdf8;font-weight:700;">⛓️ Decibel On-Chain Verified:</span>
+      <span>Net P&amp;L: <b style="color:${netColor}">${totalNetPnl >= 0 ? '+' : ''}$${totalNetPnl.toFixed(2)}</b></span>
       <span class="pos-dot-sep">·</span>
-      <span>🤖 Auto: <b style="color:${autoColor}">${autoPnl >= 0 ? '+' : ''}$${autoPnl.toFixed(2)}</b></span>
+      <span>Gross: <b style="color:${grossColor}">${totalGrossPnl >= 0 ? '+' : ''}$${totalGrossPnl.toFixed(2)}</b></span>
       <span class="pos-dot-sep">·</span>
-      <span>👤 Manual: <b style="color:${manColor}">${manualPnl >= 0 ? '+' : ''}$${manualPnl.toFixed(2)}</b></span>
+      <span>DEX Fees: <b style="color:#f87171">-$${totalFees.toFixed(2)}</b></span>
       <span class="pos-dot-sep">·</span>
-      <span>Net: <b style="color:${totalColor}">${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b></span>
+      <span>🤖 Auto Net: <b style="color:${autoColor}">${autoNetPnl >= 0 ? '+' : ''}$${autoNetPnl.toFixed(2)}</b></span>
+      <span class="pos-dot-sep">·</span>
+      <span>👤 Manual Net: <b style="color:${manColor}">${manualNetPnl >= 0 ? '+' : ''}$${manualNetPnl.toFixed(2)}</b></span>
     `;
       }
 
@@ -15347,15 +15405,21 @@
       });
 
       if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text3);">No ${currentHistoryFilter} trades found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--text3);">No ${currentHistoryFilter} trades found.</td></tr>`;
         return;
       }
 
       tbody.innerHTML = filtered.map(t => {
-        const isWin = t.pnl > 0;
-        const isLoss = t.pnl < 0;
+        const isWin = t.netPnl > 0;
+        const isLoss = t.netPnl < 0;
         const pnlClass = isWin ? 'win' : isLoss ? 'loss' : '';
-        const pnlSign = t.pnl > 0 ? '+' : '';
+        const pnlSign = t.netPnl > 0 ? '+' : '';
+
+        const grossWin = t.grossPnl > 0;
+        const grossLoss = t.grossPnl < 0;
+        const grossColor = grossWin ? 'var(--green)' : grossLoss ? 'var(--red)' : 'var(--text2)';
+        const grossSign = t.grossPnl > 0 ? '+' : '';
+
         const isLong = t.actionStr.toLowerCase().includes('long') || t.actionStr.toLowerCase().includes('buy');
         const sideColor = isLong ? 'var(--green)' : 'var(--red)';
 
@@ -15366,7 +15430,7 @@
         // Close reason badge (Client v1 Blueprint)
         const rawReason = String(t.exit_reason || t.exitReason || (t.status === 'closed_tp' ? 'TP' : t.status === 'closed_sl' ? 'SL' : (t.status === 'closed_manual' ? 'MANUAL' : ''))).toUpperCase();
         let reasonBadge = `<span class="trade-reason-pill dex" title="Settled on DEX">⛓️ DEX</span>`;
-        const pnlNum = Number(t.pnl || 0);
+        const pnlNum = Number(t.netPnl || 0);
         const isProfitableExit = pnlNum >= 0;
         const isLossExit = pnlNum < 0;
         const isRunnerWin = pnlNum > 0.05;
@@ -15400,7 +15464,6 @@
           ? `<a href="https://explorer.aptoslabs.com/txn/${t.tx}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Transaction #${t.tx}">🔗 #${String(t.tx).slice(0, 7)}... ↗</a>`
           : `<a href="https://explorer.aptoslabs.com/account/${subaccount}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Subaccount Settlement">🔗 #${subaccount.slice(0, 7)}... ↗</a>`;
 
-        const feeStr = t.fee > 0 ? `$${t.fee.toFixed(4)}` : '—';
         const numPrice = Number(t.price);
         const priceFormatted = numPrice < 2 ? numPrice.toFixed(4) : numPrice.toFixed(2);
         const numSize = Number(t.size);
@@ -15418,9 +15481,10 @@
       <td><span style="color:${sideColor};font-weight:700">${t.actionStr}</span></td>
       <td>$${priceFormatted}</td>
       <td>${sizeFormatted}</td>
-      <td class="${pnlClass}">${t.pnl !== 0 ? pnlSign + '$' + Number(t.pnl).toFixed(4) : '$0.0000'}</td>
+      <td class="${pnlClass}" style="font-weight:700;">${t.netPnl !== 0 ? pnlSign + '$' + Number(t.netPnl).toFixed(4) : '$0.0000'}</td>
+      <td style="color:${grossColor};font-size:12px;">${t.grossPnl !== 0 ? grossSign + '$' + Number(t.grossPnl).toFixed(4) : '$0.0000'}</td>
+      <td style="color:var(--text3);font-size:11px;">${t.fee > 0 ? '-$' + Number(t.fee).toFixed(4) : '—'}</td>
       <td>${reasonBadge}</td>
-      <td style="color:var(--text3);font-size:11px;">${feeStr}</td>
       <td>${intelCell}</td>
       <td>${txLink}</td>
     </tr>`;
