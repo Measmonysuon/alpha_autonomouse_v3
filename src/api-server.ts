@@ -220,57 +220,195 @@ export function getLivePricesMap(): Record<string, number> {
 }
 
 let liveTickerTimer: NodeJS.Timeout | null = null;
+const sseStateClients = new Set<http.ServerResponse>();
+const recentLogs: LogEntry[] = [];
+const sseClients = new Set<http.ServerResponse>();
+const startedAt = Date.now();
+let lastStateOnChainSync = 0;
+let cachedStateEquity = 0;
+let cachedStateMargin = 0;
+let cachedStateGasApt = 0;
 
-export async function fetchLiveBulkTickers(): Promise<void> {
+export function buildStreamStatePayload() {
+  const curStats = tradeExecutor.getStats();
+  const isConf = isClientConfigured();
+  const cachedBal = tradeExecutor.getCachedOnChainBalance();
+  const curEquity = isConf ? Math.max(0, cachedBal.balanceUsd || 0) : 0;
+  const curMargin = Math.max(0, curEquity - curStats.budgetUsedUsd);
+  const curApt = isConf ? (cachedBal.aptBalance || 0) : 0;
+  const curSigner = tradeExecutor.getSignerAddress() || getDerivedSignerAddress();
+  const curSub = (config.DECIBEL_SUBACCOUNT_ADDRESS && !config.DECIBEL_SUBACCOUNT_ADDRESS.includes('your_')) ? config.DECIBEL_SUBACCOUNT_ADDRESS : '';
+  const tickUptime = Math.floor((Date.now() - startedAt) / 1000);
+  const curIsSupercharged = superchargeClient.isActive();
+  const curDirectives = standaloneEngine.getDirectives();
+
+  return {
+    status: tradeExecutor.getIsPaused() ? 'PAUSED' : 'running',
+    isPaused: tradeExecutor.getIsPaused(),
+    mode: config.AUTONOMOUS_MODE,
+    clientName: config.CLIENT_NAME,
+    operatingMode: curIsSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+    isSimLabSupercharged: curIsSupercharged,
+    simPipeline: {
+      connected: curIsSupercharged,
+      isStale: false,
+      currentRegime: curDirectives.regime,
+      appliedConfidenceGate: curDirectives.scoreFloor,
+      appliedHarvestThreshold: 65,
+      serverUrl: superchargeClient.getServerUrl(),
+      mode: curIsSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+    },
+    uptime: tickUptime,
+    uptimeSeconds: tickUptime,
+    subaccount: curSub,
+    agentAddress: curSigner,
+    gasFeeAddress: curSigner,
+    signerAddress: curSigner,
+    network: config.NETWORK,
+    isConfigured: isConf,
+    aiProvider: config.ACTIVE_AI_PROVIDER,
+    aiModel: config.GEMINI_MODEL || (config.ACTIVE_AI_PROVIDER === 'gemini' ? 'gemini-2.5-flash' : 'local-rules'),
+    aiEnabled: config.ACTIVE_AI_PROVIDER !== 'local_rules' && Boolean(config.GEMINI_API_KEY || config.ANTHROPIC_API_KEY || config.OLLAMA_BASE_URL),
+    budgetUsd: config.BUDGET_USD || 30,
+    accountEquityUsd: curEquity,
+    availableMarginUsd: curMargin,
+    gasAptBalance: curApt,
+    stats: curStats,
+    directives: curDirectives,
+    pairs: watchPairs,
+    currentPairs: watchPairs,
+    watchPairs,
+    markets: agentState.markets,
+    openPositions: tradeExecutor.getOpenTrades(),
+    portfolioHarvester: portfolioHarvester.evaluate(getLivePricesMap()),
+    activeStrategy: getActiveStrategy(),
+    strategyOrigin: getActiveStrategyOriginInfo(),
+    strategySyncConfig: getStrategySyncConfig(),
+  };
+}
+
+export function broadcastState(): void {
+  if (sseStateClients.size === 0) return;
   try {
-    const res = await axios.get('https://api.bybit.com/v5/market/tickers?category=linear', {
-      timeout: 3000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (TradingBot/2.0; LiveTickers)' },
-    });
-    const list = res.data?.result?.list;
-    if (Array.isArray(list) && list.length > 0) {
-      const tickerMap = new Map<string, any>();
-      for (const t of list) {
-        tickerMap.set(t.symbol, t);
-      }
-      for (const sym of watchPairs) {
-        const norm = sym.toUpperCase().replace(/[-_/]/g, '');
-        const cleanBase = norm.replace(/USD[T]?$/, '');
-        const bybitSym = `${cleanBase}USDT`;
-        const item = tickerMap.get(bybitSym);
-        if (item && item.lastPrice) {
-          const price = parseFloat(item.lastPrice);
-          if (Number.isFinite(price) && price > 0) {
-            if (!agentState.markets[sym]) {
-              agentState.markets[sym] = {
-                symbol: sym,
-                markPrice: price,
-                change24h: 0,
-                volume24hUsd: 0,
-                high24h: price,
-                low24h: price,
-                trend: 'SCANNING',
-                action: 'WAIT',
-                confidence: 50,
-                riskLevel: 'LOW',
-                fundingRate: 0.01,
-                candlestick: { rsi14: 50, ema9: price, ema21: price, rvol: 1, adx14: 20 },
-                updatedAt: Date.now(),
-              };
-            }
-            const m = agentState.markets[sym];
-            m.markPrice = price;
-            if (item.price24hPcnt) m.change24h = parseFloat(item.price24hPcnt) * 100;
-            if (item.highPrice24h) m.high24h = parseFloat(item.highPrice24h);
-            if (item.lowPrice24h) m.low24h = parseFloat(item.lowPrice24h);
-            if (item.turnover24h) m.volume24hUsd = parseFloat(item.turnover24h);
-            m.updatedAt = Date.now();
-          }
-        }
+    const payload = buildStreamStatePayload();
+    const msg = `event: state\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const client of sseStateClients) {
+      try {
+        client.write(msg);
+      } catch {
+        sseStateClients.delete(client);
       }
     }
   } catch (err: any) {
-    // Silent catch for live polling
+    logger.debug(`Broadcast state error: ${err.message}`);
+  }
+}
+
+export async function fetchLiveBulkTickers(): Promise<void> {
+  const tickerMap = new Map<string, { lastPrice: number; change24h: number; high24h: number; low24h: number; volume24hUsd: number }>();
+
+  // 1. Primary: Binance 24hr bulk ticker (sub-300ms)
+  try {
+    const res = await axios.get('https://api.binance.com/api/v3/ticker/24hr', {
+      timeout: 2500,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
+    });
+    if (Array.isArray(res.data) && res.data.length > 0) {
+      for (const item of res.data) {
+        if (typeof item.symbol === 'string' && item.symbol.endsWith('USDT')) {
+          tickerMap.set(item.symbol, {
+            lastPrice: parseFloat(item.lastPrice) || 0,
+            change24h: parseFloat(item.priceChangePercent) || 0,
+            high24h: parseFloat(item.highPrice) || 0,
+            low24h: parseFloat(item.lowPrice) || 0,
+            volume24hUsd: parseFloat(item.quoteVolume) || 0,
+          });
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Fallback: Bybit linear tickers
+  if (tickerMap.size === 0) {
+    try {
+      const res = await axios.get('https://api.bybit.com/v5/market/tickers?category=linear', {
+        timeout: 3000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (TradingBot/3.0; LiveTickers)' },
+      });
+      const list = res.data?.result?.list;
+      if (Array.isArray(list) && list.length > 0) {
+        for (const item of list) {
+          tickerMap.set(item.symbol, {
+            lastPrice: parseFloat(item.lastPrice) || 0,
+            change24h: (parseFloat(item.price24hPcnt) || 0) * 100,
+            high24h: parseFloat(item.highPrice24h) || 0,
+            low24h: parseFloat(item.lowPrice24h) || 0,
+            volume24hUsd: parseFloat(item.turnover24h) || 0,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  if (tickerMap.size > 0) {
+    let priceChanged = false;
+    for (const sym of watchPairs) {
+      const norm = sym.toUpperCase().replace(/[-_/]/g, '');
+      const cleanBase = norm.replace(/USD[T]?$/, '');
+      const bybitSym = `${cleanBase}USDT`;
+      const item = tickerMap.get(bybitSym);
+      if (item && item.lastPrice > 0) {
+        const price = item.lastPrice;
+        if (!agentState.markets[sym]) {
+          agentState.markets[sym] = {
+            symbol: sym,
+            markPrice: price,
+            change24h: item.change24h,
+            volume24hUsd: item.volume24hUsd,
+            high24h: item.high24h,
+            low24h: item.low24h,
+            trend: 'SCANNING',
+            action: 'WAIT',
+            confidence: 50,
+            riskLevel: 'LOW',
+            fundingRate: 0.01,
+            candlestick: { rsi14: 50, ema9: price, ema21: price, rvol: 1, adx14: 20 },
+            updatedAt: Date.now(),
+          };
+          priceChanged = true;
+        } else if (agentState.markets[sym].markPrice !== price) {
+          const m = agentState.markets[sym];
+          m.markPrice = price;
+          m.change24h = item.change24h;
+          m.high24h = item.high24h;
+          m.low24h = item.low24h;
+          m.volume24hUsd = item.volume24hUsd;
+          m.updatedAt = Date.now();
+          priceChanged = true;
+        }
+      }
+    }
+
+    // Refresh active open positions in real-time
+    const openTrades = tradeExecutor.getOpenTrades();
+    for (const t of openTrades) {
+      const norm = t.symbol.toUpperCase().replace(/[-_/]/g, '');
+      const cleanBase = norm.replace(/USD[T]?$/, '');
+      const item = tickerMap.get(`${cleanBase}USDT`);
+      if (item && item.lastPrice > 0 && t.currentPrice !== item.lastPrice) {
+        t.currentPrice = item.lastPrice;
+        const priceDiff = t.action === 'LONG' ? item.lastPrice - t.entryPrice : t.entryPrice - item.lastPrice;
+        const unrealizedPnlUsd = priceDiff * (t.sizeBase || 0);
+        const alloc = t.allocatedUsd || ((t.sizeBase * t.entryPrice) / (t.leverage || 1)) || 1;
+        t.unrealizedPnlUsd = Number(unrealizedPnlUsd.toFixed(4));
+        t.unrealizedPnlPct = Number(((unrealizedPnlUsd / alloc) * 100).toFixed(2));
+        priceChanged = true;
+      }
+    }
+
+    if (priceChanged) {
+      broadcastState();
+    }
   }
 }
 
@@ -279,17 +417,9 @@ export function startLiveTickerLoop(): void {
   fetchLiveBulkTickers().catch(() => {});
   liveTickerTimer = setInterval(() => {
     fetchLiveBulkTickers().catch(() => {});
-  }, 2500);
+  }, config.FAST_PRICE_TICKER_MS || 1500);
 }
 startLiveTickerLoop();
-
-const recentLogs: LogEntry[] = [];
-const sseClients = new Set<http.ServerResponse>();
-const startedAt = Date.now();
-let lastStateOnChainSync = 0;
-let cachedStateEquity = 0;
-let cachedStateMargin = 0;
-let cachedStateGasApt = 0;
 
 export function pushLog(level: string, msg: string): void {
   const entry: LogEntry = { ts: Date.now(), level, msg };
@@ -1079,68 +1209,22 @@ export function startApiServer(): http.Server {
       };
       res.write(`event: state\ndata: ${JSON.stringify(initialPayload)}\n\n`);
 
-      sseClients.add(res);
+      sseStateClients.add(res);
 
       const timer = setInterval(() => {
         try {
           res.write(`event: ping\ndata: ${Date.now()}\n\n`);
-          const curStats = tradeExecutor.getStats();
-          const isConf = isClientConfigured();
-          const cachedBal = tradeExecutor.getCachedOnChainBalance();
-          const curEquity = isConf ? Math.max(0, cachedBal.balanceUsd || 0) : 0;
-          const curMargin = Math.max(0, curEquity - curStats.budgetUsedUsd);
-          const curApt = isConf ? (cachedBal.aptBalance || 0) : 0;
-          const curSigner = tradeExecutor.getSignerAddress() || getDerivedSignerAddress();
-          const curSub = (config.DECIBEL_SUBACCOUNT_ADDRESS && !config.DECIBEL_SUBACCOUNT_ADDRESS.includes('your_')) ? config.DECIBEL_SUBACCOUNT_ADDRESS : '';
-          const tickUptime = Math.floor((Date.now() - startedAt) / 1000);
-          const curIsSupercharged = superchargeClient.isActive();
-          const curDirectives = standaloneEngine.getDirectives();
-          // Also broadcast updated live state and markets to connected clients
-          const tickPayload = {
-            ...initialPayload,
-            status: tradeExecutor.getIsPaused() ? 'PAUSED' : 'running',
-            isPaused: tradeExecutor.getIsPaused(),
-            isConfigured: isConf,
-            subaccount: curSub,
-            agentAddress: curSigner,
-            gasFeeAddress: curSigner,
-            signerAddress: curSigner,
-            gasAptBalance: curApt,
-            accountEquityUsd: curEquity,
-            availableMarginUsd: curMargin,
-            isSimLabSupercharged: curIsSupercharged,
-            operatingMode: curIsSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
-            simPipeline: {
-              connected: curIsSupercharged,
-              isStale: false,
-              currentRegime: curDirectives.regime,
-              appliedConfidenceGate: curDirectives.scoreFloor,
-              appliedHarvestThreshold: 65,
-              serverUrl: superchargeClient.getServerUrl(),
-              mode: curIsSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
-            },
-            directives: curDirectives,
-            budgetUsd: config.BUDGET_USD || 30,
-            activeStrategy: getActiveStrategy(),
-            strategyOrigin: getActiveStrategyOriginInfo(),
-            strategySyncConfig: getStrategySyncConfig(),
-            uptime: tickUptime,
-            uptimeSeconds: tickUptime,
-            markets: agentState.markets,
-            stats: curStats,
-            openPositions: tradeExecutor.getOpenTrades(),
-            portfolioHarvester: portfolioHarvester.evaluate(getLivePricesMap()),
-          };
+          const tickPayload = buildStreamStatePayload();
           res.write(`event: state\ndata: ${JSON.stringify(tickPayload)}\n\n`);
         } catch {
           clearInterval(timer);
-          sseClients.delete(res);
+          sseStateClients.delete(res);
         }
-      }, 5000);
+      }, 1000);
 
       req.on('close', () => {
         clearInterval(timer);
-        sseClients.delete(res);
+        sseStateClients.delete(res);
       });
       return;
     }

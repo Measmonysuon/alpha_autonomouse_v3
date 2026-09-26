@@ -88,6 +88,9 @@ export interface TradeRecord {
   grossPnlUsd?: number;
   netPnlUsd?: number;
   feeUsd?: number;
+  currentPrice?: number;
+  unrealizedPnlUsd?: number;
+  unrealizedPnlPct?: number;
 }
 
 export interface ShadowTrade {
@@ -125,6 +128,7 @@ export class TradeExecutor {
   private missingFirstSeenAt: Map<string, number> = new Map();
   private inFlightSymbols: Set<string> = new Set();
   private configuredLeverages: Map<string, number> = new Map();
+  private autoArmCooldownMap: Map<string, number> = new Map();
 
   constructor() {
     this.ensureDataDirectory();
@@ -465,18 +469,26 @@ export class TradeExecutor {
           continue;
         }
 
-        const lev = Math.max(1, pos.leverage || 1);
         const isLong = pos.action === 'LONG' || pos.side === 'buy';
-        const defaultHardSl = isLong
-          ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
-          : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
-        const hardSl = pos.stopLoss && pos.stopLoss > 0 ? pos.stopLoss : defaultHardSl;
-        // In loss / initial state, softRatchetPrice MUST equal hardSl to protect capital
-        const softRatchet = hardSl;
-
         let existing = this.tradesCache.find(
           (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status === 'open',
         );
+
+        const lev = Math.max(1, pos.leverage || existing?.leverage || 1);
+        const defaultHardSl = isLong
+          ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
+          : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
+        const ratchetedSl = existing?.stopLoss && existing.stopLoss > 0 ? existing.stopLoss : 0;
+        const initialHardSl = existing?.hardStopLoss && existing.hardStopLoss > 0 ? existing.hardStopLoss : 0;
+        let activeSl = ratchetedSl > 0 ? ratchetedSl : (initialHardSl > 0 ? initialHardSl : defaultHardSl);
+        if (isLong && ratchetedSl > 0 && initialHardSl > 0) {
+          activeSl = Math.max(ratchetedSl, initialHardSl);
+        } else if (!isLong && ratchetedSl > 0 && initialHardSl > 0) {
+          activeSl = Math.min(ratchetedSl, initialHardSl);
+        }
+        const hardSl = (pos.stopLoss && pos.stopLoss > 0) ? pos.stopLoss : activeSl;
+        // In loss / initial state, softRatchetPrice MUST equal hardSl to protect capital
+        const softRatchet = hardSl;
 
         // If not found open, check if a recent closed trade can be revived (only if un-intentional RPC dropout)
         if (!existing) {
@@ -575,7 +587,10 @@ export class TradeExecutor {
             existing.entryPrice = pos.entryPrice;
             modified = true;
           }
-          existing.hardStopLoss = hardSl;
+          if (!existing.hardStopLoss || existing.hardStopLoss <= 0) {
+            existing.hardStopLoss = hardSl;
+            modified = true;
+          }
           // Protect softRatchetPrice from being regressed backward (strict monotonic ratchet invariant)
           if (!existing.softRatchetPrice || existing.softRatchetPrice === 0) {
             existing.softRatchetPrice = existing.stopLoss && existing.stopLoss > 0 ? existing.stopLoss : hardSl;
@@ -583,8 +598,8 @@ export class TradeExecutor {
             const isLong = existing.action === 'LONG';
             // Ratchet can ONLY improve in favor of trade (up for Long, down for Short), never backward
             existing.softRatchetPrice = isLong
-              ? Math.max(existing.softRatchetPrice, existing.stopLoss || 0, hardSl)
-              : Math.min(existing.softRatchetPrice, existing.stopLoss || Infinity, hardSl);
+              ? Math.max(existing.softRatchetPrice, existing.stopLoss || 0)
+              : Math.min(existing.softRatchetPrice, existing.stopLoss || Infinity);
           }
           if (pos.liquidationPrice) existing.estimatedLiquidationPrice = pos.liquidationPrice;
 
@@ -601,11 +616,24 @@ export class TradeExecutor {
           modified = true;
         }
 
-        // Auto-arm on-chain hard SL if position is open without an active stop order
+        // Auto-arm on-chain hard SL & TP if position is open without an active stop order
         if ((!pos.stopLoss || pos.stopLoss <= 0) && hardSl > 0 && isClientConfigured() && !config.PAPER_TRADING) {
-          mcpClient.setTpSl({ symbol: pos.symbol, slTrigger: hardSl }).catch((err: any) => {
-            logger.debug(`[ON-CHAIN HARD SL] Auto-arm notice for ${pos.symbol}: ${err.message}`);
-          });
+          const now = Date.now();
+          const lastArm = this.autoArmCooldownMap.get(pos.symbol) || 0;
+          if (now - lastArm >= 15_000) {
+            this.autoArmCooldownMap.set(pos.symbol, now);
+            const targetTp = (existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || 0);
+            logger.info(`🛡️ [CONCRETE ARMOR] Auto-arming missing hard on-chain Stop Loss for ${pos.symbol} at $${hardSl} (TP: $${targetTp})`);
+            mcpClient.setTpSl({
+              symbol: pos.symbol,
+              tpTrigger: targetTp > 0 ? targetTp : undefined,
+              slTrigger: hardSl,
+            }).then(() => {
+              logger.info(`🛡️ [CONCRETE ARMOR] Successfully secured hard on-chain Stop Loss for ${pos.symbol} at $${hardSl}`);
+            }).catch((err: any) => {
+              logger.warn(`Failed auto-arming hard SL for ${pos.symbol}: ${err.message}`);
+            });
+          }
         }
       }
 
@@ -855,12 +883,40 @@ export class TradeExecutor {
             try {
               await mcpClient.setTpSl({
                 symbol: signal.symbol,
-                tpTrigger: signal.takeProfit,
-                slTrigger: signal.stopLoss,
+                tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
+                slTrigger: signal.stopLoss > 0 ? signal.stopLoss : undefined,
               });
               logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
             } catch (tpErr: any) {
-              logger.warn(`⚠️ [ON-CHAIN TP/SL] Failed to immediately attach TP/SL: ${tpErr.message}`);
+              const msg = tpErr?.message || String(tpErr);
+              if (msg.includes('ENO_POSITION_FOR_TP_SL') || msg.includes('0xc')) {
+                logger.info(`⏳ [${signal.symbol}] Entry is resting on order book (maker order). Awaiting fill before arming TP/SL...`);
+                let armed = false;
+                const symKey = signal.symbol.replace('-', '/').toUpperCase();
+                for (let poll = 1; poll <= 7; poll++) {
+                  await new Promise((r) => setTimeout(r, 3000));
+                  try {
+                    const positions = await mcpClient.getPositions();
+                    const p = positions.find((x) => x.symbol.replace('-', '/').toUpperCase() === symKey);
+                    if (p) {
+                      logger.info(`⚡ [${signal.symbol}] Maker order filled! Locking on-chain TP/SL now...`);
+                      await mcpClient.setTpSl({
+                        symbol: signal.symbol,
+                        tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
+                        slTrigger: signal.stopLoss > 0 ? signal.stopLoss : undefined,
+                      });
+                      logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
+                      armed = true;
+                      break;
+                    }
+                  } catch {}
+                }
+                if (!armed) {
+                  logger.info(`⏳ [${signal.symbol}] Maker order still resting on book. Background Concrete Armor will automatically lock hard on-chain TP/SL immediately upon fill.`);
+                }
+              } else {
+                logger.warn(`⚠️ [ON-CHAIN TP/SL] Failed to immediately attach TP/SL: ${msg}`);
+              }
             }
           }
         } catch (err: any) {
@@ -1002,9 +1058,10 @@ export class TradeExecutor {
     }
 
     // Determine Maker Post-Only Limit Price vs Taker IOC Price
+    // Decibel TimeInForce enum: 0 = GTC, 1 = PostOnly (Maker), 2 = ImmediateOrCancel (IOC)
     const isMakerPostOnly = Boolean(preferPostOnly && targetLimitPrice && targetLimitPrice > 0);
-    const timeInForce = isMakerPostOnly ? 0 : 2; // 0 = GTC PostOnly, 2 = ImmediateOrCancel (IOC)
-    const isPostOnly = isMakerPostOnly;
+    const timeInForce = isMakerPostOnly ? 1 : 2; // 1 = PostOnly Maker, 2 = IOC Taker
+    const reduceOnly = false; // Decibel param 7 is reduce_only: bool! MUST be false for opening new positions.
 
     let limitPrice = 0;
     if (isMakerPostOnly && targetLimitPrice) {
@@ -1061,7 +1118,7 @@ export class TradeExecutor {
             chainSize,
             isBuy,
             timeInForce,
-            isPostOnly,
+            reduceOnly,
             clientOrderId,
             null, // stop_price
             null, // tp_trigger_price
@@ -1090,6 +1147,20 @@ export class TradeExecutor {
 
       if (!executed.success) {
         throw new Error(`On-chain transaction failed: ${executed.vm_status}`);
+      }
+
+      // Verify that matching engine did not immediately cancel order
+      if (Array.isArray((executed as any).events)) {
+        for (const ev of (executed as any).events) {
+          if (ev.type?.includes('market_types::OrderEvent')) {
+            const evData = ev.data;
+            const status = evData?.status?.__variant__ || evData?.status;
+            if (status === 'CANCELLED') {
+              const details = evData?.details || 'Order rejected by matching engine';
+              throw new Error(`On-chain order cancelled by DEX matching engine: ${details}`);
+            }
+          }
+        }
       }
 
       return committed.hash;

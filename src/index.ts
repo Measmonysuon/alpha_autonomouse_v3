@@ -14,7 +14,7 @@ import { localAIBrain } from './ai/brain';
 import { superchargeClient } from './simlab/supercharge-client';
 import { tradeExecutor } from './trades/executor';
 import { portfolioHarvester } from './engine/harvester';
-import { startApiServer, agentState, registerScanTrigger, seedMarketsForPairs } from './api-server';
+import { startApiServer, agentState, registerScanTrigger, seedMarketsForPairs, broadcastState } from './api-server';
 import { getSimPairDirective } from './strategy/manager';
 import { startSimPipelineConsumer, stopSimPipelineConsumer } from './pipeline/sim-consumer';
 import { startTelemetryFeeder, stopTelemetryFeeder } from './pipeline/telemetry-feeder';
@@ -450,7 +450,7 @@ async function bootstrap(): Promise<void> {
     }
   }, config.POLL_INTERVAL_MS);
 
-  // Position monitor — ultra-fast poll (3s) when positions are active, 15s when idle
+  // Position monitor — ultra-fast poll (1.5s) when positions are active, 3s when idle
   const positionLoop = async (): Promise<void> => {
     if (!isRunning) return;
     try {
@@ -470,12 +470,13 @@ async function bootstrap(): Promise<void> {
         }
         tradeExecutor.monitorOpenTrades(openPrices);
         portfolioHarvester.evaluate(openPrices);
+        broadcastState();
       }
     } catch (err: any) {
       logger.debug(`[FAST POSITION MONITOR] Error in cycle: ${err.message}`);
     }
     const hasOpen = tradeExecutor.getOpenTrades().length > 0;
-    const nextPoll = hasOpen ? 3_000 : 15_000;
+    const nextPoll = hasOpen ? 1_500 : 3_000;
     positionPollTimer = setTimeout(positionLoop, nextPoll);
   };
   positionLoop();

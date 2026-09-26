@@ -112,7 +112,8 @@ const configSchema = z.object({
       if (fromEnv && fromEnv.split(',').length >= 25) return fromEnv;
       return DEFAULT_28_PAIRS;
     }),
-  POLL_INTERVAL_MS: z.coerce.number().default(() => Number(envOrFallback('POLL_INTERVAL_MS') || 15_000)),
+  POLL_INTERVAL_MS: z.coerce.number().default(() => Number(envOrFallback('POLL_INTERVAL_MS') || 10_000)),
+  FAST_PRICE_TICKER_MS: z.coerce.number().default(() => Number(envOrFallback('FAST_PRICE_TICKER_MS') || 1_500)),
   CONFIRMATION_TIMEOUT_MS: z.coerce.number().default(120_000),
 
   // ── Optional Telegram Alerts (Zero-Failure if omitted) ────────────────────────
