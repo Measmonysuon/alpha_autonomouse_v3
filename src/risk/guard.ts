@@ -28,6 +28,61 @@ export interface RiskValidationResult {
 }
 
 export class RiskGuard {
+  private trapCoolOffs = new Map<string, { expiresAt: number; reason: string; trapCategory: string }>();
+
+  /**
+   * Trigger an automatic 15-minute cool-off when Layer 4 AI Shield vetoes a predatory trap
+   */
+  public triggerL4TrapCoolOff(
+    symbol: string,
+    action: 'LONG' | 'SHORT' | 'BOTH',
+    trapCategory: string,
+    reason: string,
+    durationMinutes = 15,
+  ): void {
+    const norm = symbol.toUpperCase().replace('-', '/');
+    const expiresAt = Date.now() + durationMinutes * 60 * 1000;
+    if (action === 'BOTH') {
+      this.trapCoolOffs.set(`${norm}:LONG`, { expiresAt, reason, trapCategory });
+      this.trapCoolOffs.set(`${norm}:SHORT`, { expiresAt, reason, trapCategory });
+    } else {
+      this.trapCoolOffs.set(`${norm}:${action}`, { expiresAt, reason, trapCategory });
+    }
+    logger.warn(
+      `🛡️ [AI SHIELD COOL-OFF] ${norm} ${action} locked for ${durationMinutes}m: ${trapCategory} — ${reason}`
+    );
+
+    // Broadcast instant trap veto to Sim Lab and connected fleet desks out-of-band
+    try {
+      const { pushInstantVeto } = require('../pipeline/telemetry-feeder');
+      pushInstantVeto(norm, action, trapCategory, reason, durationMinutes).catch(() => {});
+    } catch {}
+  }
+
+  public getActiveTrapCoolOff(symbol: string, action: 'LONG' | 'SHORT'): { locked: boolean; reason?: string; trapCategory?: string; remainingMinutes?: number } {
+    const norm = symbol.toUpperCase().replace('-', '/');
+    const lockKey = `${norm}:${action}`;
+    const activeLock = this.trapCoolOffs.get(lockKey);
+    if (activeLock && activeLock.expiresAt > Date.now()) {
+      const remainingMinutes = Math.ceil((activeLock.expiresAt - Date.now()) / 60000);
+      return { locked: true, reason: activeLock.reason, trapCategory: activeLock.trapCategory, remainingMinutes };
+    }
+    return { locked: false };
+  }
+
+  public getAllActiveCoolOffs(): Array<{ symbol: string; action: string; trapCategory: string; reason: string; remainingMinutes: number }> {
+    const now = Date.now();
+    const results: any[] = [];
+    for (const [key, lock] of this.trapCoolOffs.entries()) {
+      if (lock.expiresAt > now) {
+        const [symbol, action] = key.split(':');
+        const remainingMinutes = Math.ceil((lock.expiresAt - now) / 60000);
+        results.push({ symbol, action, trapCategory: lock.trapCategory, reason: lock.reason, remainingMinutes });
+      }
+    }
+    return results;
+  }
+
   /**
    * Pre-trade validation before placing or simulating any order
    */
@@ -44,6 +99,62 @@ export class RiskGuard {
     // ── 0. Basic Sanity Check ──────────────────────────────────────────────────
     if (action !== 'LONG' && action !== 'SHORT') {
       return this.reject('Signal action is HOLD or unspecified', directives, accountEquity, availableMargin);
+    }
+
+    // ── 0b. 15-Minute AI Shield Directional Trap Cool-Off ─────────────────────
+    const lock = this.getActiveTrapCoolOff(signal.symbol, action);
+    if (lock.locked) {
+      const reason = `🛑 Blocked by 15m AI Shield Trap Cool-Off: ${lock.trapCategory} (${lock.reason}) — ${lock.remainingMinutes}m remaining.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
+    const { superchargeClient } = require('../simlab/supercharge-client');
+    const isSupercharged = superchargeClient.isActive() || directives.source === 'SIMLAB_SUPERCHARGED';
+
+    if (isSupercharged) {
+
+      // Check Sim Lab Macro News Freeze
+      try {
+        const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+        const b = getLastSyncedBundle();
+        if (typeof b?.macro?.nearestNewsMinutes === 'number' && b.macro.nearestNewsMinutes <= 30 && b.macro.nearestNewsMinutes >= -15) {
+          const reason = `🛑 Blocked by Sim Lab Macro News Freeze: Event "${b.macro.nearestNewsTitle || 'High-Impact USD Announcement'}" in ${b.macro.nearestNewsMinutes}m. Trading halted.`;
+          logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        }
+      } catch {}
+
+      // Check Sim Lab Pair Directive Cooldowns & Banned Sides
+      try {
+        const { getSimPairDirective } = require('../strategy/manager');
+        const simDir = getSimPairDirective(signal.symbol);
+        if (simDir?.coolOffActive) {
+          if (!simDir.bannedSide || simDir.bannedSide === 'BOTH' || simDir.bannedSide === action) {
+            const reason = `🛑 Blocked by Sim Lab Pair Directives: ${simDir.reason || 'Automated Fleet Cooldown active'}.`;
+            logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+        }
+      } catch {}
+
+      // Check Institutional Liquidity Depth Screening ($5M Min Clusters)
+      try {
+        const { getSimPairDirective } = require('../strategy/manager');
+        const simDir = getSimPairDirective(signal.symbol);
+        const clusters = simDir?.orderflow?.liquidationClusters;
+        if (clusters) {
+          const totalDepth = (clusters.longLiquidationUsd || 0) + (clusters.shortLiquidationUsd || 0);
+          const PRIMARY_MAJORS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
+          if (totalDepth > 0 && totalDepth < 5_000_000 && !PRIMARY_MAJORS.includes(signal.symbol)) {
+            if (aiEval.confidenceScore < 85) {
+              const reason = `🛑 Institutional Liquidity Gate: Total cluster depth ($${(totalDepth / 1e6).toFixed(2)}M) is below institutional threshold ($5M) and score (${aiEval.confidenceScore}) < 85.`;
+              logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+              return this.reject(reason, directives, accountEquity, availableMargin);
+            }
+          }
+        }
+      } catch {}
     }
 
     // ── 1. Directional Banning Check (Sim Lab or Local Directive) ──────────────

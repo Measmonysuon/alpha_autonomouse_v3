@@ -62,6 +62,7 @@ export interface TradeRecord {
   closedAt?: number;
   exitPrice?: number;
   pnlUsd?: number;
+  isManual?: boolean;
   pnlPct?: number;
   strategyName?: string;
   regime?: string;
@@ -82,6 +83,7 @@ export interface TradeRecord {
   tp1Hit?: boolean;
   breakevenMoved?: boolean;
   partialRealizedPnlUsd?: number;
+  atr?: number;
 }
 
 export interface ShadowTrade {
@@ -92,7 +94,7 @@ export interface ShadowTrade {
   takeProfit: number;
   stopLoss: number;
   confidence: number;
-  vetoCategory: 'AI_REJECTED' | 'BUDGET_EXHAUSTED' | 'MAX_POSITIONS' | 'DIRECTIONAL_BAN' | 'SEMI_AUTO_HOLD' | 'RISK_GUARD' | 'SIM_COUNTERFACTUAL_VETO';
+  vetoCategory: 'AI_REJECTED' | 'BUDGET_EXHAUSTED' | 'MAX_POSITIONS' | 'DIRECTIONAL_BAN' | 'SEMI_AUTO_HOLD' | 'RISK_GUARD' | 'SIM_COUNTERFACTUAL_VETO' | 'BULL_TRAP' | 'BEAR_TRAP' | 'CVD_DISTRIBUTION_TRAP' | 'CVD_ABSORPTION_TRAP' | 'SHORT_SQUEEZE_EXHAUSTION' | 'LONG_SQUEEZE_FLUSH' | 'BULL_TRAP_OVERCROWDING' | 'BEAR_TRAP_OVERCROWDING' | 'MARKET_COOLING' | 'MACRO_NEWS_WHIPSAW' | string;
   vetoReason: string;
   status: 'tracking' | 'counterfactual_win' | 'counterfactual_loss';
   hypotheticalPnlPct: number;
@@ -341,12 +343,16 @@ export class TradeExecutor {
               strategyName: st.strategy_name ?? 'Decibel Autonomous Trade',
               exitReason: st.exit_reason ?? undefined,
               notes: st.exit_reason ?? undefined,
+              // Authoritative manual flag from DB — 1 = human-placed trade
+              isManual: st.is_manual === 1,
             };
             this.tradesCache.push(trade);
             cacheMap.set(st.id, trade);
           } else {
             existing.pnlUsd = netPnl;
             existing.status = status;
+            // Always refresh the manual flag from DB in case it was updated
+            existing.isManual = st.is_manual === 1;
             if (st.exit_price) existing.exitPrice = st.exit_price;
             if (st.closed_at) existing.closedAt = st.closed_at;
             if (st.tx_version) existing.txHash = st.tx_version;
@@ -597,12 +603,6 @@ export class TradeExecutor {
           if (trade.openedAt && now - trade.openedAt < 30_000) {
             continue;
           }
-          // Guard 2: If onChainList is completely empty but local cache has open trades,
-          // it is an RPC glitch, indexer blip, or MCP reconnect — NEVER drop trades!
-          if (onChainList.length === 0) {
-            logger.debug(`[RECONCILE] On-chain report returned 0 positions while local has open trades — holding open`);
-            continue;
-          }
 
           const missed = (this.missingOnChainCount.get(symNorm) || 0) + 1;
           this.missingOnChainCount.set(symNorm, missed);
@@ -622,6 +622,7 @@ export class TradeExecutor {
             trade.exitReason = smartReason;
             this.missingOnChainCount.delete(symNorm);
             this.missingFirstSeenAt.delete(symNorm);
+            this.notifyTradeClosed(trade);
             modified = true;
           } else {
             logger.debug(`[RECONCILE] Position ${trade.symbol} not in latest report (strike ${missed}/6, ${Math.round(durationMissingMs / 1000)}s) — holding open`);
@@ -667,13 +668,9 @@ export class TradeExecutor {
     const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
     const budgetUsedUsd = open.reduce((acc, t) => acc + (t.allocatedUsd ?? 0), 0);
 
-    const isManualTrade = (t: any) => Boolean(
-      t.is_manual === 1 ||
-      t.isManual === true ||
-      (t.status === 'closed_manual' && (!t.strategyName || t.strategyName.toLowerCase().includes('manual'))) ||
-      t.notes?.toLowerCase().includes('manual') ||
-      t.strategyName?.toLowerCase().includes('manual')
-    );
+    // Use ONLY the authoritative DB flag — 'closed_manual' status just means
+    // the position was closed via an on-chain action, NOT that it is a human trade.
+    const isManualTrade = (t: any) => Boolean(t.isManual === true || t.is_manual === 1);
 
     const autoOpen = open.filter((t) => !isManualTrade(t)).length;
     const manualOpen = open.filter((t) => isManualTrade(t)).length;
@@ -812,7 +809,15 @@ export class TradeExecutor {
           // Ensure on-chain leverage is explicitly configured on Decibel DEX before opening
           await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
 
-          const liveResult = await this.executeOnChain(signal.symbol, side, risk.positionSizeBase, signal.entryPrice, risk.leverage);
+          const liveResult = await this.executeOnChain(
+            signal.symbol,
+            side,
+            risk.positionSizeBase,
+            signal.entryPrice,
+            risk.leverage,
+            signal.limitPrice,
+            signal.postOnly,
+          );
           orderId = liveResult.orderId;
           txHash = liveResult.txHash;
 
@@ -901,6 +906,7 @@ export class TradeExecutor {
         estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
         estimatedLossPct: hardSlPrice && signal.entryPrice ? Math.abs((signal.entryPrice - hardSlPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
         estimatedWinRatePct: aiEval.confidenceScore || 78,
+        atr: signal.indicators.atr14,
         lifecycleEvents: [initialLifecycleEvent],
       };
 
@@ -939,6 +945,8 @@ export class TradeExecutor {
     size: number,
     entryPrice: number,
     targetLeverage?: number,
+    targetLimitPrice?: number,
+    preferPostOnly = false,
   ): Promise<{ orderId: string; txHash: string }> {
     if (!this.aptos || !this.aptosAccount) {
       throw new Error('Aptos SDK signer uninitialized');
@@ -965,12 +973,20 @@ export class TradeExecutor {
       } catch { }
     }
 
-    // Immediate-Or-Cancel (IOC, TIF 2): execute instantly at mark price with 0.2% slippage buffer
-    // Prevents unfilled limit orders from resting on the orderbook while local state tracks as open
-    const takerSlippage = 0.002;
-    const limitPrice = refPrice > 0
-      ? (isBuy ? refPrice * (1 + takerSlippage) : refPrice * (1 - takerSlippage))
-      : 0;
+    // Determine Maker Post-Only Limit Price vs Taker IOC Price
+    const isMakerPostOnly = Boolean(preferPostOnly && targetLimitPrice && targetLimitPrice > 0);
+    const timeInForce = isMakerPostOnly ? 0 : 2; // 0 = GTC PostOnly, 2 = ImmediateOrCancel (IOC)
+    const isPostOnly = isMakerPostOnly;
+
+    let limitPrice = 0;
+    if (isMakerPostOnly && targetLimitPrice) {
+      limitPrice = targetLimitPrice;
+    } else {
+      const takerSlippage = 0.002;
+      limitPrice = refPrice > 0
+        ? (isBuy ? refPrice * (1 + takerSlippage) : refPrice * (1 - takerSlippage))
+        : 0;
+    }
 
     const chainPrice = limitPrice > 0
       ? Math.round((limitPrice * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize
@@ -997,7 +1013,11 @@ export class TradeExecutor {
 
     const clientOrderId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-    logger.info(`⚡ [ON-CHAIN IOC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (IOC Market Execution)`);
+    if (isMakerPostOnly) {
+      logger.info(`🏛️ [MAKER POST-ONLY] Routing resting FVG limit order on Decibel DEX: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (0% Taker Fee)`);
+    } else {
+      logger.info(`⚡ [ON-CHAIN IOC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (IOC Market Execution)`);
+    }
 
     const sendTx = async (): Promise<string> => {
       const client = this.getAptos();
@@ -1012,8 +1032,8 @@ export class TradeExecutor {
             chainPrice,
             chainSize,
             isBuy,
-            2, // TimeInForce: 2 = ImmediateOrCancel (IOC)
-            false,
+            timeInForce,
+            isPostOnly,
             clientOrderId,
             null, // stop_price
             null, // tp_trigger_price

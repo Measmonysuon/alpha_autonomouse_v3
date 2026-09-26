@@ -34,6 +34,7 @@ import { logger } from './utils/logger';
 import { tradeExecutor } from './trades/executor';
 import { mcpClient } from './mcp/client';
 import { portfolioHarvester } from './engine/harvester';
+import { riskGuard } from './risk/guard';
 import { standaloneEngine, fetchPublicKlines } from './engine/standalone-engine';
 import { superchargeClient } from './simlab/supercharge-client';
 import { telegramNotifier } from './notify/telegram';
@@ -445,6 +446,33 @@ export function startApiServer(): http.Server {
           explorerUrl: signer ? `https://explorer.aptoslabs.com/account/${signer}?network=${config.NETWORK}` : null,
         }),
       );
+      return;
+    }
+
+    // ── 2c. Real-Time Fleet Immunity Veto Bus Ingestion ───────────────────────
+    if (pathname === '/api/fleet/immunity-lock' && req.method === 'POST') {
+      let bodyStr = '';
+      req.on('data', chunk => { bodyStr += chunk; });
+      req.on('end', () => {
+        try {
+          const body = JSON.parse(bodyStr || '{}');
+          if (body.symbol) {
+            riskGuard.triggerL4TrapCoolOff(
+              body.symbol,
+              body.bannedSide || 'BOTH',
+              'SHARED_FLEET_IMMUNITY',
+              body.reason || `Instant fleet veto from ${body.triggeredByDesk || 'Sim Lab'}`,
+              body.durationMinutes || 15
+            );
+            logger.info(`⚡ [FLEET IMMUNITY BUS] Instant push received: ${body.symbol} (${body.bannedSide || 'BOTH'}) locked for ${body.durationMinutes || 15}m`);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, symbol: body.symbol }));
+        } catch (e: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
       return;
     }
 
@@ -922,6 +950,7 @@ export function startApiServer(): http.Server {
           simPairDirectives: getSimPairDirectives(),
           shadowStats: tradeExecutor.getShadowStats(),
           shadowTrades: tradeExecutor.getShadowTrades().slice(-20),
+          activeCoolOffs: riskGuard.getAllActiveCoolOffs(),
           portfolioHarvester: portfolioHarvester.evaluate(getLivePricesMap()),
           positions: tradeExecutor.getOpenTrades(),
           openPositions: tradeExecutor.getOpenTrades(),
@@ -1219,12 +1248,12 @@ export function startApiServer(): http.Server {
 function dbTradeToFrontendTrade(t: DbTrade): any {
   const pnl = Number(t.realized_pnl || 0);
   let exitReason = t.exit_reason;
-  if (!exitReason || exitReason === 'Reconciled directly from Aptos on-chain DEX state') {
-    if (t.status === 'OPEN') {
+  if (!exitReason || exitReason === 'Reconciled directly from Aptos on-chain DEX state' || exitReason === 'ON_CHAIN_DEX_CLOSE' || exitReason === 'DEX_SETTLED' || exitReason.includes('DEX')) {
+    if (t.status === 'OPEN' || t.status === 'open') {
       exitReason = 'ACTIVE_POSITION';
-    } else if (pnl > 0.1) {
+    } else if (pnl > 0.05) {
       exitReason = 'ON_CHAIN_TP';
-    } else if (pnl > 0) {
+    } else if (pnl >= 0) {
       exitReason = 'BREAKEVEN';
     } else if (pnl < 0) {
       exitReason = 'ON_CHAIN_SL';
@@ -1233,27 +1262,53 @@ function dbTradeToFrontendTrade(t: DbTrade): any {
     }
   }
 
+  const rawTrade = t as any;
+  const isManual = Boolean(
+    rawTrade.is_manual === 1 ||
+    rawTrade.is_manual === true ||
+    rawTrade.is_manual === '1'
+  );
+
   return {
     ...t,
     id: t.id,
     orderId: t.client_order_id || t.id,
+    client_order_id: t.client_order_id || t.id,
     txHash: t.tx_version || null,
     tx_version: t.tx_version || null,
+    transaction_version: t.tx_version || null,
     symbol: t.symbol,
     side: t.side,
     action: t.action,
-    isManual: t.is_manual === 1,
+    isManual,
+    tradeType: isManual ? 'MANUAL' : 'AUTO',
+    execution_price: t.entry_price,
     entryPrice: t.entry_price,
+    entry_price: t.entry_price,
+    price: t.exit_price || t.entry_price,
     exitPrice: t.exit_price,
+    exit_price: t.exit_price,
+    executed_size: t.size,
     sizeBase: t.size,
+    size: t.size,
     allocatedUsd: t.allocated_usd,
+    allocated_usd: t.allocated_usd,
     leverage: t.leverage,
+    realized_pnl_amount: t.realized_pnl,
     pnlUsd: t.realized_pnl,
     pnlPct: t.realized_pnl_pct,
+    realized_pnl_pct: t.realized_pnl_pct,
+    fee_amount: t.fee_usd,
+    feeUsd: t.fee_usd,
+    fee_usd: t.fee_usd,
     status: (t.status || 'closed').toLowerCase(),
     openedAt: t.opened_at,
+    opened_at: t.opened_at,
     closedAt: t.closed_at,
+    closed_at: t.closed_at,
+    timestamp: t.closed_at || t.opened_at || Date.now(),
     strategyName: t.strategy_name,
+    strategy_name: t.strategy_name,
     confidence: t.confidence,
     exit_reason: exitReason,
     exitReason: exitReason,

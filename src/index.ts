@@ -132,6 +132,9 @@ async function runTradingCycle(): Promise<void> {
             fundingRate,
             oiChange24h,
             lsRatio,
+            cvdTrend: orderflow?.cvdTrend,
+            predictedFundingRate: orderflow?.predictedFundingRate,
+            liquidationClusters: orderflow?.liquidationClusters,
           });
 
           // Market metrics
@@ -303,7 +306,7 @@ async function runTradingCycle(): Promise<void> {
               takeProfit: signal.takeProfit,
               stopLoss: signal.stopLoss,
               confidence: aiEval.confidenceScore,
-              vetoCategory: 'AI_REJECTED',
+              vetoCategory: aiEval.trapCategory || 'AI_REJECTED',
               vetoReason: aiEval.reasoning || 'Rejected by AI Brain confidence/sentiment filter',
             });
           }

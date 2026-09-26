@@ -249,11 +249,12 @@ export function getSimPairDirectives(): Record<string, any> {
 }
 
 export function getSimPairDirective(symbol: string): any {
-  if (!isSimLabConnected()) {
+  const norm = (symbol || '').toUpperCase();
+  const dir = simPairDirectivesCache[norm] || simPairDirectivesCache[symbol] || null;
+  if (!dir && !isSimLabConnected()) {
     return null;
   }
-  const norm = (symbol || '').toUpperCase();
-  return simPairDirectivesCache[norm] || simPairDirectivesCache[symbol] || null;
+  return dir;
 }
 
 export function getAllStrategies(): {
@@ -374,7 +375,9 @@ export function setSimLabConnectionChecker(checker: () => boolean): void {
 
 export function isSimLabConnected(): boolean {
   try {
-    return Boolean(simLabConnectedChecker());
+    if (simLabConnectedChecker) return Boolean(simLabConnectedChecker());
+    const { superchargeClient } = require('../simlab/supercharge-client');
+    return superchargeClient.isActive();
   } catch {
     return false;
   }

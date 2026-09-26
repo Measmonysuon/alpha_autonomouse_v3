@@ -48,6 +48,7 @@ export interface HarvesterConfig {
   minHarvestUsd: number;
   accelerateBreakevenR: number;
   breakevenFeeBufferPct?: number;
+  breakevenMinAtrMultiple?: number;
   executionStyle: 'PARTIAL_FIRST' | 'FULL_CLOSE_ONLY';
   bannedSide?: string;
   enableDefensiveCut?: boolean;
@@ -308,7 +309,15 @@ export class PortfolioHarvester {
         tradeExecutor.saveTrades();
       }
 
-      if (this.config.enabled && (riskRMultiple >= targetR || pnlPct >= (this.config.minHarvestPct || 1.5))) {
+      // Dynamic Trailing SL: Accelerate to breakeven only when price achieves confirmed statistical breakaway
+      // beyond the entry order-flow retest zone (calibrated dynamically by Sim Lab ATR multiple, e.g. 2.0x-2.5x ATR, and target R)
+      const minAtrMultiple = this.config.breakevenMinAtrMultiple || 2.0;
+      const priceDistance = Math.abs(currentPrice - trade.entryPrice);
+      const isBreakawayConfirmed = (trade.atr && trade.atr > 0)
+        ? priceDistance >= (minAtrMultiple * trade.atr)
+        : riskRMultiple >= Math.max(targetR, 1.25);
+
+      if (this.config.enabled && isBreakawayConfirmed && (riskRMultiple >= targetR || pnlPct >= (this.config.minHarvestPct || 1.5))) {
         const feeBuffer = feeBufferPct / 100;
         const breakevenFloor = Number((isLong
           ? trade.entryPrice * (1 + feeBuffer)
@@ -889,6 +898,9 @@ export function applySimHarvesterCalibration(cal: SimHarvesterCalibration): bool
     ? Math.max(1.20, cal.accelerateBreakevenR)
     : 1.35;
   const breakevenFeeBufferPct = typeof cal.breakevenFeeBufferPct === 'number' ? cal.breakevenFeeBufferPct : 0.25;
+  const breakevenMinAtrMultiple = typeof (cal as any).breakevenMinAtrMultiple === 'number'
+    ? Math.max(1.5, (cal as any).breakevenMinAtrMultiple)
+    : 2.0;
 
   return portfolioHarvester.updateConfig({
     harvestScoreThreshold: vulnerabilityThreshold,
@@ -897,5 +909,6 @@ export function applySimHarvesterCalibration(cal: SimHarvesterCalibration): bool
     minHarvestUsd: minHarvestProfitUsd,
     accelerateBreakevenR,
     breakevenFeeBufferPct,
+    breakevenMinAtrMultiple,
   }, 'SIM_LAB');
 }

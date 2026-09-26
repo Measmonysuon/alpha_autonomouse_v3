@@ -57,6 +57,7 @@ export interface TechnicalIndicators {
   lastPattern: string;
   smcSignal?: 'SWEEP_LOW_REVERSAL' | 'SWEEP_HIGH_REVERSAL' | 'FAIR_VALUE_GAP_TAP' | 'NONE';
   smc?: SMCAnalysis;
+  cvdTrend?: 'BUY' | 'SELL' | 'NEUTRAL';
 }
 
 export interface StandaloneSignal {
@@ -81,6 +82,9 @@ export interface StandaloneSignal {
   strategyTags: string[];
   entryRationale: string;
   strategyAttribution?: StrategyAttribution;
+  orderType?: 'MARKET' | 'POST_ONLY_LIMIT';
+  limitPrice?: number;
+  postOnly?: boolean;
   timestamp: number;
 }
 
@@ -750,8 +754,10 @@ export class StandaloneTradingEngine {
       fundingRate?: number;
       oiChange24h?: number;
       lsRatio?: number;
-      liquidationClusters?: any[];
+      liquidationClusters?: any;
       orderBookSpread?: number;
+      cvdTrend?: 'BUY' | 'SELL' | 'NEUTRAL';
+      predictedFundingRate?: number;
     },
   ): StandaloneSignal {
     const timestamp = Date.now();
@@ -883,6 +889,22 @@ export class StandaloneTradingEngine {
           bullScore += 1; coinglassScore += 1;
           reasons.push(`👥 L2 Crowd Heavily Short (L/S: ${lsRatio.toFixed(2)}) — contrarian long signal`);
         }
+      }
+
+      // Sim Lab Synchronized CVD Delta / Absorption
+      const cvdTrend = extraMetrics?.cvdTrend;
+      if (cvdTrend === 'BUY') {
+        bullScore += 1;
+        coinglassScore += 1;
+        ind.cvdTrend = 'BUY';
+        reasons.push(`📊 L2 Sim Lab CVD: Institutional Accumulation (Buy delta dominant)`);
+      } else if (cvdTrend === 'SELL') {
+        bearScore += 1;
+        coinglassScore += 1;
+        ind.cvdTrend = 'SELL';
+        reasons.push(`📊 L2 Sim Lab CVD: Institutional Distribution (Sell delta dominant)`);
+      } else if (cvdTrend === 'NEUTRAL') {
+        ind.cvdTrend = 'NEUTRAL';
       }
     }
 
@@ -1204,6 +1226,27 @@ export class StandaloneTradingEngine {
       typeof pairOverrides.maxLeverage === 'number'
     ));
 
+    // Autonomous Maker-First FVG / Pullback Limit Order Calculation
+    let limitPrice = entry;
+    let orderType: 'MARKET' | 'POST_ONLY_LIMIT' = 'MARKET';
+    let postOnly = false;
+
+    if (isTriggered && action === 'LONG') {
+      const nearest = ind.smc?.fvg?.nearestFVG;
+      const fvgTop = (nearest && nearest.type === 'BULLISH_FVG') ? nearest.top : undefined;
+      const emaSupport = (ind.ema9 && ind.ema9 < entry) ? ind.ema9 : entry * 0.9995;
+      limitPrice = Number((fvgTop ? Math.min(entry, fvgTop) : emaSupport).toFixed(4));
+      orderType = 'POST_ONLY_LIMIT';
+      postOnly = true;
+    } else if (isTriggered && action === 'SHORT') {
+      const nearest = ind.smc?.fvg?.nearestFVG;
+      const fvgBottom = (nearest && nearest.type === 'BEARISH_FVG') ? nearest.bottom : undefined;
+      const emaResistance = (ind.ema9 && ind.ema9 > entry) ? ind.ema9 : entry * 1.0005;
+      limitPrice = Number((fvgBottom ? Math.max(entry, fvgBottom) : emaResistance).toFixed(4));
+      orderType = 'POST_ONLY_LIMIT';
+      postOnly = true;
+    }
+
     return {
       symbol,
       action,
@@ -1211,6 +1254,9 @@ export class StandaloneTradingEngine {
       riskLevel,
       triggered: isTriggered,
       entryPrice: entry,
+      limitPrice,
+      orderType,
+      postOnly,
       stopLoss: sl,
       takeProfit: tp,
       takeProfit1,

@@ -697,6 +697,18 @@ export class SimLabSuperchargeClient {
   public async sendHeartbeat(telemetryData?: any): Promise<void> {
     if (!this.serverUrl) return;
 
+    // 0. Auto-Reconnect Recovery: If disconnected but previously enabled, auto-probe Sim Lab
+    if (!this.isConnected && this.isEnabled && this.rawToken && (this.consecutiveFailures % 2 === 0)) {
+      try {
+        const reconnected = await this.connect();
+        if (reconnected) {
+          logger.info('⚡ [SIM LAB SUPERCHARGE] Auto-reconnected to Sim Lab Server successfully! Restored Supercharged mode.');
+          this.consecutiveFailures = 0;
+          return;
+        }
+      } catch {}
+    }
+
     // 1. Fetch live real on-chain balance & margin
     let onChainEquity = 0;
     let onChainMargin = 0;

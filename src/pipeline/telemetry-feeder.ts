@@ -378,6 +378,48 @@ export function startTelemetryFeeder(): void {
 }
 
 /**
+ * Instantly broadcasts a detected trap veto to Sim Lab and the Fleet Immunity Bus
+ */
+export async function pushInstantVeto(
+  symbol: string,
+  bannedSide: 'LONG' | 'SHORT' | 'BOTH',
+  trapCategory: string,
+  reason: string,
+  durationMinutes = 15
+): Promise<void> {
+  try {
+    const basePayload = await buildTelemetryPayload('periodic_sync').catch(() => null);
+    const instantPayload: any = {
+      ...(basePayload || {}),
+      timestamp: Date.now(),
+      clientId: config.CLIENT_ID || 'alpha_client_v2',
+      botId: config.CLIENT_ID || 'alpha_client_v2',
+      botName: config.CLIENT_NAME || 'Alpha Autonomous Client v3',
+      source: 'live_mainnet',
+      triggerReason: 'instant_trap_veto',
+      vetoEvent: {
+        symbol: symbol.toUpperCase().replace('-', '/'),
+        bannedSide,
+        trapCategory,
+        reason,
+        durationMinutes,
+      },
+    };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Client-Id': config.CLIENT_ID || 'alpha_client_v2',
+    };
+    if (config.CLIENT_API_KEY) {
+      headers['Authorization'] = `Bearer ${config.CLIENT_API_KEY}`;
+    }
+    simConnectionManager.postTelemetry(instantPayload, headers).catch(() => {});
+    logger.info(`📡 [FLEET IMMUNITY BUS] Instant trap veto broadcast to Sim Lab: ${symbol} (${bannedSide}) [${trapCategory}]`);
+  } catch (err: any) {
+    logger.warn(`⚠️ [FLEET IMMUNITY BUS] Failed to broadcast instant veto: ${err.message}`);
+  }
+}
+
+/**
  * Stops the outbound telemetry feeder loop
  */
 export function stopTelemetryFeeder(): void {

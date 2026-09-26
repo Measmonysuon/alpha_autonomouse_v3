@@ -19,9 +19,11 @@ export interface AIBrainEvaluation {
   action: 'LONG' | 'SHORT' | 'HOLD';
   sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   reasoning: string;
-  provider: 'gemini' | 'claude' | 'ollama' | 'local_rules';
+  provider: string;
   role?: 'PRIMARY_VALIDATOR' | 'SECOND_OPINION';
   riskFlags: string[];
+  trapCategory?: string;
+  convictionBonus?: number;
 }
 
 export interface CopilotChatContext {
@@ -84,49 +86,206 @@ export class LocalAIBrain {
       };
     }
 
-    // ── Second Opinion Advisory (When Sim Lab is Connected) ──────────────────────
-    if (isSimLabConnected && directives) {
-      // 1. Check if Sim Lab banned this direction
-      if (directives.bannedSides && directives.bannedSides.includes(signal.action)) {
-        return {
-          confirmed: false,
-          confidenceScore: 30,
-          action: 'HOLD',
-          sentiment: 'NEUTRAL',
-          reasoning: `🛡️ Second Opinion VETO: Candidate ${signal.action} is strictly banned by Sim Lab directives (${directives.regime}).`,
-          provider: 'local_rules',
-          role: 'SECOND_OPINION',
-          riskFlags: ['SIMLAB_DIRECTIONAL_BAN'],
-        };
-      }
+    // ── 1. STANDALONE MODE (Lightweight, pure local math, zero external API calls) ──
+    if (!isSimLabConnected) {
+      return this.evaluateWithLocalRules(signal, 'PRIMARY_VALIDATOR', directives);
+    }
 
-      // 2. Check local candle microstructure trap
-      const wickTol = directives.bullTrapUpperWickPct || 50;
-      if (signal.action === 'LONG' && signal.indicators.upperWickPct > wickTol) {
+    // ── 2. SUPERCHARGED MODE (Institutional Layer 4 AI Shield via Sim Lab Data) ─────
+    const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+    const { getSimPairDirective } = require('../strategy/manager');
+    const { riskGuard } = require('../risk/guard');
+
+    const bundle = getLastSyncedBundle();
+    const simDir = getSimPairDirective(signal.symbol);
+    const orderflow = simDir?.orderflow;
+    const action = signal.action;
+
+    // A. Sim Lab Emergency Cooling VETO
+    if (bundle?.macro?.marketCoolingActive) {
+      const coolingReason = bundle.macro.coolingReason || 'Emergency market volatility shockwave active';
+      const reason = `🛑 Market Cooling Active: Sim Lab freeze (${coolingReason}). Trading halted to protect capital.`;
+      riskGuard.triggerL4TrapCoolOff(signal.symbol, action, 'MARKET_COOLING', coolingReason, 15);
+      return {
+        confirmed: false,
+        confidenceScore: 25,
+        action: 'HOLD',
+        sentiment: 'NEUTRAL',
+        reasoning: `🛡️ AI Shield VETO: ${reason}`,
+        provider: 'simlab_ai_shield',
+        role,
+        riskFlags: ['SIMLAB_MARKET_COOLING'],
+        trapCategory: 'MARKET_COOLING',
+      };
+    }
+
+    // B. Sim Lab Macro News Freeze VETO
+    if (typeof bundle?.macro?.nearestNewsMinutes === 'number' && bundle.macro.nearestNewsMinutes <= 30 && bundle.macro.nearestNewsMinutes >= -15) {
+      const newsTitle = bundle.macro.nearestNewsTitle || 'High-Impact USD Release';
+      const reason = `🛑 Macro News Freeze: Event "${newsTitle}" in ${bundle.macro.nearestNewsMinutes}m. Volatility freeze active.`;
+      riskGuard.triggerL4TrapCoolOff(signal.symbol, action, 'MACRO_NEWS_WHIPSAW', reason, 15);
+      return {
+        confirmed: false,
+        confidenceScore: 25,
+        action: 'HOLD',
+        sentiment: 'NEUTRAL',
+        reasoning: `🛡️ AI Shield VETO: ${reason}`,
+        provider: 'simlab_ai_shield',
+        role,
+        riskFlags: ['MACRO_NEWS_WHIPSAW'],
+        trapCategory: 'MACRO_NEWS_WHIPSAW',
+      };
+    }
+
+    // C. Sim Lab Directional Ban VETO
+    if (directives?.bannedSides && directives.bannedSides.includes(action)) {
+      const reason = `Direction ${action} is strictly banned by Sim Lab directives (${directives.regime || 'Macro Directive'}).`;
+      return {
+        confirmed: false,
+        confidenceScore: 30,
+        action: 'HOLD',
+        sentiment: 'NEUTRAL',
+        reasoning: `🛡️ AI Shield VETO: ${reason}`,
+        provider: 'simlab_ai_shield',
+        role,
+        riskFlags: ['SIMLAB_DIRECTIONAL_BAN'],
+        trapCategory: 'DIRECTIONAL_BAN',
+      };
+    }
+
+    // D. Sim Lab Rejection Wick Trap (bull/bear pin bar traps)
+    const wickTol = simDir?.upperWickThresholdPct || directives?.bullTrapUpperWickPct || 45;
+    if (action === 'LONG' && signal.indicators.upperWickPct > wickTol) {
+      const reason = `Upper rejection wick ${signal.indicators.upperWickPct.toFixed(1)}% > ${wickTol}% tolerance indicates overhead supply / bull trap.`;
+      riskGuard.triggerL4TrapCoolOff(signal.symbol, 'LONG', 'BULL_TRAP', reason, 15);
+      return {
+        confirmed: false,
+        confidenceScore: 35,
+        action: 'HOLD',
+        sentiment: 'BEARISH',
+        reasoning: `🛡️ AI Shield VETO (BULL_TRAP): ${reason}`,
+        provider: 'simlab_ai_shield',
+        role,
+        riskFlags: ['BULL_TRAP_OVERHEAD_WICK'],
+        trapCategory: 'BULL_TRAP',
+      };
+    }
+    if (action === 'SHORT' && signal.indicators.lowerWickPct > wickTol) {
+      const reason = `Lower absorption wick ${signal.indicators.lowerWickPct.toFixed(1)}% > ${wickTol}% tolerance indicates lower demand / bear trap.`;
+      riskGuard.triggerL4TrapCoolOff(signal.symbol, 'SHORT', 'BEAR_TRAP', reason, 15);
+      return {
+        confirmed: false,
+        confidenceScore: 35,
+        action: 'HOLD',
+        sentiment: 'BULLISH',
+        reasoning: `🛡️ AI Shield VETO (BEAR_TRAP): ${reason}`,
+        provider: 'simlab_ai_shield',
+        role,
+        riskFlags: ['BEAR_TRAP_LOWER_WICK'],
+        trapCategory: 'BEAR_TRAP',
+      };
+    }
+
+    // E. Sim Lab Orderflow & CVD Traps (all data sourced from Sim Lab)
+    if (orderflow) {
+      // Rule 1: CVD Absorption Divergence (price up, CVD sell / price down, CVD buy)
+      if (action === 'LONG' && orderflow.cvdTrend === 'SELL') {
+        const reason = `Sim Lab CVD confirms institutional Sell Distribution while price attempts to break out. Vulnerable to bull trap.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'LONG', 'CVD_DISTRIBUTION_TRAP', reason, 15);
         return {
           confirmed: false,
           confidenceScore: 35,
           action: 'HOLD',
           sentiment: 'BEARISH',
-          reasoning: `🛡️ Second Opinion VETO: Candidate LONG buys directly into overhead rejection wick (${signal.indicators.upperWickPct.toFixed(1)}% > ${wickTol}%).`,
-          provider: 'local_rules',
-          role: 'SECOND_OPINION',
-          riskFlags: ['BULL_TRAP_OVERHEAD_WICK'],
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['CVD_DISTRIBUTION_TRAP'],
+          trapCategory: 'CVD_DISTRIBUTION_TRAP',
         };
       }
-      if (signal.action === 'SHORT' && signal.indicators.lowerWickPct > wickTol) {
+      if (action === 'SHORT' && orderflow.cvdTrend === 'BUY') {
+        const reason = `Sim Lab CVD confirms institutional Buy Absorption while price attempts to break down. Vulnerable to bear trap squeeze.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'SHORT', 'CVD_ABSORPTION_TRAP', reason, 15);
         return {
           confirmed: false,
           confidenceScore: 35,
           action: 'HOLD',
           sentiment: 'BULLISH',
-          reasoning: `🛡️ Second Opinion VETO: Candidate SHORT sells directly into lower absorption wick (${signal.indicators.lowerWickPct.toFixed(1)}% > ${wickTol}%).`,
-          provider: 'local_rules',
-          role: 'SECOND_OPINION',
-          riskFlags: ['BEAR_TRAP_LOWER_WICK'],
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['CVD_ABSORPTION_TRAP'],
+          trapCategory: 'CVD_ABSORPTION_TRAP',
         };
       }
-    }    // ── Primary Trade Validation or Second Opinion Confirmation ──────────────────
+
+      // Rule 2: Short Squeeze Exhaustion / Liquidation Flush
+      if (action === 'LONG' && typeof orderflow.oiChange24h === 'number' && orderflow.oiChange24h < -2.0) {
+        const reason = `Price rallying while Open Interest is declining (${orderflow.oiChange24h.toFixed(1)}%). Move is fueled solely by short covering, not genuine spot demand.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'LONG', 'SHORT_SQUEEZE_EXHAUSTION', reason, 15);
+        return {
+          confirmed: false,
+          confidenceScore: 35,
+          action: 'HOLD',
+          sentiment: 'BEARISH',
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['SHORT_SQUEEZE_EXHAUSTION'],
+          trapCategory: 'SHORT_SQUEEZE_EXHAUSTION',
+        };
+      }
+      if (action === 'SHORT' && typeof orderflow.oiChange24h === 'number' && orderflow.oiChange24h < -2.0) {
+        const reason = `Price dropping while Open Interest collapsed (${orderflow.oiChange24h.toFixed(1)}%). Sellers exhausted; move is a liquidation flush rather than organic trend.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'SHORT', 'LONG_SQUEEZE_FLUSH', reason, 15);
+        return {
+          confirmed: false,
+          confidenceScore: 35,
+          action: 'HOLD',
+          sentiment: 'BULLISH',
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['LONG_SQUEEZE_FLUSH'],
+          trapCategory: 'LONG_SQUEEZE_FLUSH',
+        };
+      }
+
+      // Rule 3: Extreme Retail Crowd Overcrowding & Adverse Funding
+      if (action === 'LONG' && typeof orderflow.lsRatio === 'number' && orderflow.lsRatio > 2.0 && typeof orderflow.fundingRate === 'number' && orderflow.fundingRate > 0.02) {
+        const reason = `Extreme retail crowd long bias (L/S: ${orderflow.lsRatio.toFixed(2)}) with elevated funding (${(orderflow.fundingRate * 100).toFixed(3)}%). High vulnerability to cascade liquidation.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'LONG', 'BULL_TRAP_OVERCROWDING', reason, 15);
+        return {
+          confirmed: false,
+          confidenceScore: 35,
+          action: 'HOLD',
+          sentiment: 'BEARISH',
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['BULL_TRAP_OVERCROWDING'],
+          trapCategory: 'BULL_TRAP_OVERCROWDING',
+        };
+      }
+      if (action === 'SHORT' && typeof orderflow.lsRatio === 'number' && orderflow.lsRatio < 0.5 && typeof orderflow.fundingRate === 'number' && orderflow.fundingRate < -0.02) {
+        const reason = `Extreme retail crowd short bias (L/S: ${orderflow.lsRatio.toFixed(2)}) paying carry cost (${(orderflow.fundingRate * 100).toFixed(3)}%). Prime target for short-squeeze bounce.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'SHORT', 'BEAR_TRAP_OVERCROWDING', reason, 15);
+        return {
+          confirmed: false,
+          confidenceScore: 35,
+          action: 'HOLD',
+          sentiment: 'BULLISH',
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['BEAR_TRAP_OVERCROWDING'],
+          trapCategory: 'BEAR_TRAP_OVERCROWDING',
+        };
+      }
+    }
+
+    // F. Multi-Model AI Reasoning & Tactical Conviction Booster
     let baseEval: AIBrainEvaluation;
     try {
       baseEval = await this.dispatchProviderCall(this.activeProvider, signal, role, directives);
@@ -157,6 +316,18 @@ export class LocalAIBrain {
           `⚠️ [AI BRAIN] ${this.activeProvider.toUpperCase()} call failed: ${err.message}. Falling back to Local Math Rules.`,
         );
         baseEval = this.evaluateWithLocalRules(signal, role, directives);
+      }
+    }
+
+    // Tactical Conviction Booster (+5% to +10%) for verified institutional moves
+    if (baseEval.confirmed && baseEval.confidenceScore >= 75) {
+      const isInstitutionalConfirm = (action === 'LONG' && orderflow?.cvdTrend === 'BUY' && (orderflow?.oiChange24h ?? 0) > 1.5) ||
+                                     (action === 'SHORT' && orderflow?.cvdTrend === 'SELL' && (orderflow?.oiChange24h ?? 0) > 1.5);
+      if (isInstitutionalConfirm) {
+        const bonus = 8;
+        baseEval.convictionBonus = bonus;
+        baseEval.confidenceScore = Math.min(100, baseEval.confidenceScore + bonus);
+        baseEval.reasoning = `🚀 [TACTICAL CONVICTION BOOSTER +${bonus}%] ${baseEval.reasoning} | Sim Lab orderflow confirmed institutional momentum.`;
       }
     }
 
@@ -785,6 +956,28 @@ Provide insightful, direct, quantitative, helpful answers formatted cleanly in m
     const upWick = ind.upperWickPct != null ? `${ind.upperWickPct.toFixed(1)}%` : '0%';
     const lowWick = ind.lowerWickPct != null ? `${ind.lowerWickPct.toFixed(1)}%` : '0%';
 
+    const { getSimPairDirective } = require('../strategy/manager');
+    const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+    const simDir = getSimPairDirective(signal.symbol);
+    const of = simDir?.orderflow;
+    const bundle = getLastSyncedBundle();
+
+    const orderflowText = of ? `
+SIM LAB SYNCHRONIZED ORDERFLOW:
+- 24h Open Interest Change: ${typeof of.oiChange24h === 'number' ? (of.oiChange24h >= 0 ? '+' : '') + of.oiChange24h.toFixed(2) + '%' : 'N/A'}
+- Long/Short Crowd Ratio: ${typeof of.lsRatio === 'number' ? of.lsRatio.toFixed(2) : 'N/A'}
+- Funding Rate: ${typeof of.fundingRate === 'number' ? (of.fundingRate * 100).toFixed(4) + '%' : '0.01%'}
+- CVD Taker Flow Trend: ${of.cvdTrend || 'NEUTRAL'}
+- Liquidation Cluster: ${of.liquidationClusters ? `$${Math.round((of.liquidationClusters.longLiquidationUsd || 0) / 1000)}k Long / $${Math.round((of.liquidationClusters.shortLiquidationUsd || 0) / 1000)}k Short` : 'None'}
+` : '';
+
+    const macroText = bundle?.macro ? `
+SIM LAB MACRO WORLD-STATE:
+- Macro Regime: ${directives?.regime || bundle.macro.regime || 'Normal'}
+- Market Bias: ${bundle.macro.marketBias || 'NEUTRAL'}
+- High-Impact USD News: ${bundle.macro.nearestNewsTitle ? `"${bundle.macro.nearestNewsTitle}" in ${bundle.macro.nearestNewsMinutes}m` : 'CLEAR (No events in next 30m)'}
+` : '';
+
     return `
 Analyze this crypto perpetual futures trade setup on Decibel DEX:
 Role: ${role} ${role === 'SECOND_OPINION' ? `(Sim Lab Macro Regime: ${directives?.regime || 'Normal'})` : '(Standalone Primary Validation)'}
@@ -803,6 +996,12 @@ ATR(14): ${atr}
 Upper Rejection Wick: ${upWick}
 Lower Rejection Wick: ${lowWick}
 SMC Structure: ${ind.smcSignal || 'NONE'}
+${orderflowText}${macroText}
+CROSS-ANALYSIS RULES (DERIVATIVES & MICROSTRUCTURE):
+1. OI Dynamics: Price Up + OI Down = Short Squeeze Exhaustion (VETO candidate LONG). Price Down + OI Down = Liquidation Flush (VETO candidate SHORT).
+2. CVD Trend: If candidate LONG but CVD Trend is SELL = Institutional Distribution (VETO LONG). If candidate SHORT but CVD Trend is BUY = Institutional Absorption (VETO SHORT).
+3. Crowd Bias: Extreme retail bias (L/S > 2.0 with positive funding) = contrarian trap vulnerability.
+4. Rejection Wicks: Upper wick > 45% on LONG or Lower wick > 45% on SHORT = false breakout trap.
 
 Respond in EXACT JSON format with no markdown blocks:
 {

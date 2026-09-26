@@ -114,7 +114,7 @@ class TradeDatabase {
   private repairDatabase(): void {
     try {
       if (this.db) {
-        try { this.db.close(); } catch {}
+        try { this.db.close(); } catch { }
         this.db = null;
       }
       if (fs.existsSync(this.dbPath)) {
@@ -217,13 +217,11 @@ class TradeDatabase {
     try {
       this.db.exec(`
         UPDATE trades 
-        SET is_manual = 0, 
-            strategy_name = 'Turtle Soup & Liquidity Grab', 
-            strategy_tags = '["template_turtle_soup"]' 
-        WHERE (strategy_name = 'Manual Decibel Trade' OR strategy_name IS NULL OR strategy_name = '')
-          AND (client_order_id IS NULL OR client_order_id NOT LIKE 'manual-user-override%');
+        SET is_manual = 1 
+        WHERE (client_order_id IS NULL OR (client_order_id NOT LIKE 'agent-%' AND client_order_id NOT LIKE 'decibel-%'))
+          AND (id NOT LIKE 'agent-%' AND id NOT LIKE 'decibel-%');
       `);
-    } catch {}
+    } catch { }
   }
 
   /**
@@ -330,7 +328,7 @@ class TradeDatabase {
       const clientOrderId = String(oct.client_order_id || '');
       const isAgent = oct.isManual !== undefined
         ? !oct.isManual
-        : (oct.tradeType === 'AUTO' || (!clientOrderId.startsWith('manual-user-override') && !clientOrderId.startsWith('live-test') && !clientOrderId.startsWith('e2e')));
+        : (oct.tradeType === 'AUTO' || (clientOrderId.startsWith('agent-') || clientOrderId.startsWith('decibel-')));
       const txVersion = oct.transaction_version ? String(oct.transaction_version) : undefined;
       const price = Number(oct.execution_price || oct.price || 0);
       const size = Number(oct.executed_size || oct.size || 0);
@@ -375,20 +373,22 @@ class TradeDatabase {
             SELECT * FROM trades
             WHERE (symbol = ? OR symbol = ? OR symbol = ?)
               AND status IN ('OPEN', 'open', 'CLOSED_MANUAL', 'closed_manual')
+              AND opened_at <= ?
             ORDER BY opened_at DESC
             LIMIT 1
-          `).get(normSymbol, altSymbol, rawSym) as any;
+          `).get(normSymbol, altSymbol, rawSym, timestamp + 10000) as any;
 
           // If still not matched, check trades on this symbol within 24h window
           if (!existing) {
             existing = this.db.prepare(`
               SELECT * FROM trades
               WHERE (symbol = ? OR symbol = ? OR symbol = ?)
+                AND opened_at <= ?
                 AND ABS(COALESCE(closed_at, opened_at) - ?) < 86400000
                 AND id NOT LIKE 'txn-%'
               ORDER BY ABS(COALESCE(closed_at, opened_at) - ?) ASC
               LIMIT 1
-            `).get(normSymbol, altSymbol, rawSym, timestamp, timestamp) as any;
+            `).get(normSymbol, altSymbol, rawSym, timestamp + 10000, timestamp, timestamp) as any;
           }
         }
 
@@ -405,8 +405,8 @@ class TradeDatabase {
 
         if (existing) {
           if (isClose) {
-            const finalStatus = pnl > 0.01 ? 'CLOSED_TP' : (pnl < -0.01 ? 'CLOSED_SL' : 'CLOSED');
-            const smartReason = pnl > 0.01 ? 'TRAILING_TP' : (pnl < -0.01 ? 'STOP_LOSS' : 'ON_CHAIN_DEX_CLOSE');
+            const finalStatus = pnl > 0.005 ? 'CLOSED_TP' : (pnl < -0.005 ? 'CLOSED_SL' : 'CLOSED');
+            const smartReason = pnl > 0.005 ? 'TRAILING_TP' : (pnl < -0.005 ? 'STOP_LOSS' : 'ON_CHAIN_DEX_CLOSE');
             const stratName = (!existing.strategy_name || existing.strategy_name === 'Manual Decibel Trade') && isAgent
               ? 'Turtle Soup & Liquidity Grab'
               : (existing.strategy_name || (isAgent ? 'Turtle Soup & Liquidity Grab' : 'Manual Decibel Trade'));
@@ -416,9 +416,9 @@ class TradeDatabase {
               SET tx_version = COALESCE(?, tx_version),
                   exit_price = CASE WHEN ? > 0 THEN ? ELSE exit_price END,
                   closed_at = CASE WHEN closed_at IS NULL OR closed_at = 0 THEN ? ELSE closed_at END,
-                  fee_usd = fee_usd + ?,
-                  realized_pnl = CASE WHEN realized_pnl = 0 THEN ? ELSE realized_pnl END,
-                  status = CASE WHEN status IS NOT NULL AND status != '' AND status NOT IN ('closed', 'CLOSED') THEN status ELSE ? END,
+                  fee_usd = ?,
+                  realized_pnl = ?,
+                  status = ?,
                   exit_reason = CASE WHEN exit_reason IS NOT NULL AND exit_reason != '' AND exit_reason != 'ON_CHAIN_DEX_CLOSE' THEN exit_reason ELSE ? END,
                   strategy_name = COALESCE(strategy_name, ?),
                   is_manual = CASE WHEN ? = 1 THEN 0 ELSE is_manual END,
@@ -426,7 +426,7 @@ class TradeDatabase {
                   action = COALESCE(action, ?),
                   side = COALESCE(side, ?)
               WHERE id = ?
-            `).run(txVersion || null, price, price, timestamp, fee, pnl, finalStatus.toLowerCase(), smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
+            `).run(txVersion || null, price, price, timestamp, fee, pnl, finalStatus, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
           } else {
             // Open fill updates entry parameters
             this.db.prepare(`
@@ -509,14 +509,14 @@ class TradeDatabase {
             )
         `).run();
 
-      } catch {}
+      } catch { }
     }
   }
 
   /**
    * Query trades with optional filtering
    */
-  getTrades(options?: { isManual?: boolean; symbol?: string; limit?: number; offset?: number }): DbTrade[] {
+  getTrades(options?: { isManual?: boolean; symbol?: string; status?: string; excludeOpen?: boolean; limit?: number; offset?: number }): DbTrade[] {
     const limit = options?.limit ?? 50;
     const offset = options?.offset ?? 0;
 
@@ -528,7 +528,13 @@ class TradeDatabase {
       if (options?.symbol) {
         list = list.filter((t) => t.symbol === options.symbol);
       }
-      list.sort((a, b) => b.opened_at - a.opened_at);
+      if (options?.status) {
+        list = list.filter((t) => t.status === options.status);
+      }
+      if (options?.excludeOpen) {
+        list = list.filter((t) => t.status !== 'OPEN' && t.status !== 'open');
+      }
+      list.sort((a, b) => (b.closed_at || b.opened_at) - (a.closed_at || a.opened_at));
       return list.slice(offset, offset + limit);
     }
 
@@ -546,11 +552,20 @@ class TradeDatabase {
       params.symbol = options.symbol;
     }
 
+    if (options?.status) {
+      conditions.push('status = @status');
+      params.status = options.status;
+    }
+
+    if (options?.excludeOpen) {
+      conditions.push("status NOT IN ('OPEN', 'open')");
+    }
+
     if (conditions.length > 0) {
       query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
-    query += ' ORDER BY opened_at DESC LIMIT @limit OFFSET @offset';
+    query += ' ORDER BY COALESCE(closed_at, opened_at) DESC LIMIT @limit OFFSET @offset';
     params.limit = limit;
     params.offset = offset;
 
@@ -870,7 +885,7 @@ class TradeDatabase {
         let tags: string[] = [];
         try {
           if (r.sTags) tags = JSON.parse(r.sTags);
-        } catch {}
+        } catch { }
 
         result[r.sName] = {
           strategyName: r.sName,
@@ -916,7 +931,7 @@ class TradeDatabase {
       for (const r of rows) {
         try {
           res[r.symbol] = JSON.parse(r.overrides);
-        } catch {}
+        } catch { }
       }
       return res;
     } catch (err: any) {

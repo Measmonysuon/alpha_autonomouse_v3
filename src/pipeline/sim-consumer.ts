@@ -30,6 +30,9 @@ export interface AlphaBundleResponse {
     marketCoolingActive: boolean;
     marketBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     coolingReason: string | null;
+    nearestNewsMinutes?: number | null;
+    nearestNewsTitle?: string | null;
+    summary?: string;
   };
   strategy?: {
     activeStrategyId: string;
@@ -54,6 +57,7 @@ export interface AlphaBundleResponse {
     minHarvestNetUsd: number;             // Minimum net $ after round-trip taker fees & gas ($0.15 for $30 acc)
     accelerateBreakevenR: number;         // Advance SL to breakeven at 1.0R - 1.5R
     breakevenFeeBufferPct: number;        // e.g. +0.25% fee cover buffer
+    breakevenMinAtrMultiple?: number;     // e.g. 2.0x - 2.5x ATR breakaway clearance
   };
   pairDirectives: Record<string, {
     symbol: string;
@@ -69,6 +73,21 @@ export interface AlphaBundleResponse {
     coolOffActive: boolean;
     bannedSide?: 'LONG' | 'SHORT' | 'BOTH';
     reason?: string;
+    orderflow?: {
+      fundingRate?: number;
+      oiChange24h?: number;
+      lsRatio?: number;
+      predictedFundingRate?: number;
+      liquidationClusters?: {
+        longLiquidationUsd?: number;
+        shortLiquidationUsd?: number;
+        maxPainPrice?: number;
+      };
+      cvdTrend?: 'BUY' | 'SELL' | 'NEUTRAL';
+      orderflowImbalancePct?: number;
+    };
+    smcPolicy?: any;
+    accelerateBreakevenR?: number;
   }>;
   learning: {
     overallWinRatePct: number;

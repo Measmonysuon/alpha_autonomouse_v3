@@ -1354,6 +1354,28 @@
       border-color: rgba(255, 255, 255, 0.25);
     }
 
+    .pos-close-btn {
+      cursor: pointer;
+      font-size: 10px;
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: 6px;
+      padding: 3px 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-weight: 700;
+      transition: all .2s;
+    }
+
+    .pos-close-btn:hover {
+      background: rgba(239, 68, 68, 0.28);
+      color: #fff;
+      border-color: #ef4444;
+      transform: translateY(-1px);
+    }
+
     .rationale-text {
       font-size: 11.5px;
       color: var(--text2);
@@ -12026,6 +12048,7 @@
 
         const addCandidate = (p) => {
           if (!p) return;
+          if (p.status && p.status.toLowerCase() !== 'open') return;
           const key = p.id || (p.symbol + '_' + (p.action || 'LONG'));
           if (seenKeys.has(key)) return;
           seenKeys.add(key);
@@ -12039,19 +12062,12 @@
           lastPositions.positions.forEach(addCandidate);
         }
 
-        // Source B: lastState?.openPositions or lastState?.positions
-        if (Array.isArray(lastState?.openPositions)) {
-          lastState.openPositions.forEach(addCandidate);
-        } else if (Array.isArray(lastState?.positions)) {
-          lastState.positions.forEach(addCandidate);
-        }
-
-        // Source C: harv?.positionsList
+        // Source B: harv?.positionsList
         if (Array.isArray(harv?.positionsList)) {
           harv.positionsList.forEach(addCandidate);
         }
 
-        // Source D: If activeList is still empty, inspect harv.positions map
+        // Source C: If activeList is still empty, inspect harv.positions map
         if (activeList.length === 0 && harv?.positions && typeof harv.positions === 'object') {
           Object.values(harv.positions).forEach(addCandidate);
         }
@@ -12188,9 +12204,17 @@
         });
         const data = await res.json();
         if (data.success) {
-          alert(`🌾 Harvest executed!\n${data.message}`);
+          if (typeof showToastNotification === 'function') {
+            showToastNotification(`🌾 Harvest executed: ${data.message}`);
+          }
+          if (symbol) {
+            const symSafe = symbol.replace(/[^a-zA-Z0-9]/g, '_');
+            document.querySelectorAll(`[data-pos-key*="${symSafe}"]`).forEach(el => el.remove());
+          }
           refreshHarvestModalData();
-          if (typeof fetchState === 'function') fetchState();
+          fetch(API + '/api/positions').then(r => r.json()).then(renderPositions).catch(() => {});
+          fetch(API + '/api/state').then(r => r.json()).then(renderState).catch(() => {});
+          fetch(API + '/api/trades').then(r => r.json()).then(renderHistory).catch(() => {});
         } else {
           alert('❌ Harvest failed: ' + (data.message || data.error || 'Unknown error'));
         }
@@ -12209,14 +12233,54 @@
         });
         const data = await res.json();
         if (data.success) {
-          alert(`🧹 Sweep Complete!\n${data.message}`);
+          if (typeof showToastNotification === 'function') {
+            showToastNotification(`🧹 Sweep Complete: ${data.message}`);
+          }
           refreshHarvestModalData();
-          if (typeof fetchState === 'function') fetchState();
+          fetch(API + '/api/positions').then(r => r.json()).then(renderPositions).catch(() => {});
+          fetch(API + '/api/state').then(r => r.json()).then(renderState).catch(() => {});
+          fetch(API + '/api/trades').then(r => r.json()).then(renderHistory).catch(() => {});
         } else {
           alert('Notice: ' + (data.message || data.error || 'No positions to sweep'));
         }
       } catch (err) {
         alert('❌ Request failed: ' + err.message);
+      }
+    }
+
+    async function closePositionManually(id, symbol, event) {
+      if (event) event.stopPropagation();
+      const symDisplay = symbol || id;
+      if (!confirm(`Are you sure you want to market close ${symDisplay} position immediately on Decibel DEX?`)) return;
+      try {
+        const res = await fetch(API + '/api/positions/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, symbol }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (typeof showToastNotification === 'function') {
+            showToastNotification(`✅ Closed ${symDisplay} position on Decibel DEX!`);
+          }
+          const posSafeId = (id || symbol).replace(/[^a-zA-Z0-9]/g, '_');
+          document.querySelectorAll(`[data-pos-key="${posSafeId}"]`).forEach(el => el.remove());
+
+          // Re-fetch positions, state, and trade history
+          const [freshPos, freshState, freshTrades] = await Promise.all([
+            fetch(API + '/api/positions').then(r => r.json()).catch(() => []),
+            fetch(API + '/api/state').then(r => r.json()).catch(() => null),
+            fetch(API + '/api/trades').then(r => r.json()).catch(() => []),
+          ]);
+          if (freshPos) renderPositions(freshPos);
+          if (freshState) renderState(freshState);
+          if (freshTrades) renderHistory(freshTrades);
+          if (typeof refreshHarvestModalData === 'function') refreshHarvestModalData();
+        } else {
+          alert('Could not close position: ' + (data.message || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Close failed: ' + err.message);
       }
     }
 
@@ -14686,6 +14750,7 @@
           <span class="pos-notional-pill" style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(59,130,246,0.18);border:1px solid rgba(59,130,246,0.4);color:#60a5fa;" title="Total Leveraged Notional Value">💎 $${notionalUsd} Notional</span>
           ${p.isManual ? '<span class="pos-manual-pill">MANUAL</span>' : '<span class="pos-ai-pill">AI SIGNAL</span>'}
           <span class="pos-harv-pill-wrap">${harvestPill}</span>
+          <button class="pos-close-btn" onclick="closePositionManually('${p.id || p.symbol}', '${p.symbol}', event)" title="Market close this position immediately on Decibel DEX">✕ Close</button>
         </div>
         <div class="pos-meta-row">
           <span class="pos-age-val">${ageStr}</span>
@@ -14829,6 +14894,9 @@
           <button class="rationale-modal-btn" onclick="openTradeIntel('${posSafeId}')" title="Inspect Full AI Decision Rationale & Telemetry Modal">
             🔍 Full Intel ↗
           </button>
+          <button class="pos-close-btn" onclick="closePositionManually('${p.id || p.symbol}', '${p.symbol}', event)" title="Market close this position immediately on Decibel DEX">
+            ✕ Close Position
+          </button>
         </div>
         <div class="rationale-text ${isRationaleOpen ? 'open' : ''}" id="rationale-${posSafeId}">
           <div class="rationale-header">
@@ -14941,6 +15009,21 @@
 
       lastPositions = posList;
 
+      // Extract current active keys
+      const posKeys = posList.map(p => (p.id || p.symbol + '_' + p.action).replace(/[^a-zA-Z0-9]/g, '_'));
+
+      // 1. Instantly prune closed/stale cards from ALL DOM grids
+      grids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.querySelectorAll('.pos-card').forEach(card => {
+          const cardKey = card.getAttribute('data-pos-key');
+          if (cardKey && !posKeys.includes(cardKey)) {
+            card.remove();
+          }
+        });
+      });
+
       if (!posList || !posList.length) {
         try {
           localStorage.setItem('alpha_positions_cache', '[]');
@@ -14960,6 +15043,13 @@
         if (sbOpen) sbOpen.textContent = '0';
         const statOpen = document.getElementById('stat-open');
         if (statOpen) statOpen.textContent = '0';
+
+        // Also refresh Harvest Modal if open so radar tab clears
+        const harvestBackdrop = document.getElementById('harvest-modal-backdrop');
+        if (harvestBackdrop && harvestBackdrop.style.display === 'flex') {
+          if (typeof refreshHarvestModalData === 'function') refreshHarvestModalData();
+        }
+        checkAndRefreshTradeIntelModal(posKeys);
         return;
       }
 
@@ -15019,12 +15109,13 @@
       const harvColor = harvNet >= 0 ? 'var(--green)' : 'var(--red)';
       const harvSign = harvNet >= 0 ? '+' : '';
 
-      // 1. Check if all position cards already exist in the DOM for seamless in-place updates (ZERO DOM FLICKER)
-      const posKeys = sortedPositions.map(p => (p.id || p.symbol + '_' + p.action).replace(/[^a-zA-Z0-9]/g, '_'));
+      // Check if all position cards already exist in the DOM AND there are no extra cards
       const activeGrids = grids.filter(gid => Boolean(document.getElementById(gid)));
       const canUpdateInPlace = posKeys.length > 0 && activeGrids.length > 0 && activeGrids.every(gid => {
         const gEl = document.getElementById(gid);
-        return gEl && posKeys.every(id => gEl.querySelector(`[data-pos-key="${id}"]`));
+        if (!gEl) return false;
+        const domCards = gEl.querySelectorAll('.pos-card');
+        return domCards.length === posKeys.length && posKeys.every(id => gEl.querySelector(`[data-pos-key="${id}"]`));
       });
 
       const metaHtml = `
@@ -15052,6 +15143,11 @@
         }
         if (metaEl) metaEl.innerHTML = metaHtml;
         if (dashMetaEl) dashMetaEl.innerHTML = metaHtml;
+        const harvestBackdrop = document.getElementById('harvest-modal-backdrop');
+        if (harvestBackdrop && harvestBackdrop.style.display === 'flex') {
+          if (typeof refreshHarvestModalData === 'function') refreshHarvestModalData();
+        }
+        checkAndRefreshTradeIntelModal(posKeys);
         return;
       }
 
@@ -15074,6 +15170,32 @@
       setTimeout(() => renderAllPositionCandles(sortedPositions), 60);
       if (metaEl) metaEl.innerHTML = metaHtml;
       if (dashMetaEl) dashMetaEl.innerHTML = metaHtml;
+      const harvestBackdrop = document.getElementById('harvest-modal-backdrop');
+      if (harvestBackdrop && harvestBackdrop.style.display === 'flex') {
+        if (typeof refreshHarvestModalData === 'function') refreshHarvestModalData();
+      }
+      checkAndRefreshTradeIntelModal(posKeys);
+    }
+
+    function checkAndRefreshTradeIntelModal(openPosKeys) {
+      const intelBackdrop = document.getElementById('intel-modal-backdrop');
+      if (!intelBackdrop || !intelBackdrop.classList.contains('open')) return;
+      const currentId = window._currentTradeIntelId;
+      if (!currentId) return;
+
+      const isStillOpen = (openPosKeys || []).some(k => k === currentId || currentId.includes(k) || k.includes(currentId));
+      if (!isStillOpen) {
+        const historyMatch = (rawHistoryTrades || []).find(x => 
+          x.id === currentId || 
+          x.client_order_id === currentId || 
+          (x.symbol && currentId.startsWith(x.symbol.replace(/[^a-zA-Z0-9]/g, '_')))
+        );
+        if (historyMatch) {
+          openTradeIntel(historyMatch.id || currentId);
+        } else {
+          intelBackdrop.classList.remove('open');
+        }
+      }
     }
 
     // ── Trade History ─────────────────────────────────────────────────────────────
@@ -15152,8 +15274,10 @@
 
       const normalized = rawHistoryTrades.map(t => {
         const isManual = t.isManual !== undefined
-          ? t.isManual
-          : (t.is_manual !== undefined ? (t.is_manual === 1) : (t.tradeType === 'MANUAL' || (!String(t.client_order_id || '').startsWith('agent-') && !String(t.client_order_id || '').startsWith('decibel-'))));
+          ? Boolean(t.isManual)
+          : (t.is_manual !== undefined
+              ? (t.is_manual === 1 || t.is_manual === true || t.is_manual === '1')
+              : (t.tradeType === 'MANUAL'));
         const pnl = t.realized_pnl_amount !== undefined
           ? Number(t.realized_pnl_amount)
           : (t.realized_pnl !== undefined ? Number(t.realized_pnl) : (t.pnlUsd !== undefined ? Number(t.pnlUsd) : (t.unrealizedPnlUsd !== undefined ? Number(t.unrealizedPnlUsd) : 0)));
@@ -15239,25 +15363,25 @@
           ? `<span class="trade-type-pill manual" title="Manual On-Chain Trade">👤 MANUAL</span>`
           : `<span class="trade-type-pill auto" title="Autonomous AI Trade">🤖 AUTO AI</span>`;
 
-        // Close reason badge
+        // Close reason badge (Client v1 Blueprint)
         const rawReason = String(t.exit_reason || t.exitReason || (t.status === 'closed_tp' ? 'TP' : t.status === 'closed_sl' ? 'SL' : (t.status === 'closed_manual' ? 'MANUAL' : ''))).toUpperCase();
         let reasonBadge = `<span class="trade-reason-pill dex" title="Settled on DEX">⛓️ DEX</span>`;
         const pnlNum = Number(t.pnl || 0);
-        const isProfitableExit = pnlNum > 0.005;
-        const isLossExit = pnlNum < -0.005;
+        const isProfitableExit = pnlNum >= 0;
+        const isLossExit = pnlNum < 0;
         const isRunnerWin = pnlNum > 0.05;
 
         if (t.status === 'open' || t.status === 'OPEN') {
           reasonBadge = `<span class="trade-reason-pill open" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);color:#38bdf8;" title="Active Open Position">🟢 ACTIVE</span>`;
         } else if (rawReason.includes('TRAILING') || (rawReason.includes('SL') && isRunnerWin)) {
           reasonBadge = `<span class="trade-reason-pill harvest" title="Trailing Stop Protected Profit">🌾 TRAILING SL</span>`;
-        } else if (rawReason.includes('BREAKEVEN') || (rawReason.includes('SL') && !isLossExit && !isRunnerWin && pnlNum >= 0)) {
+        } else if (rawReason.includes('BREAKEVEN') || rawReason.includes('BE') || (rawReason.includes('SL') && isProfitableExit)) {
           reasonBadge = `<span class="trade-reason-pill be" title="Breakeven Stop Hit">🛡️ BREAKEVEN</span>`;
         } else if (rawReason.includes('HARVEST')) {
           reasonBadge = `<span class="trade-reason-pill harvest" title="Master Harvester Take-Profit">🌾 HARVEST</span>`;
-        } else if (rawReason.includes('TP') || t.status === 'closed_tp' || (rawReason.includes('DEX') && isProfitableExit)) {
+        } else if (rawReason.includes('TP') || t.status === 'closed_tp') {
           reasonBadge = `<span class="trade-reason-pill tp" title="Take Profit Hit">🎯 TP</span>`;
-        } else if (rawReason.includes('SL') || t.status === 'closed_sl' || (rawReason.includes('DEX') && isLossExit)) {
+        } else if (rawReason.includes('SL') || t.status === 'closed_sl') {
           reasonBadge = `<span class="trade-reason-pill sl" title="Stop Loss Hit">🛑 SL</span>`;
         } else if (rawReason.includes('LIQ')) {
           reasonBadge = `<span class="trade-reason-pill liq" title="On-Chain Liquidation">⚠️ LIQ</span>`;
@@ -15510,6 +15634,7 @@
     // ── AI Trade Intelligence Modal ───────────────────────────────────────────────
     async function openTradeIntel(rawId) {
       const tradeId = decodeURIComponent(rawId || '');
+      window._currentTradeIntelId = tradeId;
       const backdrop = document.getElementById('intel-modal-backdrop');
       const title = document.getElementById('intel-title');
       const subtitle = document.getElementById('intel-subtitle');
@@ -15638,8 +15763,11 @@
             ${featureTags.map(t => `<span class="intel-strat-tag">${t}</span>`).join('')}
           </div>
         </div>
-        <div class="intel-conf-badge">
-          🔥 ${conf}% Signal Gate
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="intel-conf-badge">
+            🔥 ${conf}% Signal Gate
+          </div>
+          ${(data.status === 'OPEN' || rawExit === 'ACTIVE_POSITION') ? `<button class="pos-close-btn" style="padding:6px 12px;font-size:11px;" onclick="closePositionManually('${data.id || sym}', '${sym}')">✕ Close Position</button>` : ''}
         </div>
       </div>
 
@@ -15747,6 +15875,7 @@
       if (event && event.target && event.target.id !== 'intel-modal-backdrop' && !event.target.classList.contains('intel-close-btn')) {
         return;
       }
+      window._currentTradeIntelId = null;
       const backdrop = document.getElementById('intel-modal-backdrop');
       if (backdrop) backdrop.classList.remove('open');
     }

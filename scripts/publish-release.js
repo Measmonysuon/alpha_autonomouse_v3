@@ -42,6 +42,11 @@ function uploadAsset(uploadUrl, filePath) {
     const urlStr = uploadUrl.replace('{?name,label}', `?name=${encodeURIComponent(fileName)}`);
     const url = new URL(urlStr);
 
+    let contentType = 'application/octet-stream';
+    if (fileName.endsWith('.zip')) contentType = 'application/zip';
+    else if (fileName.endsWith('.dmg')) contentType = 'application/x-apple-diskimage';
+    else if (fileName.endsWith('.exe')) contentType = 'application/vnd.microsoft.portable-executable';
+
     const req = https.request({
       hostname: url.hostname,
       path: url.pathname + url.search,
@@ -49,7 +54,7 @@ function uploadAsset(uploadUrl, filePath) {
       headers: {
         'User-Agent': 'Node-Release-Uploader',
         'Authorization': `token ${TOKEN}`,
-        'Content-Type': 'application/zip',
+        'Content-Type': contentType,
         'Content-Length': fileStats.size
       }
     }, (res) => {
@@ -67,23 +72,31 @@ async function main() {
   let relRes = await apiRequest('GET', `/repos/${OWNER}/${REPO}/releases/tags/${TAG}`);
   let release = relRes.body;
 
+  const releaseNotes = `### 🚀 Alpha Autonomous Client v3.0.0 — Production Institutional Fleet Release
+
+#### 🌟 Institutional Risk & Execution Upgrades
+- **Maker-First PostOnly Routing**: Zero taker-fee execution using FVG limit order positioning with autonomous maker-or-cancel safeguards.
+- **Dynamic 2.0x–2.5x ATR Breakeven Ratchet**: Automatically locks in risk-free status once trades hit institutional expansion targets, preventing round-tripping.
+- **Institutional Liquidity & Cascade Filters**: Enforces $5.0M+ minimum depth cluster validation and blocks entries during severe open interest cascades (ΔOI < -2.0%).
+- **Sub-50ms Real-Time Fleet Immunity Bus**: Telemetry feeder automatically checks Sim Lab veto bus before executing any trade signal.
+- **Decibel DEX MCP Stdio Transport**: Full native integration with Decibel on-chain trade fills and Aptos mainnet accounts.
+- **On-Chain Fill & Trade Reconciliation**: Accurate pairing of open and close fills with real realized PnL and fee attribution.
+- **Guided Onboarding Wizard**: Streamlined setup flow for delegate keys, trading subaccounts, gas signer verification, and AI selection.
+- **Self-Healing Connectivity**: Resilient auto-reconnect backoff loop ensuring zero manual intervention during Sim Lab server maintenance.
+
+#### 📦 Downloadable Packages:
+- \`Alpha Autonomous Client v3-3.0.0-arm64.dmg\` (macOS Apple Silicon Desktop App)
+- \`Alpha Autonomous Client v3 Setup 3.0.0.exe\` (Windows Desktop Installer)
+- \`alpha-client-v3-macos.zip\` (macOS Standalone 1-Click Bundle)
+- \`alpha-client-v3-windows.zip\` (Windows Standalone 1-Click Bundle)
+- \`alpha-client-v3-docker.zip\` (Docker Production Compose Bundle)`;
+
   if (relRes.status !== 200 || !release.id) {
     console.log('2. Release not found, creating release object for tag:', TAG);
     const createRes = await apiRequest('POST', `/repos/${OWNER}/${REPO}/releases`, {
       tag_name: TAG,
-      name: `Alpha Autonomous Client v3.0.0 — Production Release`,
-      body: `### 🚀 Alpha Autonomous Client v3.0.0 Production Release
-
-- **Decibel DEX MCP Stdio Transport**: Full native integration with Decibel on-chain trade fills and Aptos mainnet accounts.
-- **On-Chain Fill & Trade Reconciliation**: Accurate pairing of open and close fills with real realized PnL and fee attribution.
-- **Guided Onboarding Wizard**: Streamlined setup flow for delegate keys, trading subaccounts, gas signer verification, and AI selection.
-- **Sim Lab & Shadow Trade Engine**: Real-time evaluation of hypothetical trades and risk mitigation directives.
-- **Cross-Platform Support**: Clean packages for macOS, Windows, and Docker.
-
-#### Downloadable Attachments:
-- \`alpha-client-v3-macos.zip\` (macOS Standalone 1-Click Bundle)
-- \`alpha-client-v3-windows.zip\` (Windows Standalone 1-Click Bundle)
-- \`alpha-client-v3-docker.zip\` (Docker Production Compose Bundle)`,
+      name: `Alpha Autonomous Client v3.0.0 — Production Fleet Release`,
+      body: releaseNotes,
       draft: false,
       prerelease: false
     });
@@ -91,6 +104,11 @@ async function main() {
     console.log('Created release ID:', release.id);
   } else {
     console.log('Found existing release ID:', release.id);
+    console.log('Updating release notes and title...');
+    await apiRequest('PATCH', `/repos/${OWNER}/${REPO}/releases/${release.id}`, {
+      name: `Alpha Autonomous Client v3.0.0 — Production Fleet Release`,
+      body: releaseNotes
+    });
   }
 
   if (!release || !release.upload_url) {
@@ -99,7 +117,10 @@ async function main() {
   }
   const uploadUrl = release.upload_url;
   const releaseDir = path.resolve(__dirname, '../release');
-  const zips = ['alpha-client-v3-macos.zip', 'alpha-client-v3-windows.zip', 'alpha-client-v3-docker.zip'];
+  const releaseFiles = fs.readdirSync(releaseDir).filter(f => {
+    const ext = path.extname(f).toLowerCase();
+    return (ext === '.zip' || ext === '.dmg' || ext === '.exe') && !fs.statSync(path.join(releaseDir, f)).isDirectory();
+  });
 
   // Delete existing assets if re-uploading
   if (release.assets && release.assets.length > 0) {
@@ -109,16 +130,12 @@ async function main() {
     }
   }
 
-  for (const zip of zips) {
-    const fullPath = path.join(releaseDir, zip);
-    if (!fs.existsSync(fullPath)) {
-      console.warn('Zip file missing:', fullPath);
-      continue;
-    }
+  for (const file of releaseFiles) {
+    const fullPath = path.join(releaseDir, file);
     const sizeMb = (fs.statSync(fullPath).size / 1024 / 1024).toFixed(2);
-    console.log(`Uploading ${zip} (${sizeMb} MB)...`);
+    console.log(`Uploading ${file} (${sizeMb} MB)...`);
     const upRes = await uploadAsset(uploadUrl, fullPath);
-    console.log(`Uploaded ${zip} -> Status: ${upRes.status}, Asset ID: ${upRes.body.id || 'N/A'}`);
+    console.log(`Uploaded ${file} -> Status: ${upRes.status}, Asset ID: ${upRes.body.id || 'N/A'}`);
   }
   console.log('\n================================================================================');
   console.log('🎉 ALL 3 ZIP RELEASE ASSETS SUCCESSFULLY ATTACHED TO GITHUB RELEASE!');
