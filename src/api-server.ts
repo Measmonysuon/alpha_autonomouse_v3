@@ -284,6 +284,25 @@ export function buildStreamStatePayload() {
     activeStrategy: getActiveStrategy(),
     strategyOrigin: getActiveStrategyOriginInfo(),
     strategySyncConfig: getStrategySyncConfig(),
+    shockwave: {
+      activeCoolOffs: (() => {
+        const map: Record<string, any> = {};
+        for (const c of riskGuard.getAllActiveCoolOffs()) {
+          map[c.symbol] = {
+            symbol: c.symbol,
+            direction: 'TRAP_VETO',
+            bannedSide: c.action,
+            reason: c.reason,
+            trapCategory: c.trapCategory,
+            expiresAt: Date.now() + (c.remainingMinutes * 60 * 1000),
+          };
+        }
+        return map;
+      })(),
+      btcShock: { active: false, triggeredAt: 0, expiresAt: 0, btcDeltaPct: 0, reason: '' },
+      manualPanicFreeze: { active: false, expiresAt: 0, reason: '' },
+      pairVelocities: {},
+    },
   };
 }
 
@@ -1081,6 +1100,25 @@ export function startApiServer(): http.Server {
           shadowStats: tradeExecutor.getShadowStats(),
           shadowTrades: tradeExecutor.getShadowTrades().slice(-20),
           activeCoolOffs: riskGuard.getAllActiveCoolOffs(),
+          shockwave: {
+            activeCoolOffs: (() => {
+              const map: Record<string, any> = {};
+              for (const c of riskGuard.getAllActiveCoolOffs()) {
+                map[c.symbol] = {
+                  symbol: c.symbol,
+                  direction: 'TRAP_VETO',
+                  bannedSide: c.action,
+                  reason: c.reason,
+                  trapCategory: c.trapCategory,
+                  expiresAt: Date.now() + (c.remainingMinutes * 60 * 1000),
+                };
+              }
+              return map;
+            })(),
+            btcShock: { active: false, triggeredAt: 0, expiresAt: 0, btcDeltaPct: 0, reason: '' },
+            manualPanicFreeze: { active: false, expiresAt: 0, reason: '' },
+            pairVelocities: {},
+          },
           portfolioHarvester: portfolioHarvester.evaluate(getLivePricesMap()),
           positions: tradeExecutor.getOpenTrades(),
           openPositions: tradeExecutor.getOpenTrades(),
