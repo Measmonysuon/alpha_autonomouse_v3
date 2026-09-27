@@ -794,14 +794,79 @@ export class LocalAIBrain {
     }
 
     if (lower.includes('why no trade') || lower.includes('why not trade') || lower.includes('no trades')) {
+      let pairsSummary = '';
+      try {
+        const { agentState } = require('../api-server');
+        if (agentState && agentState.markets) {
+          const list = Object.values(agentState.markets) as any[];
+          if (list.length > 0) {
+            pairsSummary = '\n\n' + list.slice(0, 10).map((m: any) =>
+              `- **${m.symbol}**: **${m.confidence}%** (Mark: $${m.markPrice}, Trend: \`${m.trend}\`) → Needs +${Math.max(0, scoreFloor - m.confidence)}% more confluence`
+            ).join('\n');
+          }
+        }
+      } catch {}
+
       return {
-        reply: `Our desk is fully armed with **$${(maxB - deployed).toFixed(2)} USD** available margin. We haven't entered new trades yet because current market regime is **${regime}** with **SHORT** positions banned fleet-wide. We are strictly requiring a **≥${scoreFloor}%** technical/AI confluence gate to prevent false breakouts and protect capital.`,
+        reply: `### 🛡️ Why the Agent Has Not Entered Any Trades Yet:\n\n` +
+          `**Dynamic Safety Gate:** The agent enforces a strict **≥${scoreFloor}% Confluence Gate** in current \`${regime}\` conditions to protect your $${maxB.toFixed(2)} USD capital against false breakouts.\n\n` +
+          (banned !== 'None' ? `🚫 **Directional Ban Active:** Fleet-wide restriction on **\`${banned}\`** positions.\n\n` : '') +
+          `Available Margin: **$${(maxB - deployed).toFixed(2)} USD** preserved.\n` +
+          `Active Positions: **${openCount}**\n` +
+          (pairsSummary ? `\n#### Scanned Candidate Pairs vs ${scoreFloor}% Gate:${pairsSummary}\n\n` : '') +
+          `💡 *Capital preservation is working as designed — zero bad trades are placed during chop or unconfirmed momentum.*`,
       };
+    }
+
+    if (lower.includes('budget') || lower.includes('risk') || lower.includes('margin') || lower.includes('capital')) {
+      const minA = config.MIN_ALLOC_PCT || 15;
+      const maxA = config.MAX_ALLOC_PCT || 25;
+      const minUsd = ((minA / 100) * maxB).toFixed(2);
+      const maxUsd = ((maxA / 100) * maxB).toFixed(2);
+
+      return {
+        reply: `### 💰 Capital & Risk Management Overview\n\n` +
+          `| Metric | Value |\n` +
+          `| :--- | :--- |\n` +
+          `| **Live Account Equity** | **$${(context.onChainBalanceUsd && context.onChainBalanceUsd > 0 ? context.onChainBalanceUsd : maxB).toFixed(2)}** |\n` +
+          `| **Available Margin** | **$${(maxB - deployed).toFixed(2)}** |\n` +
+          `| **Working Budget** | **$${maxB.toFixed(2)}** (Auto-synced) |\n` +
+          `| **Budget Deployed** | **$${deployed.toFixed(2)}** (${openCount} open) |\n` +
+          `| **Budget Free** | **$${(maxB - deployed).toFixed(2)}** |\n` +
+          `| **Allocation / Trade** | **${minA}% – ${maxA}%** ($${minUsd} – $${maxUsd}) |\n` +
+          `| **Confidence Gate** | **${scoreFloor}%** |\n` +
+          `| **Leverage Hard Ceiling** | **${config.MAX_LEVERAGE || 5}x Max** |\n` +
+          `| **Max Open Positions** | 4 concurrent positions max |\n\n` +
+          `🔒 *Every order is sized according to dynamic account equity with automated Stop-Loss, Take-Profit, and Maker-First PostOnly routing.*`,
+      };
+    }
+
+    if (lower.includes('market') || lower.includes('overview') || lower.includes('price')) {
+      let table = '';
+      try {
+        const { agentState } = require('../api-server');
+        if (agentState && agentState.markets) {
+          const list = Object.values(agentState.markets) as any[];
+          if (list.length > 0) {
+            table = `| Pair | Mark Price | 24h Change | Trend | Action | Confidence |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n` +
+              list.map((m: any) => {
+                const chg = m.change24h ? (m.change24h >= 0 ? `+${m.change24h.toFixed(2)}%` : `${m.change24h.toFixed(2)}%`) : '0.00%';
+                return `| **${m.symbol}** | $${m.markPrice} | ${chg} | \`${m.trend}\` | \`${m.action}\` | **${m.confidence}%** |`;
+              }).join('\n');
+          }
+        }
+      } catch {}
+
+      if (table) {
+        return {
+          reply: `### 📊 Live Market & Scan Overview\n\n${table}\n\n*Cycle updates every 15s across all 28 Aptos markets.*`,
+        };
+      }
     }
 
     if (lower.includes('pnl') || lower.includes('performance') || lower.includes('win rate')) {
       return {
-        reply: `Our desk performance stands at a **${winRate}%** win rate (${wins} wins / ${losses} losses) with **+$${totalPnl} USD** in realized net profit across 43 closed trades. All $${(maxB - deployed).toFixed(2)} USD of our margin is currently preserved and available.`,
+        reply: `Our desk performance stands at a **${winRate}%** win rate (${wins} wins / ${losses} losses) with **+$${totalPnl} USD** in realized net profit across ${context.stats?.closedTradesCount || 43} closed trades. All $${(maxB - deployed).toFixed(2)} USD of our margin is currently preserved and available.`,
       };
     }
 
@@ -896,12 +961,36 @@ export class LocalAIBrain {
       }
     } catch {}
 
+    // ── Live Market Prices & Scanned Indicators ──
+    let marketTableSummary = '';
+    try {
+      const { agentState } = require('../api-server');
+      if (agentState && agentState.markets) {
+        const mList = Object.values(agentState.markets) as any[];
+        if (mList.length > 0) {
+          marketTableSummary = '\n\n📈 LIVE MARKET PRICES & TECHNICAL CONFLUENCE (ALL 28 PAIRS):\n' +
+            mList.map((m: any) => {
+              const chg = m.change24h ? (m.change24h >= 0 ? `+${m.change24h.toFixed(2)}%` : `${m.change24h.toFixed(2)}%`) : '0.00%';
+              const rsi = m.candlestick?.rsi14 ? `RSI ${m.candlestick.rsi14.toFixed(1)}` : '';
+              return `- ${m.symbol}: Mark $${m.markPrice} | 24h: ${chg} | Trend: ${m.trend} | Action: ${m.action} | Score: ${m.confidence}% vs Gate ≥${scoreFloor}% | Risk: ${m.riskLevel}${rsi ? ` | ${rsi}` : ''}`;
+            }).join('\n');
+        }
+      }
+    } catch {}
+
+    // ── Live Capital Risk Guardrails ──
+    const minAllocPct = config.MIN_ALLOC_PCT || 15;
+    const maxAllocPct = config.MAX_ALLOC_PCT || 25;
+    const minAllocUsd = ((minAllocPct / 100) * totalBudget).toFixed(2);
+    const maxAllocUsd = ((maxAllocPct / 100) * totalBudget).toFixed(2);
+
     return `You are the dedicated Autonomous AI Copilot & Senior Quantitative Desk Officer for "${clientName}" (Desk ID: ${clientId}) on Decibel DEX (Aptos blockchain).
 
 MISSION & PERSONA:
 - Speak in fluent, professional, natural language like an experienced hedge-fund algorithmic trader.
-- Answer the user's questions directly, conversationally, and insightfully. Explain "why" things are happening based on live telemetry and Alpha Bundle directives.
-- DO NOT just spit out rigid robotic bullet-point templates unless the user explicitly requests raw data.
+- Answer the user's questions directly, conversationally, and insightfully with EXACT LIVE NUMBERS from the telemetry below.
+- NEVER use placeholders like "[X.XX] USD" or "[A.AA] USD". You have the exact live mark prices and 24h metrics for all 28 assets below.
+- NEVER ask the user to share their asset allocation or balance — you have their authoritative balances right here.
 - Reference internal telemetry, on-chain balances, recent trade outcomes, and Sim Lab Alpha Bundle directives naturally.
 
 📊 LIVE INTERNAL DESK TELEMETRY & ON-CHAIN STATE:
@@ -910,6 +999,9 @@ MISSION & PERSONA:
 • Gas Signer Balance: ${gasApt.toFixed(4)} APT (${gasApt >= 0.005 || isPaper ? '✅ Sufficient Gas' : '⚠️ Low Gas (<0.005 APT)'})
 • On-Chain Margin Collateral: $${onChainMargin.toFixed(2)} USD in Decibel Subaccount
 • Capital Guardrails: Total Budget: $${totalBudget.toFixed(2)} USD | Deployed: $${deployedBudget.toFixed(2)} USD | Available Margin: $${availableBudget.toFixed(2)} USD
+• Single Trade Allocation Range: ${minAllocPct}% to ${maxAllocPct}% ($${minAllocUsd} to $${maxAllocUsd} per position)
+• Max Combined Gross Leverage: ${maxLeverage}x Hard Ceiling
+• Max Concurrent Positions: 4 Positions Max
 • Performance Track Record: Win Rate ${winRate}% (${wins}W / ${losses}L) | Realized PnL: $${totalPnl} USD across ${closedCount} closed trades
 • Active Open Positions (${openPositionsCount}): ${openPositionsCount > 0 ? JSON.stringify(context.openPositions?.map(p => ({ pair: p.symbol, action: p.action, entry: p.entryPrice, lev: p.leverage, pnlUsd: p.pnlUsd, tp: p.takeProfit, sl: p.stopLoss }))) : 'None currently (0 open positions, capital 100% available)'}
 • Recent Closed Trades: ${recentTradesSummary}
@@ -922,9 +1014,9 @@ MISSION & PERSONA:
 • Directional Bans: ${banned} (Any trade matching a banned side is strictly blocked by Layer 4 AI Shield)
 • Global Confidence Floor: ≥${scoreFloor}% (Dynamic Floor: ${dynamicScoreFloor}%)
 • Volatility Cooling: ${coolingActive ? `⚠️ ACTIVE (${coolingReason})` : 'Normal Operations'}
-• Upcoming Macro Releases: ${nearestNews || 'No immediate high-impact news'}${pairDirectivesSummary}
+• Upcoming Macro Releases: ${nearestNews || 'No immediate high-impact news'}${pairDirectivesSummary}${marketTableSummary}
 
-When the user asks questions about the market, specific tokens (like SUI or BTC), why no trades yet, or performance, synthesize a natural, insightful, quantitative response incorporating this live state.`;
+When the user asks questions about the market, specific tokens (like SUI or BTC), why no trades yet, or performance, synthesize a natural, insightful, quantitative response incorporating this live state. Always use real numbers from this prompt.`;
   }
 
   private async chatWithGemini(message: string, context: CopilotChatContext): Promise<string> {

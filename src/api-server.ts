@@ -53,6 +53,7 @@ import {
   getSimPairDirectives,
 } from './strategy/manager';
 import { dbClient, DbTrade } from './db/database';
+import { processUserMessage, registerCopilotHandlers } from './agent/copilot';
 
 export interface LogEntry {
   ts: number;
@@ -516,6 +517,12 @@ export function startApiServer(): http.Server {
   } catch (err: any) {
     logger.debug(`SQLite trades initial migration check: ${err.message}`);
   }
+
+  // Register Copilot runtime handlers
+  registerCopilotHandlers({
+    setPaused: (paused: boolean) => tradeExecutor.setPaused(paused),
+    triggerScan: async () => triggerImmediateScan(),
+  });
 
   const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url || '/', `http://localhost:${config.HEALTH_PORT}`);
@@ -2844,39 +2851,15 @@ function triggerBackgroundOnChainSync(): void {
         return;
       }
 
-      let gasBalance = 0;
-      let marginBalance = 0;
       try {
-        const onChain = await tradeExecutor.fetchOnChainBalance();
-        gasBalance = onChain?.aptBalance ?? 0;
-        marginBalance = onChain?.balanceUsd ?? 0;
-      } catch {}
-
-      const response = await localAIBrain.chat(userMessage, {
-        clientName: config.CLIENT_NAME,
-        clientId: config.CLIENT_ID,
-        network: config.NETWORK,
-        subaccount: config.DECIBEL_SUBACCOUNT_ADDRESS,
-        signerAddress: tradeExecutor.getSignerAddress() || getDerivedSignerAddress(),
-        gasAptBalance: gasBalance,
-        onChainBalanceUsd: marginBalance,
-        stats: tradeExecutor.getStats(),
-        openPositions: tradeExecutor.getOpenTrades(),
-        recentTrades: tradeExecutor.getClosedTrades().slice(-10),
-        budgetUsd: config.BUDGET_USD,
-        maxLeverage: config.MAX_LEVERAGE,
-        paperTrading: config.PAPER_TRADING,
-        watchPairs: config.WATCH_PAIRS.split(',').map((s: string) => s.trim()),
-        directives: standaloneEngine.getDirectives(),
-        isSimLabConnected: superchargeClient.isActive(),
-        simLabServerUrl: superchargeClient.getServerUrl(),
-        activeAiProvider: config.ACTIVE_AI_PROVIDER,
-        activeAiModel: config.GEMINI_MODEL,
-        simPairDirectives: getSimPairDirectives(),
-      });
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(response));
+        const response = await processUserMessage(userMessage, 'web');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response));
+      } catch (chatErr: any) {
+        logger.error(`Copilot chat processing error: ${chatErr.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: chatErr.message, reply: `⚠️ Error: ${chatErr.message}` }));
+      }
       return;
     }
 
