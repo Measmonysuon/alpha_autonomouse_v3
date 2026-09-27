@@ -2834,6 +2834,7 @@ function triggerBackgroundOnChainSync(): void {
         simLabServerUrl: superchargeClient.getServerUrl(),
         activeAiProvider: config.ACTIVE_AI_PROVIDER,
         activeAiModel: config.GEMINI_MODEL,
+        simPairDirectives: getSimPairDirectives(),
       });
 
       res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -47,6 +47,7 @@ export interface CopilotChatContext {
   simLabServerUrl?: string;
   activeAiProvider?: string;
   activeAiModel?: string;
+  simPairDirectives?: Record<string, any>;
 }
 
 export class LocalAIBrain {
@@ -650,6 +651,9 @@ export class LocalAIBrain {
     const text = (message || '').trim();
     const lower = text.toLowerCase();
     const clientName = context.clientName || config.CLIENT_NAME || 'Desk 02 (Mac Client v2)';
+    const wins = context.stats?.wins ?? (context.stats as any)?.winCount ?? 0;
+    const losses = context.stats?.losses ?? (context.stats as any)?.lossCount ?? 0;
+    const winRate = context.stats?.winRate ?? (wins + losses > 0 ? Number(((wins / (wins + losses)) * 100).toFixed(1)) : 0);
 
     // ── Command Shortcuts ──
     if (lower === 'scan now' || lower === 'scan') {
@@ -672,6 +676,92 @@ export class LocalAIBrain {
       return {
         reply: `▶️ **Autonomous Trading Resumed.**\n\n**${clientName}** has resumed continuous scanning across all ${pairsCount} pairs in parallel batches.`,
         actionTaken: true,
+      };
+    }
+
+    // ── Natural Conversational Greetings ──
+    if (lower === 'hi' || lower === 'hello' || lower === 'hey' || lower.startsWith('hello ') || lower.startsWith('hi ') || lower === 'good morning' || lower === 'good evening') {
+      const deployed = context.stats?.budgetUsedUsd || 0;
+      const maxB = context.budgetUsd || config.BUDGET_USD || 100;
+      const openCount = context.openPositions?.length || 0;
+      const activeStrat = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
+      return {
+        reply: `👋 **Hello!** I am your dedicated Autonomous Trading Copilot for **${clientName}**.\n\nWe are actively managing **28 live Aptos perpetual markets** under the **${activeStrat}** strategy.\n\n• **Performance**: \`${winRate}%\` Win Rate (${wins}W / ${losses}L)\n• **Capital Status**: \`$${deployed.toFixed(2)} / $${maxB.toFixed(2)} USD\` deployed (${openCount} active positions)\n• **Sim Lab Sync**: ${context.isSimLabConnected ? '⚡ **Active Supercharge**' : '🛡️ **Standalone Engine**'}\n\nYou can ask me about any specific market (e.g. *"What do you see on SUI?"*, *"How is BTC?"*), your capital budget, recent performance, or type \`scan\` to trigger a fresh market sweep!`,
+      };
+    }
+
+    // ── Dedicated Pair Deep-Dive Inspector (e.g. SUI, BTC, ETH, SOL, etc.) ──
+    const knownTokens = [
+      'SUI', 'BTC', 'ETH', 'SOL', 'APT', 'XRP', 'DOGE', 'BNB', 'LINK',
+      'AVAX', 'NEAR', 'ADA', 'TRX', 'DOT', 'HYPE', 'PEPE', 'SHIB',
+      'LTC', 'BCH', 'UNI', 'FET', 'TAO', 'RENDER', 'ARB', 'OP', 'INJ', 'SEI', 'TIA'
+    ];
+    const tokenMatch = knownTokens.find((token) => {
+      const t = token.toLowerCase();
+      return lower.includes(t + 'usd') || lower.includes(t + '/usd') || new RegExp(`\\b${t}\\b`).test(lower);
+    });
+
+    if (tokenMatch) {
+      const symNorm = `${tokenMatch}/USD`;
+      const pos = context.openPositions?.find((p: any) => {
+        const s = (p.symbol || '').toUpperCase().replace('-', '/');
+        return s === symNorm || s.startsWith(tokenMatch);
+      });
+      const recentForPair = (context.recentTrades || []).filter((t: any) => {
+        const s = (t.symbol || '').toUpperCase().replace('-', '/');
+        return s === symNorm || s.startsWith(tokenMatch);
+      });
+      const lastTrade = recentForPair.length > 0 ? recentForPair[recentForPair.length - 1] : null;
+
+      let simDir: any = null;
+      try {
+        simDir = context.simPairDirectives?.[symNorm] || context.simPairDirectives?.[tokenMatch];
+        if (!simDir) {
+          const { getSimPairDirective } = require('../strategy/manager');
+          simDir = getSimPairDirective(symNorm);
+        }
+      } catch {}
+
+      let statusMsg = '';
+      if (pos) {
+        const pnl = pos.pnlUsd !== undefined ? ` (PnL: ${pos.pnlUsd >= 0 ? '+' : ''}$${pos.pnlUsd.toFixed(2)})` : '';
+        statusMsg = `🟢 **Active Open Position on ${clientName}:**\n` +
+          `• Direction: **${pos.action || pos.side}** (${pos.leverage || 3}x leverage)\n` +
+          `• Entry: **$${pos.entryPrice}** | Size: **$${(pos.allocatedUsd || 0).toFixed(2)} USD**\n` +
+          `• Dynamic TP: **$${pos.takeProfit?.toFixed(4) || 'Trailing'}** | SL: **$${pos.stopLoss?.toFixed(4) || 'Dynamic ATR'}**${pnl}`;
+      } else {
+        statusMsg = `⚪ **Desk Exposure**: No active open position on **${symNorm}** currently. Capital is preserved and available for high-conviction entries.`;
+      }
+
+      let recentMsg = '';
+      if (lastTrade) {
+        const p = lastTrade.netPnlUsd ?? lastTrade.pnlUsd ?? 0;
+        const resIcon = p >= 0 ? '✅ WIN' : '❌ LOSS';
+        recentMsg = `\n• **Last Desk Trade**: ${resIcon} (\`${p >= 0 ? '+' : ''}$${p.toFixed(2)} USD\`, Exit: \`${lastTrade.exitReason || 'TP/SL Hit'}\`)`;
+      }
+
+      let directiveMsg = '';
+      if (simDir) {
+        const layers = [
+          simDir.layer1 ? 'L1:Trend' : null,
+          simDir.layer2 ? 'L2:Liquidity' : null,
+          simDir.layer3 ? 'L3:SMC' : null,
+          simDir.layer4 ? 'L4:AI' : null,
+        ].filter(Boolean).join(' + ') || 'Autonomous Multi-Layer';
+        directiveMsg = `\n\n🔬 **Sim Lab Quantitative Intelligence (${symNorm}):**\n` +
+          `• **Active Calibration**: \`${layers}\`\n` +
+          `• **Confidence Floor**: Must achieve **≥${simDir.minConfidenceGate ?? 70}%** confluence\n` +
+          `• **Risk Cap**: Max **${simDir.maxLeverage ?? 3}x** leverage | SL Multiplier: **${simDir.slMultiplier ?? 1.3}x ATR**\n` +
+          `• **Maker Offset**: \`${((simDir.makerOffsetPct ?? 0.00022) * 100).toFixed(3)}%\` post-only pricing\n` +
+          `• **Tradability**: ${simDir.coolOffActive ? '⚠️ **Cooldown Active** (' + (simDir.reason || 'Risk Guard') + ')' : '✅ **Tradable & Armed**'}` +
+          (simDir.scoutReason ? `\n• **AI Scout**: *${simDir.scoutReason}*` : '');
+      }
+
+      const activeStrategy = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
+      const scanSummary = `\n\n🎯 **Scanner Condition**: Continuously evaluating **${symNorm}** orderbook depth, funding asymmetries, and liquidity pool sweeps under the **${activeStrategy}** framework. The desk will deploy capital as soon as market structure and orderflow confirm a verified edge.`;
+
+      return {
+        reply: `🔎 **${symNorm} Quantitative Intelligence Assessment (${clientName}):**\n\n${statusMsg}${recentMsg}${directiveMsg}${scanSummary}`,
       };
     }
 
@@ -752,7 +842,7 @@ export class LocalAIBrain {
     if (lower.includes('win rate') || lower.includes('p&l') || lower.includes('pnl') || lower.includes('performance')) {
       const s = context.stats || {};
       return {
-        reply: `📈 **Performance & Win Rate (${clientName}):**\n\n• **Win Rate**: \`${s.winRate ?? 0}%\` (${s.winCount ?? 0}W / ${s.lossCount ?? 0}L)\n• **Realized P&L**: \`$${(s.totalPnlUsd ?? 0).toFixed(2)} USD\`\n• **Total Closed Trades**: \`${s.closedTradesCount ?? 0}\`\n• **Active Open Positions**: \`${s.openTradesCount ?? 0}\``,
+        reply: `📈 **Performance & Win Rate (${clientName}):**\n\n• **Win Rate**: \`${winRate}%\` (${wins}W / ${losses}L)\n• **Realized P&L**: \`$${(s.totalPnlUsd ?? s.netPnlUsd ?? 0).toFixed(2)} USD\`\n• **Total Closed Trades**: \`${s.closedTradesCount ?? (wins + losses)}\`\n• **Active Open Positions**: \`${s.openTradesCount ?? (context.openPositions?.length ?? 0)}\``,
       };
     }
 
@@ -790,11 +880,13 @@ export class LocalAIBrain {
       logger.warn(`AI Copilot LLM generation error (${err.message}). Using intelligent local fallback.`);
     }
 
-    // Smart Local Fallback Response with Full Telemetry
+    // Smart Local Quant Fallback Response with Full Telemetry
     const deployed = context.stats?.budgetUsedUsd || 0;
-    const maxB = context.budgetUsd || config.BUDGET_USD || 30;
+    const maxB = context.budgetUsd || config.BUDGET_USD || 100;
+    const openCount = context.openPositions?.length || 0;
+    const activeStrat = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
     return {
-      reply: `🤖 **${clientName} Copilot Advisor:**\n\nI am actively monitoring 28 live Aptos perpetual markets for you with strict **$${maxB.toFixed(2)} USD** capital guardrails.\n\n• **Desk Name**: \`${clientName}\`\n• **Mode**: ${context.isSimLabConnected ? '⚡ Sim Lab Supercharged (Active Sync)' : '🛡️ Standalone Local Engine'}\n• **Active Strategy**: \`${context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab'}\`\n• **Budget Deployed**: \`$${deployed.toFixed(2)} / $${maxB.toFixed(2)} USD\`\n• **Win Rate**: \`${context.stats?.winRate ?? 0}%\` (${context.stats?.winCount ?? 0}W / ${context.stats?.lossCount ?? 0}L)\n\nYou can ask: *"Why no trades yet?"*, *"Show budget"*, *"What is our win rate?"*, *"Show positions"*, or type \`scan\` to trigger a fresh market sweep!`,
+      reply: `🤖 **${clientName} Quant Advisor:**\n\nI am actively monitoring **28 live Aptos perpetual markets** with strict **$${maxB.toFixed(2)} USD** capital guardrails.\n\n• **Desk**: \`${clientName}\`\n• **Active Strategy**: \`${activeStrat}\`\n• **Operating Mode**: ${context.isSimLabConnected ? '⚡ Sim Lab Supercharged (Active Sync)' : '🛡️ Standalone Local Engine'}\n• **Capital Deployed**: \`$${deployed.toFixed(2)} / $${maxB.toFixed(2)} USD\` (${openCount} open positions)\n• **Performance**: \`${winRate}%\` Win Rate (${wins}W / ${losses}L)\n\n💡 *Tip: You can ask about any specific pair like *"What do you see on SUI?"*, *"Show positions"*, *"Why no trades yet?"*, or *"Show budget"*.*`,
     };
   }
 
@@ -808,9 +900,9 @@ export class LocalAIBrain {
     const totalBudget = context.budgetUsd || config.BUDGET_USD || 30;
     const deployedBudget = context.stats?.budgetUsedUsd || 0;
     const availableBudget = Math.max(0, totalBudget - deployedBudget);
-    const winRate = context.stats?.winRate ?? 0;
-    const wins = context.stats?.winCount ?? 0;
-    const losses = context.stats?.lossCount ?? 0;
+    const wins = context.stats?.wins ?? (context.stats as any)?.winCount ?? 0;
+    const losses = context.stats?.losses ?? (context.stats as any)?.lossCount ?? 0;
+    const winRate = context.stats?.winRate ?? (wins + losses > 0 ? Number(((wins / (wins + losses)) * 100).toFixed(1)) : 0);
     const totalPnl = (context.stats?.totalPnlUsd ?? 0).toFixed(2);
     const closedCount = context.stats?.closedTradesCount ?? 0;
     const openPositionsCount = context.openPositions?.length ?? 0;
