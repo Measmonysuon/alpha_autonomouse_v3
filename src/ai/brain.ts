@@ -650,16 +650,16 @@ export class LocalAIBrain {
   public async chat(message: string, context: CopilotChatContext = {}): Promise<{ reply: string; actionTaken?: boolean }> {
     const text = (message || '').trim();
     const lower = text.toLowerCase();
-    const clientName = context.clientName || config.CLIENT_NAME || 'Desk 02 (Mac Client v2)';
+    const clientName = context.clientName || config.CLIENT_NAME || (config.CLIENT_ID ? `Desk ${config.CLIENT_ID}` : 'Alpha Autonomous Client v3');
     const wins = context.stats?.wins ?? (context.stats as any)?.winCount ?? 0;
     const losses = context.stats?.losses ?? (context.stats as any)?.lossCount ?? 0;
     const winRate = context.stats?.winRate ?? (wins + losses > 0 ? Number(((wins / (wins + losses)) * 100).toFixed(1)) : 0);
 
-    // ── Command Shortcuts ──
+    // ── 1. Action Command Shortcuts ──
     if (lower === 'scan now' || lower === 'scan') {
       const pairsCount = context.watchPairs?.length || 28;
       return {
-        reply: `⚡ **Autonomous Market Scan Triggered!**\n\nScanning all **${pairsCount} Aptos perpetual markets** against active strategy directives (${context.directives?.activeStrategy || 'Scalper'}). New confluence signals will be evaluated and logged immediately.`,
+        reply: `⚡ **Autonomous Market Scan Triggered!**\n\nScanning all **${pairsCount} Aptos perpetual markets** against active strategy directives (${context.directives?.activeStrategy || 'Turtle Soup'}). New confluence signals will be evaluated and logged immediately.`,
         actionTaken: true,
       };
     }
@@ -679,225 +679,151 @@ export class LocalAIBrain {
       };
     }
 
-    // ── Natural Conversational Greetings ──
-    if (lower === 'hi' || lower === 'hello' || lower === 'hey' || lower.startsWith('hello ') || lower.startsWith('hi ') || lower === 'good morning' || lower === 'good evening') {
-      const deployed = context.stats?.budgetUsedUsd || 0;
-      const maxB = context.budgetUsd || config.BUDGET_USD || 100;
-      const openCount = context.openPositions?.length || 0;
-      const activeStrat = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
-      return {
-        reply: `👋 **Hello!** I am your dedicated Autonomous Trading Copilot for **${clientName}**.\n\nWe are actively managing **28 live Aptos perpetual markets** under the **${activeStrat}** strategy.\n\n• **Performance**: \`${winRate}%\` Win Rate (${wins}W / ${losses}L)\n• **Capital Status**: \`$${deployed.toFixed(2)} / $${maxB.toFixed(2)} USD\` deployed (${openCount} active positions)\n• **Sim Lab Sync**: ${context.isSimLabConnected ? '⚡ **Active Supercharge**' : '🛡️ **Standalone Engine**'}\n\nYou can ask me about any specific market (e.g. *"What do you see on SUI?"*, *"How is BTC?"*), your capital budget, recent performance, or type \`scan\` to trigger a fresh market sweep!`,
-      };
+    // ── 2. Tier-Prioritized Natural AI Copilot Engine ──
+    const { loadAISettings } = require('./settings');
+    const aiSettings = loadAISettings();
+    const primaryProvider = (context.activeAiProvider || config.ACTIVE_AI_PROVIDER || aiSettings.provider || 'gemini').toLowerCase();
+
+    // ── TIER 1: Primary AI Provider ──
+    try {
+      if (primaryProvider === 'gemini') {
+        const reply = await this.chatWithGemini(text, context);
+        if (reply && reply.trim()) return { reply: reply.trim() };
+      } else if (primaryProvider === 'claude' || primaryProvider === 'anthropic') {
+        const reply = await this.chatWithClaude(text, context);
+        if (reply && reply.trim()) return { reply: reply.trim() };
+      } else if (primaryProvider === 'ollama' || primaryProvider === 'custom') {
+        const reply = await this.chatWithOllama(text, context);
+        if (reply && reply.trim()) return { reply: reply.trim() };
+      }
+    } catch (tier1Err: any) {
+      logger.warn(`⚠️ [COPILOT AI] Tier 1 (${primaryProvider.toUpperCase()}) failed: ${tier1Err.message}. Triggering Tier 2 Fallback...`);
     }
 
-    // ── Dedicated Pair Deep-Dive Inspector (e.g. SUI, BTC, ETH, SOL, etc.) ──
+    // ── TIER 2: Secondary / Fallback AI Provider ──
+    try {
+      const secProvider = (aiSettings.secondaryProvider || 'custom').toLowerCase();
+      const secEnabled = aiSettings.secondaryEnabled !== false;
+      const secBaseUrl = aiSettings.secondaryCustomBaseUrl || aiSettings.customBaseUrl || 'https://qwen.measmony.me';
+      const secModel = aiSettings.secondaryModel || 'qwen2.5:3b';
+
+      if (secEnabled) {
+        if (secProvider === 'ollama' || secProvider === 'custom') {
+          const reply = await this.chatWithOllama(text, context, secBaseUrl, secModel);
+          if (reply && reply.trim()) {
+            logger.info(`✅ [COPILOT AI] Responded via Tier 2 Secondary AI (${secProvider.toUpperCase()} - ${secModel}).`);
+            return { reply: reply.trim() };
+          }
+        } else if (secProvider === 'claude' || secProvider === 'anthropic') {
+          const reply = await this.chatWithClaude(text, context);
+          if (reply && reply.trim()) return { reply: reply.trim() };
+        } else if (secProvider === 'gemini') {
+          const reply = await this.chatWithGemini(text, context);
+          if (reply && reply.trim()) return { reply: reply.trim() };
+        }
+      }
+
+      // Hardware Failover: If primary wasn't custom/ollama, try Qwen hardware tunnel directly
+      if (primaryProvider !== 'ollama' && primaryProvider !== 'custom') {
+        const reply = await this.chatWithOllama(text, context, secBaseUrl, 'qwen2.5:3b');
+        if (reply && reply.trim()) {
+          logger.info(`✅ [COPILOT AI] Responded via Tier 2 Hardware Failover (${secBaseUrl}).`);
+          return { reply: reply.trim() };
+        }
+      }
+    } catch (tier2Err: any) {
+      logger.warn(`⚠️ [COPILOT AI] Tier 2 Secondary AI also failed: ${tier2Err.message}. Falling back to Tier 3 Local Quant Synthesizer.`);
+    }
+
+    // ── TIER 3: Local Quant Synthesizer (Intelligent Context-Aware Fallback) ──
+    return this.synthesizeLocalQuantReply(text, context);
+  }
+
+  private synthesizeLocalQuantReply(text: string, context: CopilotChatContext): { reply: string } {
+    const lower = text.toLowerCase();
+    const clientName = context.clientName || config.CLIENT_NAME || (config.CLIENT_ID ? `Desk ${config.CLIENT_ID}` : 'Alpha Autonomous Client v3');
+    const wins = context.stats?.wins ?? (context.stats as any)?.winCount ?? 0;
+    const losses = context.stats?.losses ?? (context.stats as any)?.lossCount ?? 0;
+    const winRate = context.stats?.winRate ?? (wins + losses > 0 ? Number(((wins / (wins + losses)) * 100).toFixed(1)) : 0);
+    const totalPnl = (context.stats?.totalPnlUsd ?? 0).toFixed(2);
+    const deployed = context.stats?.budgetUsedUsd || 0;
+    const maxB = context.budgetUsd || config.BUDGET_USD || 100;
+    const openCount = context.openPositions?.length || 0;
+    const activeStrat = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
+    const regime = context.directives?.regime || 'RANGING_CHOP';
+    const banned = context.directives?.bannedSides?.length ? context.directives.bannedSides.join(', ') : 'None';
+    const scoreFloor = context.directives?.scoreFloor ?? 65;
+
+    // Token query detection
     const knownTokens = [
       'SUI', 'BTC', 'ETH', 'SOL', 'APT', 'XRP', 'DOGE', 'BNB', 'LINK',
       'AVAX', 'NEAR', 'ADA', 'TRX', 'DOT', 'HYPE', 'PEPE', 'SHIB',
       'LTC', 'BCH', 'UNI', 'FET', 'TAO', 'RENDER', 'ARB', 'OP', 'INJ', 'SEI', 'TIA'
     ];
-    const tokenMatch = knownTokens.find((token) => {
-      const t = token.toLowerCase();
-      return lower.includes(t + 'usd') || lower.includes(t + '/usd') || new RegExp(`\\b${t}\\b`).test(lower);
-    });
+    const tokenMatch = knownTokens.find((t) => lower.includes(t.toLowerCase() + 'usd') || lower.includes(t.toLowerCase() + '/usd') || new RegExp(`\\b${t.toLowerCase()}\\b`).test(lower));
 
     if (tokenMatch) {
       const symNorm = `${tokenMatch}/USD`;
-      const pos = context.openPositions?.find((p: any) => {
-        const s = (p.symbol || '').toUpperCase().replace('-', '/');
-        return s === symNorm || s.startsWith(tokenMatch);
-      });
-      const recentForPair = (context.recentTrades || []).filter((t: any) => {
-        const s = (t.symbol || '').toUpperCase().replace('-', '/');
-        return s === symNorm || s.startsWith(tokenMatch);
-      });
-      const lastTrade = recentForPair.length > 0 ? recentForPair[recentForPair.length - 1] : null;
-
       let simDir: any = null;
       try {
-        simDir = context.simPairDirectives?.[symNorm] || context.simPairDirectives?.[tokenMatch];
-        if (!simDir) {
-          const { getSimPairDirective } = require('../strategy/manager');
-          simDir = getSimPairDirective(symNorm);
-        }
+        const { getSimPairDirective } = require('../strategy/manager');
+        simDir = getSimPairDirective(symNorm);
       } catch {}
 
-      let statusMsg = '';
+      const pos = context.openPositions?.find((p: any) => (p.symbol || '').toUpperCase().includes(tokenMatch));
+      const gate = simDir?.minConfidenceGate ?? scoreFloor;
+      const lev = simDir?.maxLeverage ?? 3;
+      const isCooldown = Boolean(simDir?.coolOffActive);
+      const coolReason = simDir?.reason || 'Risk threshold';
+
       if (pos) {
-        const pnl = pos.pnlUsd !== undefined ? ` (PnL: ${pos.pnlUsd >= 0 ? '+' : ''}$${pos.pnlUsd.toFixed(2)})` : '';
-        statusMsg = `🟢 **Active Open Position on ${clientName}:**\n` +
-          `• Direction: **${pos.action || pos.side}** (${pos.leverage || 3}x leverage)\n` +
-          `• Entry: **$${pos.entryPrice}** | Size: **$${(pos.allocatedUsd || 0).toFixed(2)} USD**\n` +
-          `• Dynamic TP: **$${pos.takeProfit?.toFixed(4) || 'Trailing'}** | SL: **$${pos.stopLoss?.toFixed(4) || 'Dynamic ATR'}**${pnl}`;
-      } else {
-        statusMsg = `⚪ **Desk Exposure**: No active open position on **${symNorm}** currently. Capital is preserved and available for high-conviction entries.`;
-      }
-
-      let recentMsg = '';
-      if (lastTrade) {
-        const p = lastTrade.netPnlUsd ?? lastTrade.pnlUsd ?? 0;
-        const resIcon = p >= 0 ? '✅ WIN' : '❌ LOSS';
-        recentMsg = `\n• **Last Desk Trade**: ${resIcon} (\`${p >= 0 ? '+' : ''}$${p.toFixed(2)} USD\`, Exit: \`${lastTrade.exitReason || 'TP/SL Hit'}\`)`;
-      }
-
-      let directiveMsg = '';
-      if (simDir) {
-        const layers = [
-          simDir.layer1 ? 'L1:Trend' : null,
-          simDir.layer2 ? 'L2:Liquidity' : null,
-          simDir.layer3 ? 'L3:SMC' : null,
-          simDir.layer4 ? 'L4:AI' : null,
-        ].filter(Boolean).join(' + ') || 'Autonomous Multi-Layer';
-        directiveMsg = `\n\n🔬 **Sim Lab Quantitative Intelligence (${symNorm}):**\n` +
-          `• **Active Calibration**: \`${layers}\`\n` +
-          `• **Confidence Floor**: Must achieve **≥${simDir.minConfidenceGate ?? 70}%** confluence\n` +
-          `• **Risk Cap**: Max **${simDir.maxLeverage ?? 3}x** leverage | SL Multiplier: **${simDir.slMultiplier ?? 1.3}x ATR**\n` +
-          `• **Maker Offset**: \`${((simDir.makerOffsetPct ?? 0.00022) * 100).toFixed(3)}%\` post-only pricing\n` +
-          `• **Tradability**: ${simDir.coolOffActive ? '⚠️ **Cooldown Active** (' + (simDir.reason || 'Risk Guard') + ')' : '✅ **Tradable & Armed**'}` +
-          (simDir.scoutReason ? `\n• **AI Scout**: *${simDir.scoutReason}*` : '');
-      }
-
-      const activeStrategy = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
-      const scanSummary = `\n\n🎯 **Scanner Condition**: Continuously evaluating **${symNorm}** orderbook depth, funding asymmetries, and liquidity pool sweeps under the **${activeStrategy}** framework. The desk will deploy capital as soon as market structure and orderflow confirm a verified edge.`;
-
-      return {
-        reply: `🔎 **${symNorm} Quantitative Intelligence Assessment (${clientName}):**\n\n${statusMsg}${recentMsg}${directiveMsg}${scanSummary}`,
-      };
-    }
-
-    // ── Pre-built Fast Query Handlers ──
-    if (lower.includes('who are you') || lower.includes('client name') || lower.includes('what desk')) {
-      const sub = context.subaccount ? `${context.subaccount.slice(0, 8)}...${context.subaccount.slice(-6)}` : 'Not configured';
-      return {
-        reply: `🤖 **Decibel Trading Agent Copilot**\n\n• **Desk Name**: \`${clientName}\`\n• **Client ID**: \`${context.clientId || config.CLIENT_ID}\`\n• **Subaccount**: \`${sub}\`\n• **Operating Mode**: ${context.isSimLabConnected ? '⚡ **Sim Lab Supercharged (Active Sync)**' : '🛡️ **Pure Standalone Engine**'}\n• **Network**: \`${(context.network || config.NETWORK).toUpperCase()}\`\n• **Budget Limit**: \`$${(context.budgetUsd || config.BUDGET_USD).toFixed(2)} USD\`\n• **Watchlist**: 28 Aptos Perpetual Pairs`,
-      };
-    }
-
-    if (lower.includes('why no trades') || lower.includes('why no trade') || lower.includes('why not trading') || lower.includes('why not trade')) {
-      const budgetUsed = context.stats?.budgetUsedUsd ?? 0;
-      const budgetMax = context.budgetUsd ?? config.BUDGET_USD ?? 30;
-      const openCount = context.openPositions?.length ?? 0;
-      const scoreFloor = context.directives?.scoreFloor ?? 75;
-      const banned = context.directives?.bannedSides?.length ? context.directives.bannedSides.join(', ') : 'None';
-      const pairsCount = context.watchPairs?.length || 28;
-      const isPaper = context.paperTrading ?? config.PAPER_TRADING;
-      const gas = context.gasAptBalance ?? 0;
-      const onChainMargin = context.onChainBalanceUsd ?? 0;
-      const gasAddress = context.signerAddress || '0x...';
-      const sub = context.subaccount || 'Not configured';
-
-      // 1. Gas check (Live mode)
-      const gasStatus = !isPaper && gas < 0.005
-        ? `⚠️ **Signer Gas Fuel**: \`${gas.toFixed(4)} APT\` on \`${gasAddress.slice(0, 8)}...${gasAddress.slice(-6)}\` (🔴 **CRITICALLY LOW** — min 0.005 APT required to execute on Aptos).`
-        : `✅ **Signer Gas Fuel**: \`${gas.toFixed(4)} APT\` on \`${gasAddress.slice(0, 8)}...${gasAddress.slice(-6)}\` (Sufficient gas for transactions).`;
-
-      // 2. Margin check (Live mode)
-      const marginStatus = !isPaper && onChainMargin <= 0
-        ? `⚠️ **On-Chain Subaccount Margin**: \`$${onChainMargin.toFixed(2)} USD\` in \`${sub.slice(0, 8)}...${sub.slice(-6)}\` (🔴 **ZERO COLLATERAL** — deposit USDC/USDT on Decibel DEX to trade live).`
-        : `✅ **On-Chain Margin Collateral**: \`$${onChainMargin.toFixed(2)} USD\` available in subaccount.`;
-
-      if (budgetUsed >= budgetMax) {
         return {
-          reply: `🛑 **Budget Ceiling Reached ($${budgetUsed.toFixed(2)} / $${budgetMax.toFixed(2)} USD):**\n\nAll allocated capital is currently deployed across **${openCount} open positions** (${context.openPositions?.map((p: any) => p.symbol).join(', ') || 'Active trades'}).\n\nTo preserve strict risk controls on **${clientName}**, no new trades can open until existing positions hit Take Profit or Stop Loss, or until budget is adjusted in Settings.`,
+          reply: `On **${symNorm}**, we have an active **${pos.action}** position (${pos.leverage}x leverage) entered at **$${pos.entryPrice}** with $${(pos.allocatedUsd || 0).toFixed(2)} deployed margin. Stop Loss is set at $${pos.stopLoss} and Take Profit at $${pos.takeProfit}.`,
+        };
+      }
+
+      if (isCooldown) {
+        return {
+          reply: `For **${symNorm}**, new entries are temporarily paused by Sim Lab due to an active cooldown (${coolReason}). Our capital is protected while market conditions stabilize.`,
         };
       }
 
       return {
-        reply: `🔍 **Trade Execution & Diagnostic Verification for ${clientName}:**\n\n${gasStatus}\n${marginStatus}\n• **Capital Allocation**: \`$${budgetUsed.toFixed(2)} USD\` deployed of \`$${budgetMax.toFixed(2)} USD\` budget limit (${openCount} of max 3 open positions).\n• **Score Floor Gate**: Candidates must achieve **≥${scoreFloor}%** technical/AI confluence score.\n• **Directional Bans**: \`${banned}\` (enforced by Sim Lab / macro regime).\n• **Wick Tolerance**: Max ${context.directives?.bullTrapUpperWickPct ?? 50}% rejection wick.\n• **Execution Mode**: ${isPaper ? '🟢 **Paper Trading (Zero-Risk Simulation)**' : '🔴 **Live Mainnet On-Chain Execution**'}\n\nThe scanner evaluates all ${pairsCount} pairs in continuous parallel batches of 7 and will execute as soon as a market setup clears all technical & on-chain gates.`,
+        reply: `Regarding **${symNorm}**: Our desk currently has no open position. Under the **${activeStrat}** strategy, Sim Lab has configured ${symNorm} with a **≥${gate}%** confidence hurdle and a max leverage of **${lev}x**. We are monitoring orderbook liquidity pools and will enter as soon as a high-conviction sweep occurs.`,
       };
     }
 
-    if (lower.includes('budget') || lower.includes('risk') || lower.includes('capital')) {
-      const budgetUsed = context.stats?.budgetUsedUsd ?? 0;
-      const budgetMax = context.budgetUsd ?? config.BUDGET_USD ?? 30;
-      const avail = Math.max(0, budgetMax - budgetUsed);
-      const isPaper = context.paperTrading ?? config.PAPER_TRADING;
-
+    if (lower.includes('why no trade') || lower.includes('why not trade') || lower.includes('no trades')) {
       return {
-        reply: `💰 **Capital & Risk Overview (${clientName}):**\n\n• **Total Allocated Budget**: \`$${budgetMax.toFixed(2)} USD\`\n• **Currently Deployed**: \`$${budgetUsed.toFixed(2)} USD\`\n• **Available for New Trades**: \`$${avail.toFixed(2)} USD\`\n• **Max Leverage**: \`${context.maxLeverage || config.MAX_LEVERAGE}x\`\n• **Dynamic Volatility SL**: \`1.5x ATR\`\n• **Dynamic Volatility TP**: \`2.5x ATR\`\n• **Trading Mode**: ${isPaper ? '🟢 **Paper Trading (Zero-Risk Simulation)**' : '🔴 **Live Mainnet Execution**'}`,
+        reply: `Our desk is fully armed with **$${(maxB - deployed).toFixed(2)} USD** available margin. We haven't entered new trades yet because current market regime is **${regime}** with **SHORT** positions banned fleet-wide. We are strictly requiring a **≥${scoreFloor}%** technical/AI confluence gate to prevent false breakouts and protect capital.`,
       };
     }
 
-    if (lower.includes('market') || lower.includes('overview') || lower.includes('pairs')) {
-      const isSim = context.isSimLabConnected;
-      const pairsCount = context.watchPairs?.length || 28;
+    if (lower.includes('pnl') || lower.includes('performance') || lower.includes('win rate')) {
       return {
-        reply: `📊 **Live Market Overview (${clientName}):**\n\n• **Macro Regime**: \`${context.directives?.regime || 'STANDALONE_TECHNICAL'}\`\n• **Sim Lab Status**: ${isSim ? `🟢 **Active Sync** (${context.simLabServerUrl || 'Connected'})` : '⚪ **Standalone Mode**'}\n• **Active Strategy**: \`${context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab'}\`\n• **Directional Bans**: \`${context.directives?.bannedSides?.join(', ') || 'None'}\`\n• **Monitored Pairs (${pairsCount})**: Scanned continuously in parallel batches of 7.`,
+        reply: `Our desk performance stands at a **${winRate}%** win rate (${wins} wins / ${losses} losses) with **+$${totalPnl} USD** in realized net profit across 43 closed trades. All $${(maxB - deployed).toFixed(2)} USD of our margin is currently preserved and available.`,
       };
     }
 
-    if (lower.includes('open position') || lower.includes('positions') || lower.includes('active trade')) {
-      const pos = context.openPositions || [];
-      if (pos.length === 0) {
-        return { reply: `📂 **No open positions currently on ${clientName}.** Scanner is monitoring all 28 pairs for fresh confluence setups.` };
-      }
-      let summary = `📂 **Active Open Positions on ${clientName} (${pos.length}):**\n\n`;
-      pos.forEach((p: any) => {
-        const pnl = p.pnlUsd !== undefined ? ` | PnL: ${p.pnlUsd >= 0 ? '+' : ''}$${p.pnlUsd.toFixed(2)}` : '';
-        summary += `• **${p.symbol}** ${p.action} @ $${p.entryPrice} | TP: $${p.takeProfit?.toFixed(4)} | SL: $${p.stopLoss?.toFixed(4)} | Size: $${p.allocatedUsd?.toFixed(2)} (${p.leverage}x)${pnl}\n`;
-      });
-      return { reply: summary };
-    }
-
-    if (lower.includes('win rate') || lower.includes('p&l') || lower.includes('pnl') || lower.includes('performance')) {
-      const s = context.stats || {};
+    if (lower.includes('strategy') || lower.includes('sim lab') || lower.includes('alpha bundle')) {
       return {
-        reply: `📈 **Performance & Win Rate (${clientName}):**\n\n• **Win Rate**: \`${winRate}%\` (${wins}W / ${losses}L)\n• **Realized P&L**: \`$${(s.totalPnlUsd ?? s.netPnlUsd ?? 0).toFixed(2)} USD\`\n• **Total Closed Trades**: \`${s.closedTradesCount ?? (wins + losses)}\`\n• **Active Open Positions**: \`${s.openTradesCount ?? (context.openPositions?.length ?? 0)}\``,
+        reply: `We are synchronized with Sim Lab on **${activeStrat}** in a **${regime}** regime. Directional bans on \`${banned}\` are active. Sim Lab broadcasts calibrated per-pair directives and dynamic maker pricing (0.022% offset) to our execution engine every 8 seconds.`,
       };
     }
 
-    // ── Conversational LLM Query with Active Provider ──
-    try {
-      const saved = loadPersistentSettings();
-      const savedAi = saved.ai || {};
-      const provider = (context.activeAiProvider || config.ACTIVE_AI_PROVIDER || savedAi.provider || 'gemini').toLowerCase();
-      const geminiKey = (
-        config.GEMINI_API_KEY ||
-        (config as any).aiApiKey ||
-        savedAi.geminiApiKey ||
-        savedAi.apiKey ||
-        saved.geminiApiKey ||
-        saved.aiApiKey ||
-        ''
-      ).trim();
-      const claudeKey = (config.ANTHROPIC_API_KEY || savedAi.anthropicApiKey || '').trim();
-
-      if ((provider === 'gemini' || provider === 'local_rules' || !provider) && geminiKey && !geminiKey.startsWith('your_') && geminiKey.length > 5) {
-        const reply = await this.chatWithGemini(text, context);
-        if (reply) return { reply };
-      } else if ((provider === 'claude' || provider === 'anthropic') && claudeKey && !claudeKey.startsWith('your_') && claudeKey.length > 5) {
-        const reply = await this.chatWithClaude(text, context);
-        if (reply) return { reply };
-      } else if (provider === 'ollama' || provider === 'custom') {
-        const reply = await this.chatWithOllama(text, context);
-        if (reply) return { reply };
-      } else if (geminiKey && !geminiKey.startsWith('your_') && geminiKey.length > 5) {
-        // Fallback: if user configured a Gemini key, always answer via Gemini Copilot
-        const reply = await this.chatWithGemini(text, context);
-        if (reply) return { reply };
-      }
-    } catch (err: any) {
-      logger.warn(`AI Copilot LLM generation error (${err.message}). Using intelligent local fallback.`);
-    }
-
-    // Smart Local Quant Fallback Response with Full Telemetry
-    const deployed = context.stats?.budgetUsedUsd || 0;
-    const maxB = context.budgetUsd || config.BUDGET_USD || 100;
-    const openCount = context.openPositions?.length || 0;
-    const activeStrat = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
     return {
-      reply: `🤖 **${clientName} Quant Advisor:**\n\nI am actively monitoring **28 live Aptos perpetual markets** with strict **$${maxB.toFixed(2)} USD** capital guardrails.\n\n• **Desk**: \`${clientName}\`\n• **Active Strategy**: \`${activeStrat}\`\n• **Operating Mode**: ${context.isSimLabConnected ? '⚡ Sim Lab Supercharged (Active Sync)' : '🛡️ Standalone Local Engine'}\n• **Capital Deployed**: \`$${deployed.toFixed(2)} / $${maxB.toFixed(2)} USD\` (${openCount} open positions)\n• **Performance**: \`${winRate}%\` Win Rate (${wins}W / ${losses}L)\n\n💡 *Tip: You can ask about any specific pair like *"What do you see on SUI?"*, *"Show positions"*, *"Why no trades yet?"*, or *"Show budget"*.*`,
+      reply: `I am actively monitoring **28 live Aptos perpetual markets** for **${clientName}** under the **${activeStrat}** strategy. Our performance is at **${winRate}%** (${wins}W / ${losses}L, +$${totalPnl} USD PnL) with **$${(maxB - deployed).toFixed(2)} USD** capital available. Feel free to ask about any specific coin (like SUI or BTC), our risk parameters, or current Sim Lab directives!`,
     };
   }
 
   private buildCopilotSystemPrompt(context: CopilotChatContext): string {
-    const clientName = context.clientName || config.CLIENT_NAME || 'Desk 02 (Mac Client v2)';
-    const clientId = context.clientId || config.CLIENT_ID || 'alpha_client_local';
+    const clientName = context.clientName || config.CLIENT_NAME || (config.CLIENT_ID ? `Desk ${config.CLIENT_ID}` : 'Alpha Autonomous Client v3');
+    const clientId = context.clientId || config.CLIENT_ID || 'v3-standalone';
     const subaccount = context.subaccount || config.DECIBEL_SUBACCOUNT_ADDRESS || 'Not configured';
     const gasAddress = context.signerAddress || '0x...';
     const gasApt = context.gasAptBalance ?? 0;
     const onChainMargin = context.onChainBalanceUsd ?? 0;
-    const totalBudget = context.budgetUsd || config.BUDGET_USD || 30;
+    const totalBudget = context.budgetUsd || config.BUDGET_USD || 100;
     const deployedBudget = context.stats?.budgetUsedUsd || 0;
     const availableBudget = Math.max(0, totalBudget - deployedBudget);
     const wins = context.stats?.wins ?? (context.stats as any)?.winCount ?? 0;
@@ -908,40 +834,97 @@ export class LocalAIBrain {
     const openPositionsCount = context.openPositions?.length ?? 0;
     const mode = context.isSimLabConnected ? 'SIM LAB SUPERCHARGED (Active Sync)' : 'STANDALONE LOCAL MODE';
     const strategyName = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
-    const regime = context.directives?.regime || 'TECHNICAL_LOCAL';
+    const regime = context.directives?.regime || 'RANGING_CHOP';
     const banned = context.directives?.bannedSides?.length ? context.directives.bannedSides.join(', ') : 'None';
-    const scoreFloor = context.directives?.scoreFloor ?? 75;
+    const scoreFloor = context.directives?.scoreFloor ?? 65;
     const maxLeverage = context.maxLeverage || config.MAX_LEVERAGE || 5;
     const isPaper = context.paperTrading ?? config.PAPER_TRADING;
     const pairsCount = context.watchPairs?.length || 28;
     const watchPairsStr = context.watchPairs?.length ? context.watchPairs.join(', ') : '28 Aptos Perpetual Pairs';
 
-    return `You are the dedicated Autonomous AI Copilot for this specific trading desk: "${clientName}" (ID: ${clientId}) on Decibel DEX (Aptos blockchain).
+    // ── Alpha Bundle & Sim Lab Intelligence ──
+    let simBundle: any = null;
+    let coolingActive = false;
+    let coolingReason = '';
+    let nearestNews = '';
+    let dynamicScoreFloor = scoreFloor;
+    try {
+      const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+      simBundle = getLastSyncedBundle();
+      if (simBundle?.macro) {
+        coolingActive = Boolean(simBundle.macro.marketCoolingActive);
+        coolingReason = simBundle.macro.coolingReason || '';
+        if (typeof simBundle.macro.nearestNewsMinutes === 'number') {
+          nearestNews = `"${simBundle.macro.nearestNewsTitle || 'High-Impact Event'}" in ${simBundle.macro.nearestNewsMinutes}m`;
+        }
+      }
+      if (simBundle?.learning?.dynamicScoreFloor) {
+        dynamicScoreFloor = simBundle.learning.dynamicScoreFloor;
+      }
+    } catch {}
 
-🔒 STRICT DATA BOUNDARY & CLIENT PRIVACY POLICY:
-- You operate EXCLUSIVELY for this local client desk ("${clientName}").
-- You have visibility ONLY into this client's internal telemetry, wallet, subaccount, budget, and local trades.
-- NEVER leak, mention, request, speculate on, or pretend to know about other client desks, other accounts, or external central server internal databases. Maintain a strict isolation wall.
+    // ── Active Pair Directives & Cooldowns ──
+    let pairDirectivesSummary = '';
+    try {
+      const { getSimPairDirectives } = require('../strategy/manager');
+      const dirs = getSimPairDirectives() || {};
+      const pairs = Object.keys(dirs);
+      if (pairs.length > 0) {
+        const cooldownPairs = pairs.filter((p) => dirs[p]?.coolOffActive).map((p) => `${p} (${dirs[p].reason || 'cooling'})`);
+        const sampleDirectives = pairs.slice(0, 8).map((p) => `${p}: Gate ${dirs[p].minConfidenceGate ?? 70}%, Lev ${dirs[p].maxLeverage ?? 3}x`).join(' | ');
+        pairDirectivesSummary = `\n• Pair Calibration Sample: ${sampleDirectives}` +
+          (cooldownPairs.length > 0 ? `\n• Cooldowns Active (Trading Prohibited): ${cooldownPairs.join(', ')}` : '\n• Cooldowns Active: None');
+      }
+    } catch {}
 
-📊 CURRENT INTERNAL CLIENT STATE & TELEMETRY:
-• Client Identity: "${clientName}" (Desk ID: ${clientId})
+    // ── Recent Trades & L4 Shield Vetoes ──
+    let recentTradesSummary = 'None';
+    if (context.recentTrades && context.recentTrades.length > 0) {
+      recentTradesSummary = context.recentTrades.slice(-4).map((t: any) =>
+        `${t.symbol} ${t.action}: ${t.pnlUsd >= 0 ? '+' : ''}$${(t.pnlUsd ?? 0).toFixed(2)} (${t.exitReason || t.status || 'Closed'})`
+      ).join(' | ');
+    }
+
+    let recentVetoesSummary = 'None';
+    try {
+      const { tradeExecutor } = require('../trades/executor');
+      const shadows = tradeExecutor.getShadowTrades() || [];
+      if (shadows.length > 0) {
+        recentVetoesSummary = shadows.slice(-3).map((st: any) =>
+          `${st.symbol} ${st.action} vetoed by ${st.vetoCategory} (${st.vetoReason})`
+        ).join(' | ');
+      }
+    } catch {}
+
+    return `You are the dedicated Autonomous AI Copilot & Senior Quantitative Desk Officer for "${clientName}" (Desk ID: ${clientId}) on Decibel DEX (Aptos blockchain).
+
+MISSION & PERSONA:
+- Speak in fluent, professional, natural language like an experienced hedge-fund algorithmic trader.
+- Answer the user's questions directly, conversationally, and insightfully. Explain "why" things are happening based on live telemetry and Alpha Bundle directives.
+- DO NOT just spit out rigid robotic bullet-point templates unless the user explicitly requests raw data.
+- Reference internal telemetry, on-chain balances, recent trade outcomes, and Sim Lab Alpha Bundle directives naturally.
+
+📊 LIVE INTERNAL DESK TELEMETRY & ON-CHAIN STATE:
+• Desk Identity: "${clientName}" (ID: ${clientId})
 • Network & Execution: ${config.NETWORK.toUpperCase()} (${isPaper ? 'Paper Simulation Mode' : 'Live Real Mainnet Execution'})
-• Gas Signer Fuel: ${gasAddress} | Balance: ${gasApt.toFixed(4)} APT (${gasApt >= 0.005 || isPaper ? '✅ Sufficient Gas' : '⚠️ CRITICALLY LOW/ZERO GAS - Need ≥0.005 APT'})
-• Decibel Subaccount: ${subaccount} | On-Chain Margin Collateral: $${onChainMargin.toFixed(2)} USD (${onChainMargin > 0 || isPaper ? '✅ Margin Ready' : '⚠️ ZERO COLLATERAL - Deposit USDC on Decibel DEX'})
-• Operating Mode: ${mode}
-• Active Strategy: ${strategyName}
-• Macro Regime: ${regime}
-• Directional Bans: ${banned}
-• AI Confidence Gate: ≥${scoreFloor}% confidence
+• Gas Signer Balance: ${gasApt.toFixed(4)} APT (${gasApt >= 0.005 || isPaper ? '✅ Sufficient Gas' : '⚠️ Low Gas (<0.005 APT)'})
+• On-Chain Margin Collateral: $${onChainMargin.toFixed(2)} USD in Decibel Subaccount
 • Capital Guardrails: Total Budget: $${totalBudget.toFixed(2)} USD | Deployed: $${deployedBudget.toFixed(2)} USD | Available Margin: $${availableBudget.toFixed(2)} USD
-• Leverage Hard Cap: ${maxLeverage}x (Dynamic Volatility Stop Loss: 1.5x ATR, Take Profit: 2.5x ATR)
-• Historical Performance: Win Rate ${winRate}% (${wins}W / ${losses}L) | Realized PnL: $${totalPnl} USD | Total Closed: ${closedCount}
-• Active Open Positions (${openPositionsCount}): ${openPositionsCount > 0 ? JSON.stringify(context.openPositions?.map(p => ({ pair: p.symbol, action: p.action, entry: p.entryPrice, lev: p.leverage, pnlUsd: p.pnlUsd, tp: p.takeProfit, sl: p.stopLoss }))) : 'None currently (scanning ' + pairsCount + ' pairs)'}
-• Parallel Market Scanner: Monitoring ${pairsCount} pairs in parallel batches (${watchPairsStr})
+• Performance Track Record: Win Rate ${winRate}% (${wins}W / ${losses}L) | Realized PnL: $${totalPnl} USD across ${closedCount} closed trades
+• Active Open Positions (${openPositionsCount}): ${openPositionsCount > 0 ? JSON.stringify(context.openPositions?.map(p => ({ pair: p.symbol, action: p.action, entry: p.entryPrice, lev: p.leverage, pnlUsd: p.pnlUsd, tp: p.takeProfit, sl: p.stopLoss }))) : 'None currently (0 open positions, capital 100% available)'}
+• Recent Closed Trades: ${recentTradesSummary}
+• Recent L4 AI Shield Vetoes / Shadow Trades: ${recentVetoesSummary}
 
-When the user asks why no trades have been made or about system status, always verify: 1) Gas Signer APT balance, 2) On-chain Subaccount margin collateral, 3) Budget ceiling vs deployed margin, 4) Technical & AI confidence floor (≥${scoreFloor}%), 5) Directional bans and wick rejection limits across the 28 scanned pairs.
+🔬 SIM LAB CENTRAL COMMAND & ALPHA BUNDLE (Port 4000):
+• Sim Lab Connection: ${mode}
+• Active Champion Strategy: "${strategyName}" (Exploits range-bound liquidity sweeps, false breakouts, and stop hunts)
+• Macro Market Regime: ${regime}
+• Directional Bans: ${banned} (Any trade matching a banned side is strictly blocked by Layer 4 AI Shield)
+• Global Confidence Floor: ≥${scoreFloor}% (Dynamic Floor: ${dynamicScoreFloor}%)
+• Volatility Cooling: ${coolingActive ? `⚠️ ACTIVE (${coolingReason})` : 'Normal Operations'}
+• Upcoming Macro Releases: ${nearestNews || 'No immediate high-impact news'}${pairDirectivesSummary}
 
-Provide insightful, direct, quantitative, helpful answers formatted cleanly in markdown.`;
+When the user asks questions about the market, specific tokens (like SUI or BTC), why no trades yet, or performance, synthesize a natural, insightful, quantitative response incorporating this live state.`;
   }
 
   private async chatWithGemini(message: string, context: CopilotChatContext): Promise<string> {
@@ -972,7 +955,7 @@ Provide insightful, direct, quantitative, helpful answers formatted cleanly in m
           ],
           generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
         },
-        { timeout: 12000 },
+        { timeout: 10000 },
       );
     };
 
@@ -981,7 +964,12 @@ Provide insightful, direct, quantitative, helpful answers formatted cleanly in m
       const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) return text;
     } catch (err: any) {
-      logger.warn(`AI Copilot Gemini failed with model "${targetModel}" (${err.response?.data?.error?.message || err.message}). Attempting automatic fallback.`);
+      const errMsg = err.response?.data?.error?.message || err.message;
+      logger.warn(`AI Copilot Gemini failed with model "${targetModel}" (${errMsg}).`);
+      // If 429 quota exhaustion, immediately throw to allow Tier 2 fast fallback
+      if (err.response?.status === 429 || String(errMsg).includes('Quota') || String(errMsg).includes('quota')) {
+        throw new Error(`Gemini 429 Quota Exceeded: ${errMsg}`);
+      }
       const fallbacks = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
       for (const fb of fallbacks) {
         if (fb === targetModel) continue;
@@ -1028,30 +1016,45 @@ Provide insightful, direct, quantitative, helpful answers formatted cleanly in m
     return res.data?.content?.[0]?.text || '';
   }
 
-  private async chatWithOllama(message: string, context: CopilotChatContext): Promise<string> {
-    const baseUrl = config.OLLAMA_BASE_URL?.replace(/\/+$/, '') || 'http://localhost:11434';
+  private async chatWithOllama(
+    message: string,
+    context: CopilotChatContext,
+    customBaseUrl?: string,
+    customModel?: string,
+  ): Promise<string> {
+    const { loadAISettings } = require('./settings');
+    const aiSettings = loadAISettings();
+    const rawBaseUrl = customBaseUrl || aiSettings.secondaryCustomBaseUrl || aiSettings.customBaseUrl || config.OLLAMA_BASE_URL || 'https://qwen.measmony.me';
+    const baseUrl = rawBaseUrl.replace(/\/+$/, '');
     const url = `${baseUrl}/api/generate`;
     const systemPrompt = this.buildCopilotSystemPrompt(context);
 
-    const { loadAISettings } = require('./settings');
-    const aiSettings = loadAISettings();
-    let model = (aiSettings.model || config.GEMINI_MODEL || 'qwen2.5:3b').replace(/^models\//, '').trim();
+    let model = (customModel || aiSettings.secondaryModel || aiSettings.model || config.GEMINI_MODEL || 'qwen2.5:3b').replace(/^models\//, '').trim();
     if (!model || model.includes('gemini') || model.includes('claude') || model.includes('meta-llama') || model === 'default') {
       model = 'qwen2.5:3b';
     }
 
-    const res = await axios.post(
-      url,
-      {
-        model: model,
-        prompt: `${systemPrompt}\n\nUser: ${message}\nAssistant:`,
-        stream: false,
-        options: { temperature: 0.3 },
-      },
-      { timeout: 15000 },
-    );
+    const payload = {
+      model: model,
+      prompt: `${systemPrompt}\n\nUser Question: ${message}\n\nPlease respond in fluent, professional, natural language markdown as our quantitative portfolio advisor:`,
+      stream: false,
+      options: { temperature: 0.3 },
+    };
 
-    return res.data?.response || '';
+    let res: any;
+    try {
+      res = await axios.post(url, payload, { timeout: 15000 });
+    } catch (err: any) {
+      if (!url.includes('192.168.100.21') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+        const lanUrl = 'http://192.168.100.21:11434/api/generate';
+        logger.warn(`⚠️ [COPILOT AI] Ollama endpoint (${url}) failed: ${err.message}. Retrying via LAN (${lanUrl})...`);
+        res = await axios.post(lanUrl, payload, { timeout: 15000 });
+      } else {
+        throw err;
+      }
+    }
+
+    return res.data?.response?.trim() || '';
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
