@@ -87,8 +87,18 @@ export class LocalAIBrain {
       };
     }
 
-    // ── 1. STANDALONE MODE (Lightweight, pure local math, zero external API calls) ──
+    // ── 1. STANDALONE MODE (Local AI Primary Validator or Fast Math Rules) ──
     if (!isSimLabConnected) {
+      const { loadAISettings } = require('./settings');
+      const aiSettings = loadAISettings();
+      const prov = (aiSettings.enabled && aiSettings.provider) ? aiSettings.provider : this.activeProvider;
+      if (prov && prov !== 'local_rules') {
+        try {
+          return await this.dispatchProviderCall(prov, signal, 'PRIMARY_VALIDATOR', directives);
+        } catch (err: any) {
+          logger.warn(`⚠️ [AI BRAIN] Standalone AI provider (${String(prov).toUpperCase()}) failed: ${err.message}. Seamlessly reverting to Local Rules.`);
+        }
+      }
       return this.evaluateWithLocalRules(signal, 'PRIMARY_VALIDATOR', directives);
     }
 

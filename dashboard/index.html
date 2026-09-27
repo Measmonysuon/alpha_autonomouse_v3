@@ -16468,15 +16468,15 @@
       const routingEngine = lastState?.intelligenceRouting?.activeEngine;
 
       let modelUsed = trapVal?.modelUsed || (recentTrap?.modelUsed);
-      if (isSimDirective) {
-        modelUsed = '🔬 Sim Lab Directive';
-      } else if (!modelUsed || modelUsed === 'Tactical AI (gemini-3.8-flash)') {
-        if (routingEngine === 'sim_lab') {
+      if (!modelUsed || modelUsed === 'Tactical AI (gemini-3.8-flash)' || modelUsed === 'Deterministic Shield') {
+        if (isSimDirective) {
+          modelUsed = '🔬 Sim Lab Directive';
+        } else if (routingEngine === 'sim_lab') {
           modelUsed = '⚡ Sim Lab Fast-Math';
         } else if (lastState?.intelligenceRouting?.label) {
           modelUsed = `🛡️ ${lastState.intelligenceRouting.label.replace(/\s*\([^)]*\)/g, '')}`;
         } else {
-          modelUsed = 'Deterministic Shield';
+          modelUsed = 'Deterministic Shield (Layer 4)';
         }
       } else {
         modelUsed = modelUsed.replace(/\s*\([^)]*\)/g, '').trim();
