@@ -38,6 +38,9 @@ export interface SimStrategyDirectives {
   layer4?: any;
   dynamicScoreFloor?: number;
   overallWinRatePct?: number;
+  enforcePostOnly?: boolean;
+  makerFillTimeoutMs?: number;
+  allowTakerFallback?: boolean;
 }
 
 const STRATEGIES_FILE = path.join(process.cwd(), 'data', 'user-strategies.json');
@@ -590,13 +593,30 @@ export function getActiveStrategy(): StrategyConfig {
         stagnationTimeStopBars: typeof activeDirectives.stagnationTimeStopBars === 'number'
           ? Math.max(2, Math.round(activeDirectives.stagnationTimeStopBars))
           : simBase.layer5.stagnationTimeStopBars,
+        enforcePostOnly: typeof activeDirectives.enforcePostOnly === 'boolean'
+          ? activeDirectives.enforcePostOnly
+          : (simBase.layer5.enforcePostOnly ?? true),
+        makerFillTimeoutMs: typeof activeDirectives.makerFillTimeoutMs === 'number'
+          ? activeDirectives.makerFillTimeoutMs
+          : (simBase.layer5.makerFillTimeoutMs ?? 25000),
+        allowTakerFallback: typeof activeDirectives.allowTakerFallback === 'boolean'
+          ? activeDirectives.allowTakerFallback
+          : (simBase.layer5.allowTakerFallback ?? false),
       },
     };
   }
 
   // 2. Standalone Mode: Return user selected/custom standalone strategy
   const base = getStrategyById(storageCache.activeId) || PREBUILT_TEMPLATES[0];
-  return base;
+  return {
+    ...base,
+    layer5: {
+      ...base.layer5,
+      enforcePostOnly: base.layer5.enforcePostOnly ?? true,
+      makerFillTimeoutMs: base.layer5.makerFillTimeoutMs ?? 25000,
+      allowTakerFallback: base.layer5.allowTakerFallback ?? false,
+    },
+  };
 }
 
 export function getActiveStrategyOriginInfo(): StrategyOriginInfo {

@@ -68,6 +68,9 @@ export interface Layer5Config {
   tp1CloseRatio: number;              // e.g. 0.50 (close 50% at TP1)
   moveSlToBreakevenAtTp1: boolean;    // Move SL to Entry + 0.05% when TP1 hits
   stagnationTimeStopBars: number;     // e.g. 8 bars (2 hours)
+  enforcePostOnly?: boolean;          // PILLAR 1: Strictly enforce Maker PostOnly routing (TIF=1) with zero taker fee drag
+  makerFillTimeoutMs?: number;       // Window to wait for resting order fill before clean cancel (e.g. 25000ms)
+  allowTakerFallback?: boolean;      // If false, never convert unfilled maker orders into IOC takers
 }
 
 export interface StrategyConfig {

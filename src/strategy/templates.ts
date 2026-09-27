@@ -70,6 +70,9 @@ export const PREBUILT_TEMPLATES: StrategyConfig[] = [
       tp1CloseRatio: 0.50,
       moveSlToBreakevenAtTp1: true,
       stagnationTimeStopBars: 8,
+      enforcePostOnly: true,
+      makerFillTimeoutMs: 25000,
+      allowTakerFallback: false,
     },
   },
 
@@ -137,6 +140,9 @@ export const PREBUILT_TEMPLATES: StrategyConfig[] = [
       tp1CloseRatio: 0.50,
       moveSlToBreakevenAtTp1: true,
       stagnationTimeStopBars: 8,
+      enforcePostOnly: true,
+      makerFillTimeoutMs: 25000,
+      allowTakerFallback: false,
     },
   },
 
@@ -204,6 +210,9 @@ export const PREBUILT_TEMPLATES: StrategyConfig[] = [
       tp1CloseRatio: 0.50,
       moveSlToBreakevenAtTp1: true,
       stagnationTimeStopBars: 6,
+      enforcePostOnly: true,
+      makerFillTimeoutMs: 25000,
+      allowTakerFallback: false,
     },
   },
 
@@ -271,6 +280,9 @@ export const PREBUILT_TEMPLATES: StrategyConfig[] = [
       tp1CloseRatio: 1.0,
       moveSlToBreakevenAtTp1: true,
       stagnationTimeStopBars: 8,
+      enforcePostOnly: true,
+      makerFillTimeoutMs: 25000,
+      allowTakerFallback: false,
     },
   },
 
@@ -338,6 +350,9 @@ export const PREBUILT_TEMPLATES: StrategyConfig[] = [
       tp1CloseRatio: 0.70,               // 70% immediate scale-out to secure quick profit
       moveSlToBreakevenAtTp1: true,      // Lock in risk-free status immediately
       stagnationTimeStopBars: 4,         // 4 bars (60m) - fast time-stop if momentum stalls
+      enforcePostOnly: true,
+      makerFillTimeoutMs: 25000,
+      allowTakerFallback: false,
     },
   },
 ];

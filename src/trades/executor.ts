@@ -869,7 +869,8 @@ export class TradeExecutor {
           await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
 
           const isUrgent = signal.confidence >= 90 || risk.directivesUsed.regime === 'HIGH_VOLATILITY';
-          const allowTakerFallback = isUrgent || (signal.confidence >= 80 && !signal.postOnly);
+          // PILLAR 1: When PostOnly is active, strictly ban taker fallback to eliminate taker fee drag completely
+          const allowTakerFallback = !signal.postOnly && (isUrgent || signal.confidence >= 80);
 
           liveResult = await this.executeOnChain(
             signal.symbol,
