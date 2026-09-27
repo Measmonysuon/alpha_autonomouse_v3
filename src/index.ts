@@ -15,7 +15,8 @@ import { superchargeClient } from './simlab/supercharge-client';
 import { tradeExecutor } from './trades/executor';
 import { portfolioHarvester } from './engine/harvester';
 import { startApiServer, agentState, registerScanTrigger, seedMarketsForPairs, broadcastState } from './api-server';
-import { getSimPairDirective } from './strategy/manager';
+import { getSimPairDirective, getPairOverrides } from './strategy/manager';
+import { evaluateAITrapShield, AITrapValidationResult } from './ai/trap-validator';
 import { startSimPipelineConsumer, stopSimPipelineConsumer } from './pipeline/sim-consumer';
 import { startTelemetryFeeder, stopTelemetryFeeder } from './pipeline/telemetry-feeder';
 import { telegramNotifier } from './notify/telegram';
@@ -188,6 +189,33 @@ async function runTradingCycle(): Promise<void> {
           }));
           const klines1hSerialized = klines1hCache[symbol]?.bars || [];
 
+          // 2. Layer 4 AI Shield Trap Validation (Evaluates all monitored pairs proactively)
+          const isSimLab = superchargeClient.isActive();
+          const currentDirectives = standaloneEngine.getDirectives();
+
+          const trapVal = evaluateAITrapShield(
+            symbol,
+            signal,
+            currentPrice,
+            change24h,
+            oiChange24h,
+            fundingRate,
+            lsRatio,
+            isSimLab,
+            currentDirectives,
+          );
+
+          // Record trap event to telemetry if vetoed
+          if (trapVal.vetoTrade) {
+            const existing = agentState.trapShieldEvents.find(
+              (e) => e.symbol === symbol && Date.now() - e.timestamp < 60000,
+            );
+            if (!existing) {
+              agentState.trapShieldEvents.unshift(trapVal);
+              if (agentState.trapShieldEvents.length > 50) agentState.trapShieldEvents.pop();
+            }
+          }
+
           agentState.markets[symbol] = {
             symbol,
             markPrice: currentPrice,
@@ -203,6 +231,7 @@ async function runTradingCycle(): Promise<void> {
             coinglassOIChange: oiChange24h,
             coinglassLSRatio: lsRatio,
             strategyName: signal.strategyName,
+            trapValidation: trapVal,
             candlestick: {
               rsi14: ind.rsi14,
               stochRsi14: ind.stochRsi14,
@@ -246,13 +275,56 @@ async function runTradingCycle(): Promise<void> {
           );
 
           // 3. AI Brain Verification
-          const isSimLab = superchargeClient.isActive();
-          const currentDirectives = standaloneEngine.getDirectives();
           const aiEval = await localAIBrain.evaluate(signal, isSimLab, currentDirectives);
           logger.info(
             `🧠 [AI BRAIN: ${aiEval.role} (${aiEval.provider.toUpperCase()})] Verdict: ${aiEval.confirmed ? 'CONFIRMED' : 'REJECTED'} | ` +
             `Confidence: ${aiEval.confidenceScore}/100 | Sentiment: ${aiEval.sentiment} | Reasoning: "${aiEval.reasoning}"`,
           );
+
+          // Synchronize deep AI Brain result with trap validation on market state
+          if (agentState.markets[symbol]) {
+            if (aiEval.trapCategory) {
+              agentState.markets[symbol].trapValidation = {
+                timestamp: Date.now(),
+                symbol,
+                candidateAction: signal.action,
+                signalConfidence: signal.confidence,
+                verdict: 'TRAP_EVENT',
+                trapCategory: aiEval.trapCategory,
+                vetoTrade: true,
+                confidence: aiEval.confidenceScore,
+                convictionBonus: 0,
+                metricsEvaluated: trapVal?.metricsEvaluated || {
+                  priceChange24h: change24h,
+                  oiChange24h,
+                  fundingRate,
+                  longShortRatio: lsRatio,
+                },
+                reasoning: aiEval.reasoning,
+                modelUsed: trapVal?.modelUsed || 'AI Brain Shield',
+              };
+            } else if (aiEval.confirmed) {
+              agentState.markets[symbol].trapValidation = {
+                timestamp: Date.now(),
+                symbol,
+                candidateAction: signal.action,
+                signalConfidence: signal.confidence,
+                verdict: (trapVal?.verdict === 'PULLBACK' || ind.isPullbackBounce) ? 'PULLBACK' : 'REAL_MOVE',
+                trapCategory: 'NONE',
+                vetoTrade: false,
+                confidence: aiEval.confidenceScore,
+                convictionBonus: aiEval.convictionBonus || 8,
+                metricsEvaluated: trapVal?.metricsEvaluated || {
+                  priceChange24h: change24h,
+                  oiChange24h,
+                  fundingRate,
+                  longShortRatio: lsRatio,
+                },
+                reasoning: aiEval.reasoning,
+                modelUsed: trapVal?.modelUsed || 'AI Brain Shield',
+              };
+            }
+          }
 
           // 4. Decibel Execution & Risk Guard Validation
           if (aiEval.confirmed) {

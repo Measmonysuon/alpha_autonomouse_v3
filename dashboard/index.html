@@ -13620,6 +13620,10 @@
         l4StatusClass = 'success';
         l4StatusText = `🟢 VERIFIED · ${l4PtsLabel}`;
         l4TrapText = `🛡️ AI Trap Shield: <b style="color:#34d399;">Real Move Verified (AI approved)</b> · Genuine spot buying confirmed.`;
+      } else if (isPullback) {
+        l4StatusClass = 'success';
+        l4StatusText = `🔄 PULLBACK · PASS`;
+        l4TrapText = `🛡️ AI Trap Shield: <b style="color:#60a5fa;">Orderly Pullback (Healthy Retest)</b> · Support hold confirmed.`;
       } else {
         l4StatusClass = macroBonus < 0 ? 'danger' : 'success';
         l4StatusText = macroBonus < 0 ? `⚠️ ${macroBonusStr} · ${l4PtsLabel}` : `🟢 ARMED & CLEAN · ${l4PtsLabel}`;
