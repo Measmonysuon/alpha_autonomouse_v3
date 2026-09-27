@@ -286,8 +286,7 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
   }
 
   // ─── C. Market / Price Analysis ───────────────────────────────────────────
-  if (/(?:market overview|live market|price overview|coin overview|pairs overview|scan results|show live market)/i.test(lower) ||
-      (/(?:market|price|coin|pairs)/i.test(lower) && !/(?:budget|risk|position|pnl|stat|strategy|shield|harvester)/i.test(lower))) {
+  if (/(?:market overview|live market|price overview|coin overview|pairs overview|scan results|show live market|list prices|show prices)/i.test(lower)) {
     const markets = Object.values(agentState.markets || {});
     if (!markets.length) {
       return {
@@ -311,7 +310,7 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
   }
 
   // ─── D. Open Positions ────────────────────────────────────────────────────
-  if (/(?:position|open trade|current trade|active trade|do we have open positions|what's open)/i.test(lower)) {
+  if (/\b(?:open positions?|my positions?|active positions?|current positions?|show positions?|list positions?|open trades?|current trades?|active trades?|what(?:'s| is) open)\b/i.test(lower)) {
     const open = tradeExecutor.getOpenTrades();
     if (!open.length) {
       const dirs = standaloneEngine.getDirectives();
