@@ -27,6 +27,32 @@ export interface RiskValidationResult {
   directivesUsed: StrategyDirectives;
 }
 
+export function cleanImmunityReason(raw: string): string {
+  if (!raw) return '';
+  let cleaned = String(raw).replace(/\uFFFD+/g, '');
+  if (cleaned.includes('[SHARED IMMUNITY]')) {
+    const firstIdx = cleaned.indexOf('[SHARED IMMUNITY]');
+    const lastIdx = cleaned.lastIndexOf('[SHARED IMMUNITY]');
+    let startIdx = firstIdx;
+    while (startIdx > 0 && /[^\w\s:()]/.test(cleaned[startIdx - 1])) {
+      startIdx--;
+    }
+    const before = cleaned.slice(0, startIdx).trim();
+    const after = cleaned.slice(lastIdx + '[SHARED IMMUNITY]'.length).trim();
+    cleaned = `${before} 🛡️ [SHARED IMMUNITY] ${after}`.trim();
+  }
+  // Deduplicate multiple occurrences of shield emoji
+  cleaned = cleaned.replace(/(?:🛡️?\s*)+/g, '🛡️ ');
+  // Deduplicate multiple occurrences of (locked by ...)
+  cleaned = cleaned.replace(/(?:\(locked by [^)]+\)\s*)+/g, (match) => {
+    const m = match.match(/\(locked by [^)]+\)/);
+    return m ? m[0] + ' ' : '';
+  });
+  // Clean up colon formatting
+  cleaned = cleaned.replace(/:\s*🛡️\s*\[SHARED IMMUNITY\]/g, ': 🛡️ [SHARED IMMUNITY]');
+  return cleaned.replace(/[ \t]{2,}/g, ' ').trim();
+}
+
 export class RiskGuard {
   private trapCoolOffs = new Map<string, { expiresAt: number; reason: string; trapCategory: string }>();
 
@@ -41,22 +67,27 @@ export class RiskGuard {
     durationMinutes = 15,
   ): void {
     const norm = symbol.toUpperCase().replace('-', '/');
+    const cleanReason = cleanImmunityReason(reason);
     const expiresAt = Date.now() + durationMinutes * 60 * 1000;
     if (action === 'BOTH') {
-      this.trapCoolOffs.set(`${norm}:LONG`, { expiresAt, reason, trapCategory });
-      this.trapCoolOffs.set(`${norm}:SHORT`, { expiresAt, reason, trapCategory });
+      this.trapCoolOffs.set(`${norm}:LONG`, { expiresAt, reason: cleanReason, trapCategory });
+      this.trapCoolOffs.set(`${norm}:SHORT`, { expiresAt, reason: cleanReason, trapCategory });
     } else {
-      this.trapCoolOffs.set(`${norm}:${action}`, { expiresAt, reason, trapCategory });
+      this.trapCoolOffs.set(`${norm}:${action}`, { expiresAt, reason: cleanReason, trapCategory });
     }
     logger.warn(
-      `🛡️ [AI SHIELD COOL-OFF] ${norm} ${action} locked for ${durationMinutes}m: ${trapCategory} — ${reason}`
+      `🛡️ [AI SHIELD COOL-OFF] ${norm} ${action} locked for ${durationMinutes}m: ${trapCategory} — ${cleanReason}`
     );
 
     // Broadcast instant trap veto to Sim Lab and connected fleet desks out-of-band
-    try {
-      const { pushInstantVeto } = require('../pipeline/telemetry-feeder');
-      pushInstantVeto(norm, action, trapCategory, reason, durationMinutes).catch(() => {});
-    } catch {}
+    // CRITICAL: NEVER re-broadcast if this veto originated from Sim Lab (SIM_LAB_DIRECTIVE or SHARED IMMUNITY),
+    // otherwise it creates an infinite feedback loop where each broadcast appends another prefix!
+    if (trapCategory !== 'SIM_LAB_DIRECTIVE' && !reason.includes('SHARED IMMUNITY') && !reason.includes('Sim Lab')) {
+      try {
+        const { pushInstantVeto } = require('../pipeline/telemetry-feeder');
+        pushInstantVeto(norm, action, trapCategory, cleanReason, durationMinutes).catch(() => {});
+      } catch {}
+    }
   }
 
   public getActiveTrapCoolOff(symbol: string, action: 'LONG' | 'SHORT'): { locked: boolean; reason?: string; trapCategory?: string; remainingMinutes?: number } {
@@ -65,7 +96,7 @@ export class RiskGuard {
     const activeLock = this.trapCoolOffs.get(lockKey);
     if (activeLock && activeLock.expiresAt > Date.now()) {
       const remainingMinutes = Math.ceil((activeLock.expiresAt - Date.now()) / 60000);
-      return { locked: true, reason: activeLock.reason, trapCategory: activeLock.trapCategory, remainingMinutes };
+      return { locked: true, reason: cleanImmunityReason(activeLock.reason), trapCategory: activeLock.trapCategory, remainingMinutes };
     }
     return { locked: false };
   }
@@ -77,7 +108,7 @@ export class RiskGuard {
       if (lock.expiresAt > now) {
         const [symbol, action] = key.split(':');
         const remainingMinutes = Math.ceil((lock.expiresAt - now) / 60000);
-        results.push({ symbol, action, trapCategory: lock.trapCategory, reason: lock.reason, remainingMinutes });
+        results.push({ symbol, action, trapCategory: lock.trapCategory, reason: cleanImmunityReason(lock.reason), remainingMinutes });
       }
     }
     return results;

@@ -10411,6 +10411,29 @@
       return `${m}:${s < 10 ? '0' : ''}${s}`;
     }
 
+    function cleanImmunityText(raw) {
+      if (!raw) return '';
+      let cleaned = String(raw).replace(/\uFFFD+/g, '');
+      if (cleaned.includes('[SHARED IMMUNITY]')) {
+        const firstIdx = cleaned.indexOf('[SHARED IMMUNITY]');
+        const lastIdx = cleaned.lastIndexOf('[SHARED IMMUNITY]');
+        let startIdx = firstIdx;
+        while (startIdx > 0 && /[^\w\s:()]/.test(cleaned[startIdx - 1])) {
+          startIdx--;
+        }
+        const before = cleaned.slice(0, startIdx).trim();
+        const after = cleaned.slice(lastIdx + '[SHARED IMMUNITY]'.length).trim();
+        cleaned = `${before} 🛡️ [SHARED IMMUNITY] ${after}`.trim();
+      }
+      cleaned = cleaned.replace(/(?:🛡️?\s*)+/g, '🛡️ ');
+      cleaned = cleaned.replace(/(?:\(locked by [^)]+\)\s*)+/g, (match) => {
+        const m = match.match(/\(locked by [^)]+\)/);
+        return m ? m[0] + ' ' : '';
+      });
+      cleaned = cleaned.replace(/:\s*🛡️\s*\[SHARED IMMUNITY\]/g, ': 🛡️ [SHARED IMMUNITY]');
+      return cleaned.replace(/[ \t]{2,}/g, ' ').trim();
+    }
+
     function updateCoolOffCountdowns() {
       const now = Date.now();
       const elements = document.querySelectorAll('[data-cooloff-expires]');
@@ -13605,8 +13628,10 @@
       const macroBufferReason = macro.macroBufferReason || 'Chop Protection (Sub-20 ADX)';
       const newsEvent = macro.nearestNewsEvent;
       const newsEventStr = newsEvent ? ` · ⏳ ${newsEvent.title} (${newsEvent.minutesAway}m away)` : '';
+      const curShieldGate = Math.max(35, curGate - 5);
+      const curConf = typeof m.confidence === 'number' ? m.confidence : 0;
       // v1: Trap Shield verified = +15% boost, veto = confidence crushed to 55%, macro = ±5%
-      const l4TotalPts = isVetoed ? -20 : isRealMove ? 15 : (macroBonus !== 0 ? macroBonus : 0);
+      const l4TotalPts = isVetoed ? -20 : (isRealMove && curConf >= curShieldGate) ? 15 : (macroBonus !== 0 ? macroBonus : 0);
       const l4PtsLabel = l4TotalPts > 0 ? `+${l4TotalPts} pts` : l4TotalPts < 0 ? `${l4TotalPts} pts` : '0 pts';
 
       let l4StatusClass = isVetoed ? 'danger' : (macroBonus < 0 ? 'danger' : 'success');
@@ -13616,18 +13641,18 @@
         l4StatusClass = 'danger';
         l4StatusText = `🛑 VETOED · ${l4PtsLabel}`;
         l4TrapText = `🛡️ AI Trap Shield: <b style="color:#f87171;">Counterfeit move caught (${catName})</b> · Conf crushed to 55%`;
-      } else if (isRealMove) {
+      } else if (isRealMove && curConf >= curShieldGate) {
         l4StatusClass = 'success';
         l4StatusText = `🟢 VERIFIED · ${l4PtsLabel}`;
         l4TrapText = `🛡️ AI Trap Shield: <b style="color:#34d399;">Real Move Verified (AI approved)</b> · Genuine spot buying confirmed.`;
-      } else if (isPullback) {
+      } else if (isPullback && curConf >= curShieldGate) {
         l4StatusClass = 'success';
         l4StatusText = `🔄 PULLBACK · PASS`;
         l4TrapText = `🛡️ AI Trap Shield: <b style="color:#60a5fa;">Orderly Pullback (Healthy Retest)</b> · Support hold confirmed.`;
       } else {
         l4StatusClass = macroBonus < 0 ? 'danger' : 'success';
         l4StatusText = macroBonus < 0 ? `⚠️ ${macroBonusStr} · ${l4PtsLabel}` : `🟢 ARMED & CLEAN · ${l4PtsLabel}`;
-        l4TrapText = `🛡️ AI Shield Status: 0 Malicious spoof walls or traps detected. Standing guard.`;
+        l4TrapText = `🛡️ AI Shield Status: Armed & clean (activates at ${curShieldGate}% · cur ${curConf}% / ${curGate}% gate). Standing guard.`;
       }
 
       const l4Html = `
@@ -16208,6 +16233,7 @@
           || (lastState?.activeStrategy?.layer5?.minConfidenceGate)
           || (lastState?.minConfidencePct)
           || 65);
+      const shieldGate = Math.max(35, stratGate - 5);
       const pairConf = m.confidence !== undefined && m.confidence !== null ? m.confidence : 0;
 
       // Shockwave circuit breaker & cool-off state
@@ -16250,12 +16276,14 @@
         frontShieldSnippet = `<span style="color:#f59e0b;display:flex;align-items:center;gap:4px;">🚨 BTC SHOCK <span class="cooloff-timer-badge" data-cooloff-expires="${shockwave?.btcShock?.expiresAt}" style="background:rgba(245,158,11,0.25);padding:1px 5px;border-radius:4px;font-size:9px;font-weight:700;"><span class="cooloff-timer-text">${formatCoolOffTime(ms)}</span></span></span>`;
       } else if (isVetoed) {
         frontShieldSnippet = `<span style="color:#f87171;display:flex;align-items:center;gap:4px;">🛡️ TRAP BLOCKED: ${catName} <span style="background:rgba(239,68,68,0.25);padding:1px 5px;border-radius:4px;font-size:9px;">VETO</span></span>`;
-      } else if (isRealMove) {
+      } else if (pairConf >= shieldGate && isRealMove) {
         frontShieldSnippet = `<span style="color:#4ade80;display:flex;align-items:center;gap:4px;">⚡ REAL MOVE <span style="background:rgba(34,197,94,0.2);padding:1px 5px;border-radius:4px;font-size:9px;">PASS</span></span>`;
-      } else if (isPullback) {
+      } else if (pairConf >= shieldGate && isPullback) {
         frontShieldSnippet = `<span style="color:#60a5fa;display:flex;align-items:center;gap:4px;">🔄 PULLBACK <span style="background:rgba(59,130,246,0.2);padding:1px 5px;border-radius:4px;font-size:9px;">PASS</span></span>`;
-      } else if (m.confidence >= stratGate) {
+      } else if (pairConf >= stratGate) {
         frontShieldSnippet = `<span style="color:#fde047;display:flex;align-items:center;gap:4px;">⏳ ${stratGate}% GATE <span style="background:rgba(234,179,8,0.2);padding:1px 5px;border-radius:4px;font-size:9px;">EVAL</span></span>`;
+      } else if (pairConf >= shieldGate) {
+        frontShieldSnippet = `<span style="color:#fde047;display:flex;align-items:center;gap:4px;">⏳ ${shieldGate}% GATE <span style="background:rgba(234,179,8,0.2);padding:1px 5px;border-radius:4px;font-size:9px;">EVAL</span></span>`;
       } else {
         frontShieldSnippet = `<span style="color:#e2e8f0;display:flex;align-items:center;gap:4px;">🛡️ AI SHIELD ARMED</span>`;
       }
@@ -16300,7 +16328,7 @@
         let lockAdvice = '';
 
         const rawReason = entry?.reason || 'Circuit breaker active';
-        const cleanReason = rawReason
+        const cleanReason = cleanImmunityText(rawReason)
           .replace(/^🔬\s*SIM\s*LAB\s*DIRECTIVE:\s*/i, '')
           .replace(/^🛡️\s*L\d+\s*AI\s*SHIELD\s*VETO\s*\([^)]+\):\s*/i, '')
           .trim();
@@ -16381,14 +16409,15 @@
         </div>
       </div>`;
       } else if (isVetoed) {
-        const vetoReason = (trapVal?.reasoning || recentTrap?.reasoning || 'Predatory trap or false liquidity sweep detected · All entries blocked');
+        const rawVetoReason = (trapVal?.reasoning || recentTrap?.reasoning || 'Predatory trap or false liquidity sweep detected · All entries blocked');
+        const vetoReason = cleanImmunityText(rawVetoReason);
         backBanner = `
       <div style="background:rgba(239,68,68,0.16);border:1px solid rgba(239,68,68,0.45);border-radius:8px;padding:9px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
         <div style="flex:1;">
           <div style="color:#f87171;font-weight:800;font-size:12px;letter-spacing:0.3px;">
             🛡️ TRAP BLOCKED: ${catName} VETO
           </div>
-          <div style="font-size:10px;color:#fca5a5;margin-top:2px;line-height:1.35;">
+          <div style="font-size:10px;color:#fca5a5;margin-top:2px;line-height:1.35;word-break:break-word;">
             ${vetoReason}
           </div>
         </div>
@@ -16396,7 +16425,7 @@
           VETO
         </span>
       </div>`;
-      } else if (isRealMove) {
+      } else if (pairConf >= shieldGate && isRealMove) {
         backBanner = `
       <div style="background:rgba(34,197,94,0.14);border:1px solid rgba(34,197,94,0.4);border-radius:8px;padding:9px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;">
         <div>
@@ -16404,14 +16433,14 @@
             ⚡ SHIELD VERDICT: REAL MOVE
           </div>
           <div style="font-size:10px;color:#86efac;margin-top:2px;">
-            Institutional volume confirmed · +10% conviction
+            Institutional volume confirmed · +10% conviction (Active at ${shieldGate}%+)
           </div>
         </div>
         <span style="background:rgba(34,197,94,0.3);color:#dcfce7;border:1px solid rgba(34,197,94,0.5);font-weight:800;font-size:10.5px;padding:3px 8px;border-radius:5px;">
           PASS
         </span>
       </div>`;
-      } else if (isPullback) {
+      } else if (pairConf >= shieldGate && isPullback) {
         backBanner = `
       <div style="background:rgba(59,130,246,0.14);border:1px solid rgba(59,130,246,0.4);border-radius:8px;padding:9px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;">
         <div>
@@ -16419,14 +16448,14 @@
             🔄 SHIELD VERDICT: PULLBACK
           </div>
           <div style="font-size:10px;color:#bfdbfe;margin-top:2px;">
-            Healthy retracement into high-volume value zone
+            Healthy retracement into high-volume value zone (Active at ${shieldGate}%+)
           </div>
         </div>
         <span style="background:rgba(59,130,246,0.3);color:#dbeafe;border:1px solid rgba(59,130,246,0.5);font-weight:800;font-size:10.5px;padding:3px 8px;border-radius:5px;">
           PASS
         </span>
       </div>`;
-      } else if (m.confidence >= stratGate) {
+      } else if (pairConf >= stratGate) {
         backBanner = `
       <div style="background:rgba(234,179,8,0.14);border:1px solid rgba(234,179,8,0.4);border-radius:8px;padding:9px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;">
         <div>
@@ -16434,7 +16463,7 @@
             ⏳ ${stratGate}% GATE: AI EVALUATION
           </div>
           <div style="font-size:10px;color:#fef08a;margin-top:2px;">
-            Candidate signal reached warm-up threshold
+            Candidate signal reached trigger gate (${pairConf}% / ${stratGate}%)
           </div>
         </div>
         <span style="background:rgba(234,179,8,0.25);color:#fef9c3;border:1px solid rgba(234,179,8,0.5);font-weight:800;font-size:10px;padding:3px 8px;border-radius:5px;">
@@ -16449,7 +16478,7 @@
             🛡️ SHIELD STATUS: ARMED & CLEAN
           </div>
           <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">
-            0 Malicious spoof walls or sweeps on ${m.symbol}
+            Standing by · Activates at ${shieldGate}% (${pairConf}% / ${stratGate}% gate)
           </div>
         </div>
         <span style="background:rgba(16,185,129,0.15);color:var(--green);border:1px solid rgba(16,185,129,0.3);font-weight:800;font-size:10px;padding:3px 8px;border-radius:5px;">
@@ -16458,9 +16487,10 @@
       </div>`;
       }
 
-      const reasoning = trapVal?.reasoning || (m.confidence >= stratGate
+      const rawReasoning = trapVal?.reasoning || (pairConf >= shieldGate
         ? 'AI Shield is actively monitoring order book depth, Coinglass funding rate, and liquidity pools for this pair.'
-        : 'All 9 quantitative confluence gates active. Monitoring 15m order blocks, fair value gaps, and liquidity sweeps.');
+        : `All 9 quantitative confluence gates active. Monitoring 15m order blocks, fair value gaps, and liquidity sweeps (activates at ${shieldGate}%).`);
+      const reasoning = cleanImmunityText(rawReasoning);
 
       // Determine active AI / Sim Lab engine for this pair
       const pairCoolOff = shockwave?.activeCoolOffs ? shockwave.activeCoolOffs[m.symbol] : null;

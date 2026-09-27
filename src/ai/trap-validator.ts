@@ -9,8 +9,8 @@
 
 import { logger } from '../utils/logger';
 import { StandaloneSignal, StrategyDirectives } from '../engine/standalone-engine';
-import { riskGuard } from '../risk/guard';
-import { getSimPairDirective } from '../strategy/manager';
+import { riskGuard, cleanImmunityReason } from '../risk/guard';
+import { getSimPairDirective, getPairOverrides } from '../strategy/manager';
 import { getLastSyncedBundle } from '../pipeline/sim-consumer';
 import { loadAISettings } from './settings';
 
@@ -28,7 +28,7 @@ export interface AITrapValidationResult {
   symbol: string;
   candidateAction: 'LONG' | 'SHORT';
   signalConfidence: number;
-  verdict: 'REAL_MOVE' | 'PULLBACK' | 'TRAP_EVENT';
+  verdict: 'REAL_MOVE' | 'PULLBACK' | 'TRAP_EVENT' | 'ARMED';
   trapCategory: string;
   vetoTrade: boolean;
   confidence: number;
@@ -36,6 +36,8 @@ export interface AITrapValidationResult {
   metricsEvaluated: EvaluatedTrapMetrics;
   reasoning: string;
   modelUsed: string;
+  activated?: boolean;
+  activationGate?: number;
 }
 
 interface CachedVerdict {
@@ -64,6 +66,19 @@ export function getCachedTrapVerdict(symbol: string, action: 'LONG' | 'SHORT', c
   return null;
 }
 
+function cacheAndReturn(
+  res: AITrapValidationResult,
+  symbol: string,
+  candidateAction: string,
+  currentPrice: number,
+  shieldGate: number,
+): AITrapValidationResult {
+  res.activated = Boolean(res.vetoTrade || res.verdict === 'REAL_MOVE' || res.verdict === 'PULLBACK');
+  res.activationGate = shieldGate;
+  trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
+  return res;
+}
+
 export function evaluateAITrapShield(
   symbol: string,
   signal: StandaloneSignal,
@@ -81,12 +96,18 @@ export function evaluateAITrapShield(
       ? signal.action
       : (signal.trend === 'BULLISH' || (ind.ema9 > ind.ema21) ? 'LONG' : 'SHORT');
 
+  const simDir = getSimPairDirective(symbol);
+  const pairOverrides = getPairOverrides(symbol);
+  const stratGate = pairOverrides?.minConfidenceGate || simDir?.minConfidenceGate || directives?.scoreFloor || 65;
+  const shieldGate = Math.max(35, stratGate - 5);
+
   // Check fast cache
   const cached = getCachedTrapVerdict(symbol, candidateAction, currentPrice);
   if (cached) {
     return {
       ...cached,
       signalConfidence: signal.confidence,
+      activationGate: shieldGate,
     };
   }
 
@@ -111,7 +132,6 @@ export function evaluateAITrapShield(
     bidAskImbalancePct: 0,
   };
 
-  const simDir = getSimPairDirective(symbol);
   const bundle = getLastSyncedBundle();
 
   // ── 1. HARD VETOS: Emergency Cooling & Directives ───────────────────────────
@@ -129,11 +149,10 @@ export function evaluateAITrapShield(
       confidence: 90,
       convictionBonus: 0,
       metricsEvaluated: metrics,
-      reasoning: `🛡️ [AI SHIELD VETO] Active cool-off on ${symbol} ${candidateAction}: ${coolOff.reason || 'Volatility cool-off'} (${coolOff.remainingMinutes}m remaining).`,
+      reasoning: `🛡️ [AI SHIELD VETO] Active cool-off on ${symbol} ${candidateAction}: ${cleanImmunityReason(coolOff.reason || 'Volatility cool-off')} (${coolOff.remainingMinutes}m remaining).`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // B. Sim Lab Directional Bans
@@ -152,8 +171,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [DIRECTIONAL BAN] Side ${candidateAction} is strictly banned by active regime directive (${directives.regime || 'Macro Directive'}).`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // C. Sim Lab Pair Directive Banning
@@ -172,8 +190,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [SIM LAB DIRECTIVE] ${candidateAction} direction is banned for ${symbol}: ${simDir.reason || 'Adverse flow directive'}.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // D. Sim Lab Macro Cooling
@@ -193,8 +210,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [MARKET COOLING] Sim Lab freeze active: ${coolingReason}. Trading halted to protect capital.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // ── 2. TECHNICAL TRAP VALIDATION ───────────────────────────────────────────
@@ -215,8 +231,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [BULL TRAP VETO] Upper rejection wick ${ind.upperWickPct.toFixed(1)}% exceeds ${wickTol}% tolerance. Heavy overhead supply detected.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   if (candidateAction === 'SHORT' && ind.lowerWickPct > wickTol) {
@@ -234,8 +249,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [BEAR TRAP VETO] Lower absorption wick ${ind.lowerWickPct.toFixed(1)}% exceeds ${wickTol}% tolerance. Strong floor demand detected.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // B. SMC Body Run Breakout Fakeout
@@ -254,8 +268,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [FAKE BREAKOUT] Candlestick body closed beyond swing level without liquidity absorption.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // C. CVD Delta Divergence
@@ -274,8 +287,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [CVD DIVERGENCE] Institutional Sell Distribution dominant while price attempts upside breakout.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   if (candidateAction === 'SHORT' && ind.cvdTrend === 'BUY') {
@@ -293,8 +305,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [CVD DIVERGENCE] Institutional Buy Absorption dominant while price attempts breakdown.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // D. Squeeze Exhaustion / Liquidation Flush
@@ -313,8 +324,7 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [SHORT SQUEEZE EXHAUSTION] Price rallying (+${change24h.toFixed(1)}%) while Open Interest collapsed (${oiChange24h.toFixed(1)}%). Rally lacks organic spot demand.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   if (candidateAction === 'SHORT' && typeof oiChange24h === 'number' && oiChange24h < -2.5 && change24h < -1.5) {
@@ -332,11 +342,34 @@ export function evaluateAITrapShield(
       reasoning: `🛡️ [LIQUIDATION FLUSH] Price falling (${change24h.toFixed(1)}%) while Open Interest collapsed (${oiChange24h.toFixed(1)}%). Cascade liquidation move vulnerable to snap-back.`,
       modelUsed: modelUsedStr,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
-  // ── 3. CLEAN SETUP: PULLBACK VS REAL MOVE PASS ─────────────────────────────
+  // ── 3. CLEAN SETUP: CHECK CONFIDENCE ACTIVATION THRESHOLD (-5pt of Gate) ──
+  // The Layer 4 AI Trap Shield arms and actively evaluates candidate moves when
+  // confidence reaches within 5 points of the strategy gate (stratGate - 5).
+  // When below shieldGate, it remains in ARMED & CLEAN standby mode.
+  if (signal.confidence < shieldGate) {
+    const res: AITrapValidationResult = {
+      timestamp: Date.now(),
+      symbol,
+      candidateAction,
+      signalConfidence: signal.confidence,
+      verdict: 'ARMED',
+      trapCategory: 'NONE',
+      vetoTrade: false,
+      confidence: signal.confidence,
+      convictionBonus: 0,
+      metricsEvaluated: metrics,
+      reasoning: `🛡️ AI Shield Armed & Clean: Standing guard. Activates at ${shieldGate}% (${signal.confidence}% / ${stratGate}% gate). 0 traps detected.`,
+      modelUsed: modelUsedStr,
+      activated: false,
+      activationGate: shieldGate,
+    };
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+  }
+
+  // ── 4. ACTIVATED SHIELD: PULLBACK VS REAL MOVE PASS ────────────────────────
   const isPullback = Boolean(
     ind.isPullbackBounce ||
     ind.pullbackStatus === 'PULLBACK_BOUNCE' ||
@@ -360,9 +393,10 @@ export function evaluateAITrapShield(
       metricsEvaluated: metrics,
       reasoning: `🔄 Orderly Pullback: Healthy retracement into dynamic value zone (dist ${ind.distToEma25Pct.toFixed(2)}%) with stable market structure.`,
       modelUsed: modelUsedStr,
+      activated: true,
+      activationGate: shieldGate,
     };
-    trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-    return res;
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
   // Otherwise Institutional Real Move
@@ -379,7 +413,8 @@ export function evaluateAITrapShield(
     metricsEvaluated: metrics,
     reasoning: `⚡ Verified Real Move: Institutional momentum & volume confluence confirmed (+8% conviction bonus). 0 predatory traps detected.`,
     modelUsed: modelUsedStr,
+    activated: true,
+    activationGate: shieldGate,
   };
-  trapVerdictCache.set(`${symbol}:${candidateAction}`, { result: res, price: currentPrice, ts: Date.now() });
-  return res;
+  return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
 }

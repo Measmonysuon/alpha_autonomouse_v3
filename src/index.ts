@@ -17,6 +17,7 @@ import { portfolioHarvester } from './engine/harvester';
 import { startApiServer, agentState, registerScanTrigger, seedMarketsForPairs, broadcastState } from './api-server';
 import { getSimPairDirective, getPairOverrides } from './strategy/manager';
 import { evaluateAITrapShield, AITrapValidationResult } from './ai/trap-validator';
+import { cleanImmunityReason } from './risk/guard';
 import { startSimPipelineConsumer, stopSimPipelineConsumer } from './pipeline/sim-consumer';
 import { startTelemetryFeeder, stopTelemetryFeeder } from './pipeline/telemetry-feeder';
 import { telegramNotifier } from './notify/telegram';
@@ -300,8 +301,10 @@ async function runTradingCycle(): Promise<void> {
                   fundingRate,
                   longShortRatio: lsRatio,
                 },
-                reasoning: aiEval.reasoning,
+                reasoning: cleanImmunityReason(aiEval.reasoning),
                 modelUsed: trapVal?.modelUsed || 'AI Brain Shield',
+                activated: true,
+                activationGate: trapVal?.activationGate,
               };
             } else if (aiEval.confirmed) {
               agentState.markets[symbol].trapValidation = {
@@ -320,8 +323,10 @@ async function runTradingCycle(): Promise<void> {
                   fundingRate,
                   longShortRatio: lsRatio,
                 },
-                reasoning: aiEval.reasoning,
+                reasoning: cleanImmunityReason(aiEval.reasoning),
                 modelUsed: trapVal?.modelUsed || 'AI Brain Shield',
+                activated: true,
+                activationGate: trapVal?.activationGate,
               };
             }
           }

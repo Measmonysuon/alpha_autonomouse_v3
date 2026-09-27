@@ -15,10 +15,11 @@ import { config } from '../config';
 const shockwaveDetector = {
   triggerSimDirectiveCoolOff(symbol: string, bannedSide: string, reason: string, durationMin: number) {
     try {
-      const { riskGuard } = require('../risk/guard');
-      riskGuard.triggerL4TrapCoolOff(symbol, bannedSide as any, 'SIM_LAB_DIRECTIVE', reason, durationMin);
+      const { riskGuard, cleanImmunityReason } = require('../risk/guard');
+      const cleanReason = cleanImmunityReason ? cleanImmunityReason(reason) : reason;
+      riskGuard.triggerL4TrapCoolOff(symbol, bannedSide as any, 'SIM_LAB_DIRECTIVE', cleanReason, durationMin);
     } catch {}
-    logger.info(`⏳ [COOL-OFF] Triggered for ${symbol} (${bannedSide}): ${reason} (${durationMin}m)`);
+    logger.info(`⏳ [COOL-OFF] Triggered for ${symbol} (${bannedSide}): ${reason.slice(0, 80)} (${durationMin}m)`);
   },
 };
 
