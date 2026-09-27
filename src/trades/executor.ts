@@ -91,6 +91,8 @@ export interface TradeRecord {
   currentPrice?: number;
   unrealizedPnlUsd?: number;
   unrealizedPnlPct?: number;
+  isMaker?: boolean;
+  routing?: string;
 }
 
 export interface ShadowTrade {
@@ -851,6 +853,7 @@ export class TradeExecutor {
 
       let orderId = tradeId;
       let txHash = isPaper ? `paper_tx_${Date.now()}` : '';
+      let liveResult: { filled: boolean; orderId: string; txHash: string; isMaker?: boolean; actualEntryPrice?: number; actualSize?: number; cancelledReason?: string } | null = null;
 
       if (!isPaper && this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
         if (this.cachedOnChainBalance.lastChecked > 0 && this.cachedOnChainBalance.aptBalance < 0.002) {
@@ -865,7 +868,10 @@ export class TradeExecutor {
           // Ensure on-chain leverage is explicitly configured on Decibel DEX before opening
           await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
 
-          const liveResult = await this.executeOnChain(
+          const isUrgent = signal.confidence >= 90 || risk.directivesUsed.regime === 'HIGH_VOLATILITY';
+          const allowTakerFallback = isUrgent || (signal.confidence >= 80 && !signal.postOnly);
+
+          liveResult = await this.executeOnChain(
             signal.symbol,
             side,
             risk.positionSizeBase,
@@ -873,11 +879,25 @@ export class TradeExecutor {
             risk.leverage,
             signal.limitPrice,
             signal.postOnly,
+            allowTakerFallback,
           );
+
+          if (!liveResult.filled) {
+            logger.warn(`🛡️ [PILLAR 1 ROUTING] ${signal.symbol} maker order unfilled: ${liveResult.cancelledReason || 'Cancelled'}. Zero fee incurred, capital preserved.`);
+            return { success: false, error: liveResult.cancelledReason || 'Maker order unfilled' };
+          }
+
           orderId = liveResult.orderId;
           txHash = liveResult.txHash;
+          if (liveResult.actualEntryPrice && liveResult.actualEntryPrice > 0) {
+            signal.entryPrice = liveResult.actualEntryPrice;
+          }
+          if (liveResult.actualSize && liveResult.actualSize > 0) {
+            risk.positionSizeBase = liveResult.actualSize;
+            risk.positionSizeUsd = liveResult.actualSize * signal.entryPrice;
+          }
 
-          // Attach on-chain TP/SL directly onto Decibel DEX order book
+          // Attach on-chain TP/SL directly onto Decibel DEX order book (position is guaranteed filled!)
           if (signal.takeProfit > 0 || signal.stopLoss > 0) {
             logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | SL: $${signal.stopLoss} on ${signal.symbol}...`);
             try {
@@ -888,35 +908,7 @@ export class TradeExecutor {
               });
               logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
             } catch (tpErr: any) {
-              const msg = tpErr?.message || String(tpErr);
-              if (msg.includes('ENO_POSITION_FOR_TP_SL') || msg.includes('0xc')) {
-                logger.info(`⏳ [${signal.symbol}] Entry is resting on order book (maker order). Awaiting fill before arming TP/SL...`);
-                let armed = false;
-                const symKey = signal.symbol.replace('-', '/').toUpperCase();
-                for (let poll = 1; poll <= 7; poll++) {
-                  await new Promise((r) => setTimeout(r, 3000));
-                  try {
-                    const positions = await mcpClient.getPositions();
-                    const p = positions.find((x) => x.symbol.replace('-', '/').toUpperCase() === symKey);
-                    if (p) {
-                      logger.info(`⚡ [${signal.symbol}] Maker order filled! Locking on-chain TP/SL now...`);
-                      await mcpClient.setTpSl({
-                        symbol: signal.symbol,
-                        tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
-                        slTrigger: signal.stopLoss > 0 ? signal.stopLoss : undefined,
-                      });
-                      logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
-                      armed = true;
-                      break;
-                    }
-                  } catch {}
-                }
-                if (!armed) {
-                  logger.info(`⏳ [${signal.symbol}] Maker order still resting on book. Background Concrete Armor will automatically lock hard on-chain TP/SL immediately upon fill.`);
-                }
-              } else {
-                logger.warn(`⚠️ [ON-CHAIN TP/SL] Failed to immediately attach TP/SL: ${msg}`);
-              }
+              logger.warn(`⚠️ [ON-CHAIN TP/SL] Placement note: ${tpErr?.message || tpErr}`);
             }
           }
         } catch (err: any) {
@@ -992,6 +984,8 @@ export class TradeExecutor {
         estimatedWinRatePct: aiEval.confidenceScore || 78,
         atr: signal.indicators.atr14,
         lifecycleEvents: [initialLifecycleEvent],
+        isMaker: liveResult?.isMaker ?? false,
+        routing: liveResult?.isMaker ? 'MAKER_POST_ONLY' : (isPaper ? 'PAPER' : 'TAKER_IOC'),
       };
 
       const existingIdx = this.tradesCache.findIndex((t) => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');
@@ -1022,6 +1016,7 @@ export class TradeExecutor {
 
   /**
    * Directly sign & submit transaction to Decibel DEX subaccount contracts via Aptos SDK
+   * with Pillar 1 Maker-First PostOnly fill verification and resting order cancellation.
    */
   private async executeOnChain(
     symbol: string,
@@ -1031,7 +1026,16 @@ export class TradeExecutor {
     targetLeverage?: number,
     targetLimitPrice?: number,
     preferPostOnly = false,
-  ): Promise<{ orderId: string; txHash: string }> {
+    allowTakerFallback = false,
+  ): Promise<{
+    orderId: string;
+    txHash: string;
+    filled: boolean;
+    isMaker?: boolean;
+    actualEntryPrice?: number;
+    actualSize?: number;
+    cancelledReason?: string;
+  }> {
     if (!this.aptos || !this.aptosAccount) {
       throw new Error('Aptos SDK signer uninitialized');
     }
@@ -1104,7 +1108,7 @@ export class TradeExecutor {
       logger.info(`⚡ [ON-CHAIN IOC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (IOC Market Execution)`);
     }
 
-    const sendTx = async (): Promise<string> => {
+    const sendTx = async (): Promise<{ txHash: string; isCancelledByEngine: boolean; cancelReason: string }> => {
       const client = this.getAptos();
       const tx = await client.transaction.build.simple({
         sender: this.aptosAccount!.accountAddress,
@@ -1149,41 +1153,123 @@ export class TradeExecutor {
         throw new Error(`On-chain transaction failed: ${executed.vm_status}`);
       }
 
-      // Verify that matching engine did not immediately cancel order
+      // Verify if matching engine immediately cancelled the PostOnly order
+      let isCancelledByEngine = false;
+      let cancelReason = '';
       if (Array.isArray((executed as any).events)) {
         for (const ev of (executed as any).events) {
           if (ev.type?.includes('market_types::OrderEvent')) {
             const evData = ev.data;
             const status = evData?.status?.__variant__ || evData?.status;
             if (status === 'CANCELLED') {
-              const details = evData?.details || 'Order rejected by matching engine';
-              throw new Error(`On-chain order cancelled by DEX matching engine: ${details}`);
+              isCancelledByEngine = true;
+              cancelReason = evData?.details || 'Order rejected by matching engine (crossed spread)';
+              break;
             }
           }
         }
       }
 
-      return committed.hash;
+      return { txHash: committed.hash, isCancelledByEngine, cancelReason };
     };
 
-    let txHash: string;
+    let txRes: { txHash: string; isCancelledByEngine: boolean; cancelReason: string };
     try {
-      txHash = await sendTx();
+      txRes = await sendTx();
     } catch (err: any) {
       if (isNodeRateLimitOrAuthError(err)) {
         logger.warn(`⚠️ [ON-CHAIN] Gateway rate-limit/auth error (${err.message}). Instant 0s failover to Builder Proxy...`);
         triggerNodeKeyFailover(undefined, err.message);
         this.reinitAptos();
-        txHash = await sendTx();
+        txRes = await sendTx();
       } else {
         throw err;
       }
     }
 
-    logger.info(`🎯 [ON-CHAIN FILLED] Tx: ${txHash}`);
+    if (txRes.isCancelledByEngine) {
+      logger.warn(`⚠️ [MAKER ROUTING] Decibel matching engine rejected PostOnly order for ${symbol}: ${txRes.cancelReason}`);
+      if (allowTakerFallback) {
+        logger.info(`⚡ [MAKER FALLBACK] Falling back to urgent IOC Taker execution for ${symbol}...`);
+        return this.executeOnChain(symbol, side, size, entryPrice, targetLeverage, targetLimitPrice, false, false);
+      }
+      return {
+        orderId: clientOrderId,
+        txHash: txRes.txHash,
+        filled: false,
+        isMaker: true,
+        cancelledReason: txRes.cancelReason,
+      };
+    }
 
-    // Set TP/SL via MCP or on-chain helper
-    return { orderId: clientOrderId, txHash };
+    if (isMakerPostOnly) {
+      logger.info(`⏳ [MAKER POST-ONLY] Resting maker order active on book at $${limitPrice.toFixed(4)}. Polling fill confirmation (max 5s)...`);
+      const symUpper = symbol.replace('-', '/').toUpperCase();
+      const timeoutMs = 5000;
+      const pollIntervalMs = 1000;
+      const maxPolls = Math.max(1, Math.floor(timeoutMs / pollIntervalMs));
+      let fillConfirmed = false;
+      let actualFillPrice = limitPrice > 0 ? limitPrice : refPrice;
+      let actualFillSize = effectiveBase;
+
+      for (let poll = 1; poll <= maxPolls; poll++) {
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+        try {
+          const positions = await mcpClient.getPositions();
+          const pos = positions.find((p) => p.symbol.replace('-', '/').toUpperCase() === symUpper);
+          if (pos && pos.size > 0) {
+            fillConfirmed = true;
+            actualFillPrice = pos.entryPrice || actualFillPrice;
+            actualFillSize = pos.size;
+            logger.info(`⚡ [MAKER FILLED] Confirmed Maker execution on Decibel DEX! Symbol=${symbol} Entry=$${actualFillPrice} Size=${actualFillSize} (Zero Taker Fee Captured)`);
+            break;
+          }
+        } catch (pollErr: any) {
+          logger.debug(`Fill poll ${poll} notice: ${pollErr?.message || pollErr}`);
+        }
+      }
+
+      if (!fillConfirmed) {
+        logger.warn(`⏳ [MAKER TIMEOUT] Order unfilled after ${timeoutMs / 1000}s. Cancelling resting maker order to eliminate phantom risk...`);
+        try {
+          await mcpClient.cancelAllOrders(symbol);
+        } catch (cErr: any) {
+          logger.warn(`[MAKER TIMEOUT] cancelAllOrders notice: ${cErr?.message || cErr}`);
+        }
+
+        if (allowTakerFallback) {
+          logger.info(`⚡ [MAKER TIMEOUT] Fallback allowed — executing urgent IOC Taker order for ${symbol}...`);
+          return this.executeOnChain(symbol, side, size, entryPrice, targetLeverage, targetLimitPrice, false, false);
+        }
+
+        return {
+          orderId: clientOrderId,
+          txHash: txRes.txHash,
+          filled: false,
+          isMaker: true,
+          cancelledReason: 'Maker post-only order unfilled within window; resting order cancelled',
+        };
+      }
+
+      return {
+        orderId: clientOrderId,
+        txHash: txRes.txHash,
+        filled: true,
+        isMaker: true,
+        actualEntryPrice: actualFillPrice,
+        actualSize: actualFillSize,
+      };
+    }
+
+    logger.info(`🎯 [ON-CHAIN FILLED] Tx: ${txRes.txHash}`);
+    return {
+      orderId: clientOrderId,
+      txHash: txRes.txHash,
+      filled: true,
+      isMaker: false,
+      actualEntryPrice: refPrice,
+      actualSize: effectiveBase,
+    };
   }
 
   /**

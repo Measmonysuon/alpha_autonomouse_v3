@@ -115,6 +115,8 @@ export interface PairLayerOverrides {
   slMultiplier?: number;
   minConfidenceGate?: number;
   preset?: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CUSTOM' | 'MANUAL';
+  makerOffsetPct?: number;
+  orderbookSpreadPct?: number;
   updatedAt?: number;
 }
 

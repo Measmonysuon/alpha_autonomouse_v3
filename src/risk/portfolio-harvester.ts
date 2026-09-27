@@ -246,11 +246,12 @@ export class PortfolioHarvester {
       const pnlPct = trade.entryPrice > 0 ? (priceDiff / trade.entryPrice) * 100 * trade.leverage : 0;
       const pnlUsd = (trade.allocatedUsd * pnlPct) / 100;
 
-      // Realized / Estimated fees: Decibel DEX taker fee 0.05% open + 0.05% close = 0.10% notional + gas
+      // Realized / Estimated fees: Decibel DEX taker fee 0.05% open + 0.05% close = 0.10% notional + gas (0.05% if maker on entry)
       const notionalUsd = trade.sizeBase && currentPrice > 0
         ? (trade.sizeBase * currentPrice)
         : (trade.sizeUsd || (trade.allocatedUsd * (trade.leverage || 1)));
-      const estFeeUsd = Math.max(0.01, Number((notionalUsd * 0.0010).toFixed(4)));
+      const feeRate = (trade as any).isMaker ? 0.0005 : 0.0010;
+      const estFeeUsd = Math.max(0.01, Number((notionalUsd * feeRate).toFixed(4)));
       const netPnlUsd = Number((pnlUsd - estFeeUsd).toFixed(2));
       const netPnlPct = trade.allocatedUsd > 0 ? Number(((netPnlUsd / trade.allocatedUsd) * 100).toFixed(2)) : Number(pnlPct.toFixed(2));
 

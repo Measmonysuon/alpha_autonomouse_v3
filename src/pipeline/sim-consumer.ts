@@ -88,6 +88,8 @@ export interface AlphaBundleResponse {
     };
     smcPolicy?: any;
     accelerateBreakevenR?: number;
+    makerOffsetPct?: number;
+    orderbookSpreadPct?: number;
   }>;
   learning: {
     overallWinRatePct: number;

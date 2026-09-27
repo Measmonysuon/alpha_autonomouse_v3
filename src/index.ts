@@ -504,6 +504,39 @@ function shutdown(): void {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+process.on('unhandledRejection', (reason) => {
+  logger.warn(`⚠️ [PROCESS] Unhandled rejection caught: ${String(reason)}`);
+});
+
+process.on('uncaughtException', (err: any) => {
+  const msg = err?.message || String(err);
+  logger.error(`🔥 [PROCESS] Uncaught exception: ${msg}`);
+
+  // Transient network, socket, TLS, handshake, or cancellation errors should NEVER kill a 24/7 trading agent
+  const isNetworkOrTransient =
+    msg.includes('onCancel') ||
+    msg.includes('socket disconnected') ||
+    msg.includes('socket hang up') ||
+    msg.includes('TLS') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ENOTFOUND') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('EAI_AGAIN') ||
+    err?.name === 'RequestError' ||
+    err?.name === 'AxiosError' ||
+    err?.code === 'EPIPE' ||
+    err?.code === 'ECONNRESET' ||
+    err?.code === 'ETIMEDOUT';
+
+  if (isNetworkOrTransient) {
+    logger.warn(`🛡️ [PROCESS] Suppressed transient network/socket error in uncaughtException (${err?.name || 'Error'}: ${msg}) — agent remains ACTIVE.`);
+    return;
+  }
+
+  shutdown();
+});
+
 bootstrap().catch((err) => {
   logger.error(`Fatal startup error: ${err.message}`);
   process.exit(1);

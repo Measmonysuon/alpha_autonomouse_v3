@@ -1231,18 +1231,27 @@ export class StandaloneTradingEngine {
     let orderType: 'MARKET' | 'POST_ONLY_LIMIT' = 'MARKET';
     let postOnly = false;
 
+    // Dynamic Per-Pair Maker Offset from Sim Lab Directive
+    const dynamicOffset = typeof pairOverrides?.makerOffsetPct === 'number'
+      ? pairOverrides.makerOffsetPct
+      : 0.0003;
+
     if (isTriggered && action === 'LONG') {
       const nearest = ind.smc?.fvg?.nearestFVG;
       const fvgTop = (nearest && nearest.type === 'BULLISH_FVG') ? nearest.top : undefined;
       const emaSupport = (ind.ema9 && ind.ema9 < entry) ? ind.ema9 : entry * 0.9995;
-      limitPrice = Number((fvgTop ? Math.min(entry, fvgTop) : emaSupport).toFixed(4));
+      const tightMakerCap = entry * (1 - dynamicOffset); // Dynamically calibrated below entry to prevent crossing ask
+      const candidateLimit = fvgTop ? Math.min(entry, fvgTop) : emaSupport;
+      limitPrice = Number(Math.min(tightMakerCap, candidateLimit).toFixed(4));
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     } else if (isTriggered && action === 'SHORT') {
       const nearest = ind.smc?.fvg?.nearestFVG;
       const fvgBottom = (nearest && nearest.type === 'BEARISH_FVG') ? nearest.bottom : undefined;
       const emaResistance = (ind.ema9 && ind.ema9 > entry) ? ind.ema9 : entry * 1.0005;
-      limitPrice = Number((fvgBottom ? Math.max(entry, fvgBottom) : emaResistance).toFixed(4));
+      const tightMakerFloor = entry * (1 + dynamicOffset); // Dynamically calibrated above entry to prevent crossing bid
+      const candidateLimit = fvgBottom ? Math.max(entry, fvgBottom) : emaResistance;
+      limitPrice = Number(Math.max(tightMakerFloor, candidateLimit).toFixed(4));
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     }

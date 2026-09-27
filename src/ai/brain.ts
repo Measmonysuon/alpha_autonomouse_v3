@@ -433,11 +433,13 @@ export class LocalAIBrain {
     role: 'PRIMARY_VALIDATOR' | 'SECOND_OPINION',
     directives?: StrategyDirectives,
   ): Promise<AIBrainEvaluation> {
-    const apiKey = config.GEMINI_API_KEY;
+    const { loadAISettings } = require('./settings');
+    const aiSettings = loadAISettings();
+    const apiKey = aiSettings.geminiApiKey || aiSettings.apiKey || config.GEMINI_API_KEY;
     if (!apiKey || apiKey.startsWith('your_')) {
       throw new Error('Missing or placeholder GEMINI_API_KEY');
     }
-    const model = 'gemini-2.0-flash';
+    const model = (aiSettings.model || config.GEMINI_MODEL || 'gemini-flash-latest').replace(/^models\//, '').trim();
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const prompt = this.buildPrompt(signal, role, directives);
@@ -451,7 +453,7 @@ export class LocalAIBrain {
           temperature: 0.2,
         },
       },
-      { timeout: 8000 },
+      { timeout: 15000 },
     );
 
     const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -540,17 +542,39 @@ export class LocalAIBrain {
 
     const prompt = this.buildPrompt(signal, role, directives);
 
-    const response = await axios.post(
-      url,
-      {
-        model: model,
-        prompt: prompt,
-        format: 'json',
-        stream: false,
-        options: { temperature: 0.2 },
-      },
-      { timeout: 15000 },
-    );
+    let response: any;
+    try {
+      response = await axios.post(
+        url,
+        {
+          model: model,
+          prompt: prompt,
+          format: 'json',
+          stream: false,
+          options: { temperature: 0.2 },
+        },
+        { timeout: 15000 },
+      );
+    } catch (err: any) {
+      // If remote tunnel fails and not already targeting LAN, attempt LAN fallback directly
+      if (!url.includes('192.168.100.21') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+        const lanUrl = 'http://192.168.100.21:11434/api/generate';
+        logger.warn(`⚠️ [AI BRAIN] Ollama endpoint (${url}) failed: ${err.message}. Retrying via LAN (${lanUrl})...`);
+        response = await axios.post(
+          lanUrl,
+          {
+            model: model,
+            prompt: prompt,
+            format: 'json',
+            stream: false,
+            options: { temperature: 0.2 },
+          },
+          { timeout: 15000 },
+        );
+      } else {
+        throw err;
+      }
+    }
 
     const content = response.data?.response;
     if (!content) throw new Error('Empty response from Ollama endpoint');
