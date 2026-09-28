@@ -559,9 +559,15 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
 
 export class StandaloneTradingEngine {
   private directives: StrategyDirectives = { ...DEFAULT_STANDALONE_DIRECTIVES };
+  private lastIndicatorsMap: Map<string, TechnicalIndicators> = new Map();
 
   constructor() {
     logger.info(`🏛️  [ENGINE] Standalone Local Engine initialized (${this.directives.activeStrategy})`);
+  }
+
+  public getLatestIndicators(symbol: string): TechnicalIndicators | undefined {
+    const sym = symbol.replace('-', '/').toUpperCase();
+    return this.lastIndicatorsMap.get(sym) || this.lastIndicatorsMap.get(symbol);
   }
 
   public getDirectives(): StrategyDirectives {
@@ -1173,14 +1179,24 @@ export class StandaloneTradingEngine {
           }
         }
 
-        // Structure Shifts (CHoCH / BOS)
+        // Structure Shifts (CHoCH / BOS) under Sim Lab Layer 3 Directive
         if (activeStrategy.layer3.structureShiftChoch) {
-          if (action === 'LONG' && ['BULLISH_CHOCH', 'BULLISH_BOS'].includes(smc.structureShift.type)) {
-            smcPoints += 5;
-            smcReasons.push(`SMC ${smc.structureShift.type} confirmed (+5%)`);
-          } else if (action === 'SHORT' && ['BEARISH_CHOCH', 'BEARISH_BOS'].includes(smc.structureShift.type)) {
-            smcPoints += 5;
-            smcReasons.push(`SMC ${smc.structureShift.type} confirmed (+5%)`);
+          if (action === 'LONG') {
+            if (['BULLISH_CHOCH', 'BULLISH_BOS'].includes(smc.structureShift.type)) {
+              smcPoints += 5;
+              smcReasons.push(`SMC ${smc.structureShift.type} confirmed (+5%)`);
+            } else if (['BEARISH_CHOCH', 'BEARISH_BOS'].includes(smc.structureShift.type)) {
+              technicalScore = Math.min(technicalScore, 50);
+              reasons.push(`🛑 SMC STRUCTURE BREAK VETO: Bearish ${smc.structureShift.type} detected under Sim Lab Layer 3 directive. Entry score capped at 50%.`);
+            }
+          } else if (action === 'SHORT') {
+            if (['BEARISH_CHOCH', 'BEARISH_BOS'].includes(smc.structureShift.type)) {
+              smcPoints += 5;
+              smcReasons.push(`SMC ${smc.structureShift.type} confirmed (+5%)`);
+            } else if (['BULLISH_CHOCH', 'BULLISH_BOS'].includes(smc.structureShift.type)) {
+              technicalScore = Math.min(technicalScore, 50);
+              reasons.push(`🛑 SMC STRUCTURE BREAK VETO: Bullish ${smc.structureShift.type} detected under Sim Lab Layer 3 directive. Entry score capped at 50%.`);
+            }
           }
         }
 
@@ -1255,6 +1271,10 @@ export class StandaloneTradingEngine {
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     }
+
+    // Cache latest indicators for real-time portfolio harvester structure break evaluation
+    this.lastIndicatorsMap.set(symbol.replace('-', '/').toUpperCase(), ind);
+    this.lastIndicatorsMap.set(symbol, ind);
 
     return {
       symbol,

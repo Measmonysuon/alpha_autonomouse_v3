@@ -15,7 +15,7 @@ import { config, watchPairs, isClientConfigured, DEFAULT_SIMLAB_CANDIDATE_URLS }
 import { logger } from '../utils/logger';
 import { standaloneEngine, StrategyDirectives } from '../engine/standalone-engine';
 import { tradeExecutor } from '../trades/executor';
-import { portfolioHarvester } from '../engine/harvester';
+import { portfolioHarvester, applySimHarvesterCalibration } from '../engine/harvester';
 import {
   applySimStrategyDirectives,
   applySimPairDirectives,
@@ -636,6 +636,10 @@ export class SimLabSuperchargeClient {
 
       if (bundle.pairDirectives && typeof bundle.pairDirectives === 'object') {
         applySimPairDirectives(bundle.pairDirectives);
+      }
+
+      if (bundle.harvester && typeof bundle.harvester === 'object') {
+        applySimHarvesterCalibration(bundle.harvester);
       }
     }
 

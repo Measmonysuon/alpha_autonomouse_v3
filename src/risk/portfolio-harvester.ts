@@ -52,6 +52,7 @@ export interface HarvesterConfig {
   executionStyle: 'PARTIAL_FIRST' | 'FULL_CLOSE_ONLY';
   bannedSide?: string;
   enableDefensiveCut?: boolean;
+  structureBreakCutEnabled?: boolean;
   dynamicWeights?: DynamicVulnerabilityWeights;
 }
 
@@ -136,6 +137,8 @@ export interface SimHarvesterCalibration {
   breakevenFeeBufferPct?: number;        // e.g. +0.25% fee cover buffer
   bannedSide?: string;
   recommendedStance?: string;
+  enableDefensiveCut?: boolean;
+  structureBreakCutEnabled?: boolean;
   dynamicWeights?: Partial<DynamicVulnerabilityWeights>;
   cryptoQuant?: {
     btcExchangeNetflow?: number;
@@ -153,9 +156,12 @@ export class PortfolioHarvester {
     runnerScoreThreshold: 45,
     minHarvestPct: 1.5,
     minHarvestUsd: 0.15,
-    accelerateBreakevenR: 1.35,
+    accelerateBreakevenR: 1.75,
     breakevenFeeBufferPct: 0.25,
+    breakevenMinAtrMultiple: 2.0,
     executionStyle: 'PARTIAL_FIRST',
+    enableDefensiveCut: true,
+    structureBreakCutEnabled: true,
   };
 
   private lastHarvestAt?: number;
@@ -489,6 +495,35 @@ export class PortfolioHarvester {
         factors.push(`🩸 Adverse Bleed Decay: Drawdown ${pnlPct.toFixed(1)}% without breakeven (+${weights.adverseBleedMax}pts)`);
       }
 
+      // ── SMC Structure Break Invalidation under Sim Lab Directive ─────────────
+      // Evaluates real-time 15m orderflow structure shifts (CHoCH / BOS)
+      // Strictly gated under Sim Lab Layer 3 directive and harvester directives
+      const isLayer3EnabledBySimLab = (pairDir?.layer3 !== false) &&
+        (pairDir?.smcPolicy?.structureBreakCutEnabled !== false) &&
+        (this.config.structureBreakCutEnabled !== false);
+      let hasStructureBreak = false;
+
+      if (isLayer3EnabledBySimLab) {
+        try {
+          const { standaloneEngine } = require('../engine/standalone-engine');
+          const ind = standaloneEngine.getLatestIndicators(trade.symbol);
+          const smc = ind?.smc;
+          if (smc && smc.structureShift) {
+            const shiftType = smc.structureShift.type;
+            const pts = weights.smcStructureBreakChoch || 30;
+            if (isLong && (shiftType === 'BEARISH_CHOCH' || shiftType === 'BEARISH_BOS')) {
+              score += pts;
+              hasStructureBreak = true;
+              factors.push(`💥 SMC Structure Break (${shiftType}): Bullish thesis broken under Sim Lab Layer 3 directive (+${pts}pts)`);
+            } else if (!isLong && (shiftType === 'BULLISH_CHOCH' || shiftType === 'BULLISH_BOS')) {
+              score += pts;
+              hasStructureBreak = true;
+              factors.push(`💥 SMC Structure Break (${shiftType}): Bearish thesis broken under Sim Lab Layer 3 directive (+${pts}pts)`);
+            }
+          }
+        } catch { }
+      }
+
       // ── Time Stagnation Decay: +5 pts per hour after 2 hours without breakeven ──
       const holdTimeMs = trade.openedAt ? Date.now() - trade.openedAt : 0;
       const holdHours = holdTimeMs > 0 ? (holdTimeMs / (1000 * 60 * 60)) : (trade.barsHeld ? trade.barsHeld * 0.25 : 0);
@@ -530,18 +565,28 @@ export class PortfolioHarvester {
         recommendation = 'RUNNER';
       }
 
-      // ── Defensive Bleed & Stagnation Cutting (Saves capital from slow bleed / zombie trades) ──
+      // ── Defensive Bleed, Stagnation & Structure Break Cutting (Saves capital before max SL hit) ──
       const isManual = Boolean(trade.notes?.includes('Manual') || trade.strategyName?.includes('Manual'));
       const hasOnChainArmor = Boolean((trade.hardStopLoss && trade.hardStopLoss > 0) || isManual || trade.strategyName?.includes('On-Chain'));
+      
+      // Structure Break Invalidation under Sim Lab Directive:
+      // If Sim Lab Layer 3 detects structural break against the position while in adverse drawdown (pnlPct <= -1.0%), cut immediately!
+      const isStructureBreakCut = !isManual && isLayer3EnabledBySimLab && hasStructureBreak && pnlPct <= -1.0 && score >= (this.config.harvestScoreThreshold || 65);
       const isBleedingOut = !hasOnChainArmor && pnlPct <= -15.0 && score >= (this.config.harvestScoreThreshold || 75) && !breakevenLocked;
       const isStagnantBleed = !isManual && holdHours >= 3.5 && pnlPct <= -3.0 && score >= 85 && !breakevenLocked;
 
-      if ((isBleedingOut || isStagnantBleed) && this.config.enableDefensiveCut !== false) {
+      if ((isStructureBreakCut || isBleedingOut || isStagnantBleed) && this.config.enableDefensiveCut !== false) {
         recommendation = 'HARVEST';
-        const isStagCut = isStagnantBleed && !isBleedingOut;
-        factors.push(isStagCut
-          ? `⏱️ STAGNATION TIME-CUT: Prolonged adverse chop (${holdHours.toFixed(1)}h, ${pnlPct.toFixed(1)}% PnL), liberating capital`
-          : '🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital'
+        const isStagCut = isStagnantBleed && !isBleedingOut && !isStructureBreakCut;
+        const cutReason = isStructureBreakCut
+          ? 'DEFENSIVE_STRUCTURE_BREAK_CUT'
+          : (isStagCut ? 'STAGNATION_TIME_CUT' : 'DEFENSIVE_BLEED_CUT');
+
+        factors.push(isStructureBreakCut
+          ? `💥 DEFENSIVE STRUCTURE BREAK CUT: Market structure broke against thesis under Sim Lab directive, exiting at ${pnlPct.toFixed(1)}% to save capital`
+          : (isStagCut
+              ? `⏱️ STAGNATION TIME-CUT: Prolonged adverse chop (${holdHours.toFixed(1)}h, ${pnlPct.toFixed(1)}% PnL), liberating capital`
+              : '🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital')
         );
         if (this.config.enabled && !trade.isPaper) {
           const symKey = trade.symbol.replace('-', '/').toUpperCase();
@@ -549,24 +594,32 @@ export class PortfolioHarvester {
           trade.status = 'closed_sl';
           trade.exitPrice = currentPrice;
           trade.closedAt = Date.now();
-          trade.exitReason = isStagCut ? 'STAGNATION_TIME_CUT' : 'DEFENSIVE_BLEED_CUT';
+          trade.exitReason = cutReason;
           trade.pnlPct = Number(pnlPct.toFixed(2));
           trade.pnlUsd = Number(pnlUsd.toFixed(2));
+
+          const cutTitle = isStructureBreakCut
+            ? `💥 Structure Break Cut @ $${currentPrice.toFixed(4)}`
+            : (isStagCut ? `⏱️ Stagnation Time-Cut @ $${currentPrice.toFixed(4)}` : `🩸 Defensive Bleed Cut @ $${currentPrice.toFixed(4)}`);
 
           if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
           trade.lifecycleEvents.push({
             timestamp: trade.closedAt,
             stage: 'EXIT',
-            title: isStagCut ? `⏱️ Stagnation Time-Cut @ $${currentPrice.toFixed(4)}` : `🩸 Defensive Bleed Cut @ $${currentPrice.toFixed(4)}`,
-            description: `Liberated capital after ${holdHours.toFixed(1)}h stagnation. Drawdown capped at ${pnlPct.toFixed(2)}%.`,
+            title: cutTitle,
+            description: isStructureBreakCut
+              ? `Market structure broke against trade under Sim Lab directive. Drawdown capped at ${pnlPct.toFixed(2)}%.`
+              : `Liberated capital after ${holdHours.toFixed(1)}h stagnation. Drawdown capped at ${pnlPct.toFixed(2)}%.`,
             price: currentPrice,
             pnlUsd: pnlUsd,
             details: [
               `Vulnerability score high (${score}/100).`,
-              `Stagnation time decay limit exceeded (${holdHours.toFixed(1)}h). Exited on-chain to protect capital.`
+              isStructureBreakCut
+                ? `Sim Lab Layer 3 structure shift triggered early invalidation cut.`
+                : `Stagnation time decay limit exceeded (${holdHours.toFixed(1)}h). Exited on-chain to protect capital.`
             ]
           });
-          trade.exitSummary = `${isStagCut ? 'Stagnation cut' : 'Defensive bleed cut'} executed after ${holdHours.toFixed(1)}h. Capital liberated for fresh opportunities.`;
+          trade.exitSummary = `${cutReason} executed. Drawdown capped at ${pnlPct.toFixed(2)}% to preserve trading capital under Sim Lab directive.`;
 
           tradeExecutor.saveTrades();
           mcpClient.closePosition(trade.symbol).catch((err: any) => {
@@ -574,7 +627,7 @@ export class PortfolioHarvester {
           }).finally(() => {
             setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
           });
-          logger.warn(`⏱️ [${trade.exitReason}] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% after ${holdHours.toFixed(1)}h to liberate capital.`);
+          logger.warn(`💥 [${trade.exitReason}] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% to preserve capital under Sim Lab directive.`);
           tradeExecutor.notifyTradeClosed(trade);
         }
       }
@@ -929,11 +982,13 @@ export function applySimHarvesterCalibration(cal: SimHarvesterCalibration): bool
   const minHarvestRoiPct = typeof cal.minHarvestNetPnlPct === 'number'
     ? Math.min(5.0, Math.max(0.8, cal.minHarvestNetPnlPct))
     : 1.5;
-  const minHarvestProfitUsd = typeof cal.minHarvestNetUsd === 'number' ? cal.minHarvestNetUsd : 0.15;
-  // Anti-hunt protection: Ensure accelerateBreakevenR is at least 1.25R (defaults to 1.35R) to avoid wick hunts
+  const minHarvestProfitUsd = typeof cal.minHarvestNetUsd === 'number'
+    ? Math.max(0.60, cal.minHarvestNetUsd)
+    : 0.60;
+  // Anti-hunt protection: Ensure accelerateBreakevenR is at least 1.50R (defaults to 1.75R) to avoid wick hunts
   const accelerateBreakevenR = typeof cal.accelerateBreakevenR === 'number'
-    ? Math.max(1.20, cal.accelerateBreakevenR)
-    : 1.35;
+    ? Math.max(1.50, cal.accelerateBreakevenR)
+    : 1.75;
   const breakevenFeeBufferPct = typeof cal.breakevenFeeBufferPct === 'number' ? cal.breakevenFeeBufferPct : 0.25;
   const breakevenMinAtrMultiple = typeof (cal as any).breakevenMinAtrMultiple === 'number'
     ? Math.max(1.5, (cal as any).breakevenMinAtrMultiple)
@@ -947,5 +1002,7 @@ export function applySimHarvesterCalibration(cal: SimHarvesterCalibration): bool
     accelerateBreakevenR,
     breakevenFeeBufferPct,
     breakevenMinAtrMultiple,
+    structureBreakCutEnabled: cal.structureBreakCutEnabled !== false,
+    enableDefensiveCut: cal.enableDefensiveCut !== false,
   }, 'SIM_LAB');
 }
