@@ -26,6 +26,10 @@ const shockwaveDetector = {
 export interface SimStrategyDirectives {
   activeStrategyId?: string;
   activeStrategyName?: string;
+  description?: string;
+  strategyDescription?: string;
+  author?: string;
+  fullStrategy?: any;
   minConfidenceGate?: number;
   leverage?: number;
   minAllocPct?: number;
@@ -423,6 +427,48 @@ export function applySimStrategyDirectives(strat: SimStrategyDirectives): void {
   if (!strat) return;
   cachedLastSimDirectives = strat;
 
+  // Seamlessly register incoming Sim Lab strategy into simStrategiesCache so getStrategyById resolves it!
+  const stratId = strat.activeStrategyId;
+  if (stratId) {
+    const existingIdx = simStrategiesCache.findIndex(s => s.id === stratId);
+    const resolvedDesc = strat.description || strat.strategyDescription || strat.fullStrategy?.description || `Autonomous AI strategy calibrated by Sim Lab (Port 4000).`;
+    const resolvedName = strat.activeStrategyName || stratId;
+    const baseTemplate = PREBUILT_TEMPLATES[0];
+    const updatedStrat: StrategyConfig = {
+      ...(strat.fullStrategy || baseTemplate),
+      id: stratId,
+      name: resolvedName,
+      description: resolvedDesc,
+      isSimLab: true,
+      isPrebuilt: false,
+      author: strat.author || strat.fullStrategy?.author || 'AI Sim Lab (Port 4000)',
+      winRatePct: strat.overallWinRatePct ?? strat.fullStrategy?.winRatePct ?? 60.0,
+      layer1: strat.layer1 || strat.fullStrategy?.layer1 || baseTemplate.layer1,
+      layer2: strat.layer2 || strat.fullStrategy?.layer2 || baseTemplate.layer2,
+      layer3: strat.layer3 || strat.fullStrategy?.layer3 || baseTemplate.layer3,
+      layer4: strat.layer4 || strat.fullStrategy?.layer4 || baseTemplate.layer4,
+      layer5: {
+        ...(strat.fullStrategy?.layer5 || baseTemplate.layer5),
+        enabled: true,
+        minConfidenceGate: strat.minConfidenceGate ?? 75,
+        leverage: strat.leverage ?? 4,
+        minAllocPct: strat.minAllocPct ?? 20,
+        maxAllocPct: strat.maxAllocPct ?? 35,
+        minRiskRewardRatio: strat.minRiskRewardRatio ?? 2.5,
+        tp1CloseRatio: strat.tp1CloseRatio ?? 0.5,
+        stagnationTimeStopBars: strat.stagnationTimeStopBars ?? 8,
+        enforcePostOnly: strat.enforcePostOnly ?? true,
+        makerFillTimeoutMs: strat.makerFillTimeoutMs ?? 25000,
+        allowTakerFallback: strat.allowTakerFallback ?? false,
+      },
+    };
+    if (existingIdx >= 0) {
+      simStrategiesCache[existingIdx] = updatedStrat;
+    } else {
+      simStrategiesCache.unshift(updatedStrat);
+    }
+  }
+
   // GUARD: If global strategy sync is disabled by user, ignore external global directives
   if (!activeStrategySyncConfig.syncGlobalStrategy) {
     logger.info('🔒 [SIM STRATEGY] Global strategy sync is DISABLED by user — ignoring external Sim Lab global directives');
@@ -548,10 +594,14 @@ export function getActiveStrategy(): StrategyConfig {
     const flags = getFeatureFlags();
     const syncInd = flags.syncIndicators;
 
+    const resolvedDesc = activeDirectives.strategyDescription || activeDirectives.description || (activeDirectives.fullStrategy?.description) || simBase.description;
+
     return {
       ...simBase,
+      ...(activeDirectives.fullStrategy || {}),
       id: simId,
       name: activeDirectives.activeStrategyName || simBase.name,
+      description: resolvedDesc,
       isSimLab: true,
       winRatePct: activeDirectives.overallWinRatePct ?? simBase.winRatePct,
       layer1: {
@@ -1031,6 +1081,39 @@ export function setActiveStrategy(id: string): boolean {
   }
   storageCache.activeId = id;
   saveStorage(storageCache);
+
+  // If activating a specific Sim Lab strategy preset, apply it as current sim directives
+  const simStrat = simStrategiesCache.find(s => s.id === id);
+  if (simStrat) {
+    applySimStrategyDirectives({
+      activeStrategyId: simStrat.id,
+      activeStrategyName: simStrat.name,
+      description: simStrat.description,
+      strategyDescription: simStrat.description,
+      author: simStrat.author,
+      fullStrategy: simStrat,
+      minConfidenceGate: simStrat.layer5?.minConfidenceGate ?? 75,
+      leverage: simStrat.layer5?.leverage ?? 4,
+      minAllocPct: simStrat.layer5?.minAllocPct ?? 20,
+      maxAllocPct: simStrat.layer5?.maxAllocPct ?? 35,
+      minRiskRewardRatio: simStrat.layer5?.minRiskRewardRatio ?? 2.5,
+      tp1CloseRatio: simStrat.layer5?.tp1CloseRatio ?? 0.5,
+      stagnationTimeStopBars: simStrat.layer5?.stagnationTimeStopBars ?? 8,
+      layer1: simStrat.layer1,
+      layer2: simStrat.layer2,
+      layer3: simStrat.layer3,
+      layer4: simStrat.layer4,
+      overallWinRatePct: simStrat.winRatePct,
+    });
+  } else if (!exists.isSimLab) {
+    // If user explicitly activated a manual/standalone template or custom strategy,
+    // unhook global sync so manual choice immediately takes effect!
+    if (activeStrategySyncConfig.syncGlobalStrategy) {
+      logger.info(`ℹ️ [STRATEGY SWITCH] Operator selected non-sim strategy "${exists.name}". Unhooking global sync so manual choice takes effect.`);
+      updateStrategySyncConfig({ syncGlobalStrategy: false });
+    }
+  }
+
   logger.info(`🎯 Live Active Strategy switched to: "${exists.name}" [${id}]`);
   return true;
 }

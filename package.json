@@ -1,6 +1,6 @@
 {
   "name": "decibel-trading-agent-v3",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Unified 24/7 autonomous perpetual futures trading agent for Decibel Exchange on Aptos (Client V3)",
   "main": "desktop/main.js",
   "scripts": {

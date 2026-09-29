@@ -20,7 +20,7 @@ import {
 } from '../utils/node-key-resolver';
 import { config, isClientConfigured, getDerivedSignerAddress } from '../config';
 import { logger } from '../utils/logger';
-import { StandaloneSignal } from '../engine/standalone-engine';
+import { StandaloneSignal, standaloneEngine } from '../engine/standalone-engine';
 import { AIBrainEvaluation } from '../ai/brain';
 import { riskGuard, RiskValidationResult } from '../risk/guard';
 import { mcpClient } from '../mcp/client';
@@ -477,24 +477,41 @@ export class TradeExecutor {
         );
 
         const lev = Math.max(1, pos.leverage || existing?.leverage || 1);
-        const defaultHardSl = isLong
+        // 1. Static Hard Stop Loss (15% margin risk / catastrophic on-chain circuit breaker)
+        const staticHardSl = isLong
           ? Number((pos.entryPrice * (1 - 0.15 / lev)).toFixed(4))
           : Number((pos.entryPrice * (1 + 0.15 / lev)).toFixed(4));
+        const hardSl = (pos.stopLoss && pos.stopLoss > 0) ? pos.stopLoss : staticHardSl;
+
+        // 2. Dynamic Soft SL buffer: sits between entry and hard SL (~1.2% - 1.8% price move)
+        const softSlDist = Math.min(pos.entryPrice * 0.02, Math.max(pos.entryPrice * 0.008, Math.abs(pos.entryPrice - staticHardSl) * 0.35));
+        const initialSoftSl = isLong
+          ? Number((pos.entryPrice - softSlDist).toFixed(4))
+          : Number((pos.entryPrice + softSlDist).toFixed(4));
         const ratchetedSl = existing?.stopLoss && existing.stopLoss > 0 ? existing.stopLoss : 0;
-        const initialHardSl = existing?.hardStopLoss && existing.hardStopLoss > 0 ? existing.hardStopLoss : 0;
-        let activeSl = ratchetedSl > 0 ? ratchetedSl : (initialHardSl > 0 ? initialHardSl : defaultHardSl);
-        if (isLong && ratchetedSl > 0 && initialHardSl > 0) {
-          activeSl = Math.max(ratchetedSl, initialHardSl);
-        } else if (!isLong && ratchetedSl > 0 && initialHardSl > 0) {
-          activeSl = Math.min(ratchetedSl, initialHardSl);
+        let activeSl = ratchetedSl > 0 ? ratchetedSl : initialSoftSl;
+        if (isLong && ratchetedSl > 0 && initialSoftSl > 0) {
+          activeSl = Math.max(ratchetedSl, initialSoftSl);
+        } else if (!isLong && ratchetedSl > 0 && initialSoftSl > 0) {
+          activeSl = Math.min(ratchetedSl, initialSoftSl);
         }
-        const hardSl = (pos.stopLoss && pos.stopLoss > 0) ? pos.stopLoss : activeSl;
-        // In loss / initial state, softRatchetPrice MUST equal hardSl to protect capital
-        const softRatchet = hardSl;
+        const softRatchet = existing?.softRatchetPrice && existing.softRatchetPrice > 0
+          ? (isLong ? Math.max(existing.softRatchetPrice, activeSl) : Math.min(existing.softRatchetPrice, activeSl))
+          : activeSl;
+
+        // 3. Dynamic Take Profit (anchored to 1.5x - 2.0x ATR, ~1.5% - 2.2% price move)
+        const dynamicTpDist = Math.min(pos.entryPrice * 0.025, Math.max(pos.entryPrice * 0.012, softSlDist * 1.5));
+        const dynamicTp = isLong
+          ? Number((pos.entryPrice + dynamicTpDist).toFixed(4))
+          : Number((pos.entryPrice - dynamicTpDist).toFixed(4));
+        const activeTp = (pos.takeProfit && pos.takeProfit > 0 && Math.abs(pos.takeProfit - pos.entryPrice) / pos.entryPrice <= 0.04)
+          ? pos.takeProfit
+          : dynamicTp;
 
         // If not found open, check if a recent closed trade can be revived (only if un-intentional RPC dropout)
+        let recentClosed: TradeRecord | undefined;
         if (!existing) {
-          const recentClosed = this.tradesCache.find(
+          recentClosed = this.tradesCache.find(
             (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status !== 'open' && (t.closedAt ? Date.now() - t.closedAt < 600000 : false),
           );
           if (recentClosed) {
@@ -505,7 +522,7 @@ export class TradeExecutor {
               delete recentClosed.exitPrice;
               delete recentClosed.exitReason;
               if (recentClosed.stopLoss <= 0) {
-                recentClosed.stopLoss = hardSl;
+                recentClosed.stopLoss = softRatchet;
               }
               existing = recentClosed;
               modified = true;
@@ -521,6 +538,16 @@ export class TradeExecutor {
           }
         }
 
+        const simDirectives = standaloneEngine.getDirectives();
+        const simStratName = simDirectives?.activeStrategy || '6-Pillar Fleet CIO V10 - Regime-Adaptive Bi-Directional EV';
+        const simStratId = 'ai_strategy_1790652542785';
+        const simStratAttribution: StrategyAttribution = {
+          strategyId: simStratId,
+          strategyName: simStratName,
+          isPairOverride: false,
+          layersActive: { layer1: true, layer2: true, layer3: true, layer4: true, layer5: true },
+        };
+
         if (!existing) {
           const newTrade: TradeRecord = {
             id: `decibel-onchain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -528,8 +555,8 @@ export class TradeExecutor {
             side: isLong ? 'buy' : 'sell',
             action: isLong ? 'LONG' : 'SHORT',
             entryPrice: pos.entryPrice || 0,
-            takeProfit: pos.takeProfit || 0,
-            stopLoss: pos.stopLoss || 0,
+            takeProfit: activeTp,
+            stopLoss: softRatchet,
             hardStopLoss: hardSl,
             softRatchetPrice: softRatchet,
             estimatedLiquidationPrice: pos.liquidationPrice,
@@ -541,15 +568,18 @@ export class TradeExecutor {
             status: 'open',
             isPaper: false,
             openedAt: Date.now(),
-            strategyName: 'Decibel On-Chain Position',
+            strategyName: (recentClosed?.strategyName && !recentClosed.strategyName.includes('On-Chain'))
+              ? recentClosed.strategyName
+              : simStratName,
+            strategyAttribution: simStratAttribution,
             notes: 'Reconciled directly from Aptos on-chain DEX state',
-            estimatedProfitPct: (pos.takeProfit && pos.entryPrice) ? Math.abs((pos.takeProfit - pos.entryPrice) / pos.entryPrice) * 100 * (pos.leverage || 1) : 15.0,
-            estimatedLossPct: hardSl && pos.entryPrice ? Math.abs((pos.entryPrice - hardSl) / pos.entryPrice) * 100 * (pos.leverage || 1) : 15.0,
+            estimatedProfitPct: (activeTp && pos.entryPrice) ? Number((Math.abs((activeTp - pos.entryPrice) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 7.5,
+            estimatedLossPct: softRatchet && pos.entryPrice ? Number((Math.abs((pos.entryPrice - softRatchet) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 5.3,
             estimatedWinRatePct: 85,
           };
           this.tradesCache.push(newTrade);
           modified = true;
-          logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice}, ${newTrade.leverage}x) [Hard SL: $${hardSl} | Soft Ratchet: $${softRatchet}]`);
+          logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice}, ${newTrade.leverage}x) [Strategy: ${newTrade.strategyName} | TP: $${activeTp} | Hard SL: $${hardSl} | Soft Ratchet: $${softRatchet}]`);
         } else {
           // ALWAYS update live on-chain leverage, position size, and margin for existing/restored positions
           if (pos.leverage && pos.leverage > 0 && existing.leverage !== pos.leverage) {
@@ -567,7 +597,29 @@ export class TradeExecutor {
             existing.allocatedUsd = pos.allocatedUsd;
             modified = true;
           }
-          if (pos.takeProfit && pos.takeProfit !== existing.takeProfit) {
+          // Update strategy name and attribution if generic, template default, or out-of-sync with active Sim Lab directive
+          const isGenericStrat = !existing.strategyName ||
+            existing.strategyName === 'Decibel On-Chain Position' ||
+            existing.strategyName === 'Autonomous Engine' ||
+            existing.strategyName === 'Decibel Autonomous Trade' ||
+            existing.strategyName === 'Turtle Soup & Liquidity Grab' ||
+            (existing.id.startsWith('decibel-onchain-') && existing.strategyName !== simStratName);
+
+          if (isGenericStrat && simStratName) {
+            logger.info(`🏷️ [RECONCILE] Updating ${existing.symbol} strategy name to active Sim Lab directive: "${simStratName}"`);
+            existing.strategyName = simStratName;
+            existing.strategyAttribution = simStratAttribution;
+            modified = true;
+          }
+          const isTpUnrealistic = existing.takeProfit > 0 && (Math.abs(existing.takeProfit - (pos.entryPrice || existing.entryPrice)) / (pos.entryPrice || existing.entryPrice) > 0.04);
+          if (!existing.takeProfit || existing.takeProfit <= 0 || isTpUnrealistic) {
+            const oldTp = existing.takeProfit;
+            existing.takeProfit = (pos.takeProfit && pos.takeProfit > 0 && Math.abs(pos.takeProfit - (pos.entryPrice || existing.entryPrice)) / (pos.entryPrice || existing.entryPrice) <= 0.04)
+              ? pos.takeProfit
+              : dynamicTp;
+            modified = true;
+            logger.info(`🎯 [DYNAMIC TP REALIGN] Calibrated TP for ${existing.symbol}: $${oldTp} → $${existing.takeProfit}`);
+          } else if (pos.takeProfit && pos.takeProfit !== existing.takeProfit) {
             existing.takeProfit = pos.takeProfit;
             modified = true;
           }
@@ -593,10 +645,12 @@ export class TradeExecutor {
             existing.hardStopLoss = hardSl;
             modified = true;
           }
-          // Protect softRatchetPrice from being regressed backward (strict monotonic ratchet invariant)
-          if (!existing.softRatchetPrice || existing.softRatchetPrice === 0) {
-            existing.softRatchetPrice = existing.stopLoss && existing.stopLoss > 0 ? existing.stopLoss : hardSl;
-          } else {
+          // Calibrate dynamic stop loss to protected ATR level if missing or stuck at wide hard SL
+          if (!existing.stopLoss || existing.stopLoss <= 0 || Math.abs(existing.stopLoss - staticHardSl) / staticHardSl < 0.015 || (Math.abs(existing.stopLoss - (pos.entryPrice || existing.entryPrice)) / (pos.entryPrice || existing.entryPrice) > 0.025)) {
+            existing.stopLoss = initialSoftSl;
+            modified = true;
+          }
+          if (existing.softRatchetPrice && existing.softRatchetPrice > 0) {
             const isLong = existing.action === 'LONG';
             // Ratchet can ONLY improve in favor of trade (up for Long, down for Short), never backward
             existing.softRatchetPrice = isLong
@@ -606,34 +660,38 @@ export class TradeExecutor {
           if (pos.liquidationPrice) existing.estimatedLiquidationPrice = pos.liquidationPrice;
 
           const curLev = existing.leverage || pos.leverage || 1;
-          const curTp = existing.takeProfit || pos.takeProfit || 0;
+          const curTp = existing.takeProfit || pos.takeProfit || activeTp || 0;
           const curEntry = existing.entryPrice || pos.entryPrice || 0;
+          const effectiveLossSl = existing.stopLoss || initialSoftSl;
           existing.estimatedProfitPct = (curTp > 0 && curEntry > 0)
-            ? Math.abs((curTp - curEntry) / curEntry) * 100 * curLev
-            : (existing.estimatedProfitPct || 15.0);
-          existing.estimatedLossPct = (hardSl > 0 && curEntry > 0)
-            ? Math.abs((curEntry - hardSl) / curEntry) * 100 * curLev
-            : (existing.estimatedLossPct || 15.0);
+            ? Number((Math.abs((curTp - curEntry) / curEntry) * 100 * curLev).toFixed(1))
+            : (existing.estimatedProfitPct || 7.5);
+          existing.estimatedLossPct = (effectiveLossSl > 0 && curEntry > 0)
+            ? Number((Math.abs((curEntry - effectiveLossSl) / curEntry) * 100 * curLev).toFixed(1))
+            : (existing.estimatedLossPct || 5.3);
           existing.estimatedWinRatePct = existing.confidence || existing.estimatedWinRatePct || 85;
           modified = true;
         }
 
-        // Auto-arm on-chain hard SL & TP if position is open without an active stop order
-        if ((!pos.stopLoss || pos.stopLoss <= 0) && hardSl > 0 && isClientConfigured() && !config.PAPER_TRADING) {
+        // Auto-arm on-chain hard SL & dynamic hard TP if position is open without an active stop or TP order
+        const targetTp = (existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || activeTp);
+        const needsOnChainSl = (!pos.stopLoss || pos.stopLoss <= 0) && hardSl > 0;
+        const needsOnChainTp = (!pos.takeProfit || pos.takeProfit <= 0 || (targetTp > 0 && Math.abs(pos.takeProfit - targetTp) / targetTp > 0.005)) && targetTp > 0;
+
+        if ((needsOnChainSl || needsOnChainTp) && isClientConfigured() && !config.PAPER_TRADING) {
           const now = Date.now();
           const lastArm = this.autoArmCooldownMap.get(pos.symbol) || 0;
           if (now - lastArm >= 15_000) {
             this.autoArmCooldownMap.set(pos.symbol, now);
-            const targetTp = (existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || 0);
-            logger.info(`🛡️ [CONCRETE ARMOR] Auto-arming missing hard on-chain Stop Loss for ${pos.symbol} at $${hardSl} (TP: $${targetTp})`);
+            logger.info(`🛡️🎯 [CONCRETE ARMOR] Auto-arming on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
             mcpClient.setTpSl({
               symbol: pos.symbol,
               tpTrigger: targetTp > 0 ? targetTp : undefined,
               slTrigger: hardSl,
             }).then(() => {
-              logger.info(`🛡️ [CONCRETE ARMOR] Successfully secured hard on-chain Stop Loss for ${pos.symbol} at $${hardSl}`);
+              logger.info(`🛡️🎯 [CONCRETE ARMOR] Successfully secured hard on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
             }).catch((err: any) => {
-              logger.warn(`Failed auto-arming hard SL for ${pos.symbol}: ${err.message}`);
+              logger.warn(`Failed auto-arming TP/SL for ${pos.symbol}: ${err.message}`);
             });
           }
         }
@@ -980,8 +1038,8 @@ export class TradeExecutor {
         notes: aiEval.reasoning,
         hardStopLoss: hardSlPrice,
         softRatchetPrice: signal.stopLoss || hardSlPrice,
-        estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
-        estimatedLossPct: hardSlPrice && signal.entryPrice ? Math.abs((signal.entryPrice - hardSlPrice) / signal.entryPrice) * 100 * risk.leverage : 15.0,
+        estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Number((Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage).toFixed(1)) : 15.0,
+        estimatedLossPct: (signal.stopLoss || hardSlPrice) && signal.entryPrice ? Number((Math.abs((signal.entryPrice - (signal.stopLoss || hardSlPrice)) / signal.entryPrice) * 100 * risk.leverage).toFixed(1)) : 15.0,
         estimatedWinRatePct: aiEval.confidenceScore || 78,
         atr: signal.indicators.atr14,
         lifecycleEvents: [initialLifecycleEvent],

@@ -440,9 +440,15 @@ class TradeDatabase {
           if (isClose) {
             const finalStatus = pnl > 0.005 ? 'CLOSED_TP' : (pnl < -0.005 ? 'CLOSED_SL' : 'CLOSED');
             const smartReason = pnl > 0.005 ? 'TRAILING_TP' : (pnl < -0.005 ? 'STOP_LOSS' : 'ON_CHAIN_DEX_CLOSE');
+            let dynStrat = 'Autonomous AI Strategy';
+            try {
+              const { getActiveStrategy } = require('../strategy/manager');
+              const active = getActiveStrategy();
+              if (active?.name) dynStrat = active.name;
+            } catch {}
             const stratName = (!existing.strategy_name || existing.strategy_name === 'Manual Decibel Trade') && isAgent
-              ? 'Turtle Soup & Liquidity Grab'
-              : (existing.strategy_name || (isAgent ? 'Turtle Soup & Liquidity Grab' : 'Manual Decibel Trade'));
+              ? dynStrat
+              : (existing.strategy_name || (isAgent ? dynStrat : 'Manual Decibel Trade'));
 
             this.db.prepare(`
               UPDATE trades 
@@ -483,8 +489,18 @@ class TradeDatabase {
       // Fallback: Insert new distinct on-chain trade with explicit strategy attribution
       const isManual = isAgent ? 0 : 1;
       const id = clientOrderId || (txVersion ? `txn-${txVersion}` : `oct-${oct.transaction_unix_ms}`);
-      const fallbackStrategyName = isAgent ? 'Turtle Soup & Liquidity Grab' : 'Manual Decibel Trade';
-      const fallbackStrategyTags = isAgent ? JSON.stringify(['template_turtle_soup']) : JSON.stringify(['Manual', 'On-Chain']);
+      let dynStratName = 'Autonomous AI Strategy';
+      let dynStratTag = 'sim_strategy';
+      try {
+        const { getStrategyForPair, getActiveStrategy } = require('../strategy/manager');
+        const strat = (normSymbol ? getStrategyForPair(normSymbol) : getActiveStrategy()) || getActiveStrategy();
+        if (strat) {
+          dynStratName = strat.name;
+          dynStratTag = strat.id;
+        }
+      } catch {}
+      const fallbackStrategyName = isAgent ? dynStratName : 'Manual Decibel Trade';
+      const fallbackStrategyTags = isAgent ? JSON.stringify([dynStratTag]) : JSON.stringify(['Manual', 'On-Chain']);
 
       this.upsertTrade({
         id,
@@ -907,7 +923,7 @@ class TradeDatabase {
     try {
       const rows = this.db.prepare(`
         SELECT 
-          COALESCE(strategy_name, CASE WHEN is_manual = 1 THEN 'Manual Decibel Trade' ELSE 'Turtle Soup & Liquidity Grab' END) as sName,
+          COALESCE(strategy_name, CASE WHEN is_manual = 1 THEN 'Manual Decibel Trade' ELSE 'Autonomous AI Strategy' END) as sName,
           MAX(strategy_tags) as sTags,
           COUNT(*) as totalTrades,
           SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as openTrades,

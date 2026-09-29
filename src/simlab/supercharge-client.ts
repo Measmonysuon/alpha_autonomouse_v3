@@ -620,18 +620,26 @@ export class SimLabSuperchargeClient {
       applySimStrategyDirectives({
         activeStrategyId: bundle.strategy.activeStrategyId,
         activeStrategyName: bundle.strategy.activeStrategyName,
+        description: bundle.strategy.description,
+        strategyDescription: bundle.strategy.description,
+        author: bundle.strategy.author,
+        fullStrategy: bundle.strategy.fullStrategy,
         minConfidenceGate: bundle.strategy.minConfidenceGate,
         leverage: bundle.strategy.leverage,
         minAllocPct: bundle.strategy.minAllocPct,
         maxAllocPct: bundle.strategy.maxAllocPct,
         minRiskRewardRatio: bundle.strategy.minRiskRewardRatio,
         tp1CloseRatio: bundle.strategy.tp1CloseRatio,
+        stagnationTimeStopBars: bundle.strategy.stagnationTimeStopBars,
+        enforcePostOnly: bundle.strategy.enforcePostOnly ?? bundle.strategy.layer5?.enforcePostOnly,
+        makerFillTimeoutMs: bundle.strategy.makerFillTimeoutMs ?? bundle.strategy.layer5?.makerFillTimeoutMs,
+        allowTakerFallback: bundle.strategy.allowTakerFallback ?? bundle.strategy.layer5?.allowTakerFallback,
         layer1: this.featureFlags.syncIndicators ? bundle.strategy.layer1 : undefined,
         layer2: this.featureFlags.syncIndicators ? bundle.strategy.layer2 : undefined,
         layer3: this.featureFlags.syncIndicators ? bundle.strategy.layer3 : undefined,
         layer4: bundle.strategy.layer4,
         dynamicScoreFloor: bundle.strategy.dynamicScoreFloor,
-        overallWinRatePct: bundle.learning?.overallWinRatePct,
+        overallWinRatePct: bundle.strategy.overallWinRatePct ?? bundle.learning?.overallWinRatePct,
       });
 
       if (bundle.pairDirectives && typeof bundle.pairDirectives === 'object') {

@@ -2,10 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+
 const TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 const OWNER = process.env.GITHUB_OWNER || 'Measmonysuon';
 const REPO = process.env.GITHUB_REPO || 'alpha_autonomouse_v3';
-const TAG = process.env.RELEASE_TAG || 'v3.0.0';
+const TAG = process.env.RELEASE_TAG || `v${pkg.version}`;
 
 if (!TOKEN) {
   console.warn('⚠️ GITHUB_TOKEN environment variable is not set. Specify GITHUB_TOKEN to upload release assets.');
@@ -75,28 +77,28 @@ async function main() {
   let relRes = await apiRequest('GET', `/repos/${OWNER}/${REPO}/releases/tags/${TAG}`);
   let release = relRes.body;
 
-  const releaseNotes = `### 🚀 Alpha Autonomous Client v3.0.0 — Production Institutional Fleet Release
+  const releaseTitle = `Alpha Autonomous Client ${TAG} — Production Fleet Release`;
+  const releaseNotes = `### 🚀 Alpha Autonomous Client ${TAG} — Institutional Fleet Release
 
-#### 🌟 Institutional Risk & Execution Upgrades
-- **Maker-First PostOnly Routing**: Zero taker-fee execution using FVG limit order positioning with autonomous maker-or-cancel safeguards.
-- **Dynamic 2.0x–2.5x ATR Breakeven Ratchet**: Automatically locks in risk-free status once trades hit institutional expansion targets, preventing round-tripping.
-- **Institutional Liquidity & Cascade Filters**: Enforces $5.0M+ minimum depth cluster validation and blocks entries during severe open interest cascades (ΔOI < -2.0%).
-- **Sub-50ms Real-Time Fleet Immunity Bus**: Telemetry feeder automatically checks Sim Lab veto bus before executing any trade signal.
-- **Decibel DEX MCP Stdio Transport**: Full native integration with Decibel on-chain trade fills and Aptos mainnet accounts.
-- **On-Chain Fill & Trade Reconciliation**: Accurate pairing of open and close fills with real realized PnL and fee attribution.
-- **Guided Onboarding Wizard**: Streamlined setup flow for delegate keys, trading subaccounts, gas signer verification, and AI selection.
-- **Self-Healing Connectivity**: Resilient auto-reconnect backoff loop ensuring zero manual intervention during Sim Lab server maintenance.
+#### 🌟 Key Upgrades & Features
+- **Always-Active Dual-Phase Ratchet Mechanism**:
+  - **Capital Guard Phase (\`[GUARD]\`)**: Active between Entry and Hard SL during drawdowns (Red). Rendered in Cyan across candlestick canvas and 4-tile price matrix (never hidden).
+  - **Profit Lock Phase (\`[LOCK]\`)**: Sits between Entry and Take-Profit with emerald badge once Sim Lab confirms statistical breakaway.
+  - **Anti-Pullback / Wick Tolerance**: Prevents premature profit locking on small market pullbacks or minor wicks; strictly governed by Sim Lab breakaway clearance ($\ge 1.75R$ and $\ge 2.0\times\\text{ ATR}$).
+- **Real-Time Sim Lab Synchronization**: Live directives ingestion (regime adaptation, cool-off locks, dynamic harvester parameters).
+- **Dual-Layer Stop Loss Armor**: Permanent side-by-side visibility of On-Chain Hard SL and Soft Dynamic Ratchet on 4-tile matrix, candlestick canvas, and range progress gauges.
+- **Trade Execution Invariant Hardening**: Safe ATR stop loss anchoring and clean Decibel DEX on-chain fill reconciliation.
 
-#### 📦 Downloadable Packages:
-- \`alpha-client-v3-macos.zip\` (macOS Standalone 1-Click Bundle)
-- \`alpha-client-v3-windows.zip\` (Windows Standalone 1-Click Bundle)
+#### 📦 Downloadable Standalone Packages:
+- \`alpha-client-v3-macos.zip\` (macOS Standalone 1-Click Launcher)
+- \`alpha-client-v3-windows.zip\` (Windows Standalone 1-Click Launcher)
 - \`alpha-client-v3-docker.zip\` (Docker Production Compose Bundle)`;
 
   if (relRes.status !== 200 || !release.id) {
     console.log('2. Release not found, creating release object for tag:', TAG);
     const createRes = await apiRequest('POST', `/repos/${OWNER}/${REPO}/releases`, {
       tag_name: TAG,
-      name: `Alpha Autonomous Client v3.0.0 — Production Fleet Release`,
+      name: releaseTitle,
       body: releaseNotes,
       draft: false,
       prerelease: false
@@ -107,7 +109,7 @@ async function main() {
     console.log('Found existing release ID:', release.id);
     console.log('Updating release notes and title...');
     await apiRequest('PATCH', `/repos/${OWNER}/${REPO}/releases/${release.id}`, {
-      name: `Alpha Autonomous Client v3.0.0 — Production Fleet Release`,
+      name: releaseTitle,
       body: releaseNotes
     });
   }

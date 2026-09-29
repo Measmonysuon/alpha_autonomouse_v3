@@ -169,7 +169,7 @@ export class RiskGuard {
         }
       } catch {}
 
-      // Check Institutional Liquidity Depth Screening ($5M Min Clusters)
+      // Check Institutional Liquidity Depth Screening ($4M Min Clusters per Pillar 3)
       try {
         const { getSimPairDirective } = require('../strategy/manager');
         const simDir = getSimPairDirective(signal.symbol);
@@ -177,9 +177,9 @@ export class RiskGuard {
         if (clusters) {
           const totalDepth = (clusters.longLiquidationUsd || 0) + (clusters.shortLiquidationUsd || 0);
           const PRIMARY_MAJORS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
-          if (totalDepth > 0 && totalDepth < 5_000_000 && !PRIMARY_MAJORS.includes(signal.symbol)) {
+          if (totalDepth > 0 && totalDepth < 4_000_000 && !PRIMARY_MAJORS.includes(signal.symbol)) {
             if (aiEval.confidenceScore < 85) {
-              const reason = `🛑 Institutional Liquidity Gate: Total cluster depth ($${(totalDepth / 1e6).toFixed(2)}M) is below institutional threshold ($5M) and score (${aiEval.confidenceScore}) < 85.`;
+              const reason = `🛑 Institutional Liquidity Gate: Total cluster depth ($${(totalDepth / 1e6).toFixed(2)}M) is below institutional threshold ($4M) and score (${aiEval.confidenceScore}) < 85.`;
               logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
               return this.reject(reason, directives, accountEquity, availableMargin);
             }
