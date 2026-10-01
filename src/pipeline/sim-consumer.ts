@@ -90,6 +90,28 @@ export interface AlphaBundleResponse {
     accelerateBreakevenR?: number;
     makerOffsetPct?: number;
     orderbookSpreadPct?: number;
+    regime?: {
+      type: string;
+      displayName: string;
+      trendDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+      confidence: number;
+      primaryBlueprint: string;
+      recommendedBlueprints: string[];
+      adx: number;
+      atrExpansionRatio: number;
+      isBbSqueeze: boolean;
+      isNr7: boolean;
+      reasons: string[];
+    };
+    keyLevels?: {
+      poc: number;
+      vah: number;
+      val: number;
+      valueAreaWidthPct: number;
+      activeVpocs: number[];
+      dProcTrend?: string;
+      lvns: number[];
+    };
   }>;
   learning: {
     overallWinRatePct: number;
@@ -223,7 +245,7 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
 
     // ── 3. Financial Guardrails (Live Mainnet Safety) ──────────────────────────
     const maxLeverageLimit = config.MAX_LEVERAGE || 5;
-    const maxAllocLimit = config.MAX_POSITION_ALLOC_PCT || 35;
+    const maxAllocLimit = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 35;
 
     const safeLeverage = bundle.strategy?.leverage
       ? Math.min(bundle.strategy.leverage, maxLeverageLimit)
@@ -300,7 +322,16 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
     // Inherited: per-pair cooldowns, directional bans, SL multipliers,
     // confidence gate overrides, bull-trap sensitivity calibration.
     if (flags.syncStrategyStudio && bundle.pairDirectives && typeof bundle.pairDirectives === 'object') {
-      applySimPairDirectives(bundle.pairDirectives);
+      const sanitizedPairDirectives: Record<string, any> = {};
+      for (const [sym, dir] of Object.entries(bundle.pairDirectives as Record<string, any>)) {
+        if (dir && typeof dir === 'object') {
+          sanitizedPairDirectives[sym] = {
+            ...dir,
+            ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, maxLeverageLimit) } : {}),
+          };
+        }
+      }
+      applySimPairDirectives(sanitizedPairDirectives);
     }
 
     // ── 6. Harvester Profile (LICENSED) ────────────────────────────────────────

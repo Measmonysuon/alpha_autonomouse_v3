@@ -12,9 +12,10 @@
  */
 
 import axios from 'axios';
+import { config } from '../config';
 import { logger } from '../utils/logger';
 import { analyzeSMC, SMCAnalysis } from './smc-detector';
-import { getStrategyForPair, getPairOverrides, getActiveStrategy } from '../strategy/manager';
+import { getStrategyForPair, getPairOverrides, getActiveStrategy, getSimPairDirectives } from '../strategy/manager';
 import type { LeverageMode, StrategyAttribution, StrategyConfig } from '../strategy/types';
 
 // ─── Types & Interfaces ────────────────────────────────────────────────────────
@@ -1111,6 +1112,45 @@ export class StandaloneTradingEngine {
         reasons.push(`⚠️ ADX CHOP GATE: ADX (${ind.adx14}) < 18 indicates consolidation chop. Capped at 65%.`);
       }
 
+      // ── Gate 7: Institutional 4-Regime & Volume Profile (Sim Lab Port 4000) ──
+      const allSimDirs = getSimPairDirectives();
+      const simPairDir = allSimDirs[symbol] || allSimDirs[symbol?.toUpperCase()];
+      if (simPairDir) {
+        // 7a. Compression Squeeze — hard cap at 65% until breakout
+        if (simPairDir.regime?.type === 'REGIME_COMPRESSION_SQUEEZE' && simPairDir.regime?.isBbSqueeze) {
+          technicalScore = Math.min(technicalScore, 65);
+          reasons.push(`📦 SQUEEZE LOCK [Sim Lab]: BB(20,2σ) coiled inside Keltner(20,1.5×ATR). Pre-breakout compression. Capped at 65%.`);
+        }
+        // 7b. Strong Trend regime — directional bonus/penalty
+        if (simPairDir.regime?.type === 'REGIME_STRONG_TREND') {
+          const regTrend = simPairDir.regime.trendDirection;
+          if ((action === 'LONG' && regTrend === 'BULLISH') || (action === 'SHORT' && regTrend === 'BEARISH')) {
+            technicalScore = Math.min(72, technicalScore + 6);
+            reasons.push(`⚡ REGIME ALIGNMENT [Sim Lab]: Aligned with ${simPairDir.regime.displayName} (+6% trend rider).`);
+          } else if (regTrend !== 'NEUTRAL') {
+            technicalScore = Math.min(technicalScore, 58);
+            reasons.push(`⚠️ REGIME CONFLICT [Sim Lab]: Counter-trend against ${simPairDir.regime.displayName}. Capped at 58%.`);
+          }
+        }
+        // 7c. Volume Profile — vPOC tap confluence
+        const kl = simPairDir.keyLevels;
+        if (kl?.activeVpocs?.length > 0) {
+          const nearestVpoc = kl.activeVpocs.find((vp: number) => Math.abs(entry - vp) / vp <= 0.0035);
+          if (nearestVpoc) {
+            technicalScore = Math.min(72, technicalScore + 7);
+            reasons.push(`🎯 VIRGIN POC TAP [Sim Lab]: Institutional liquidity sweep & bounce at $${nearestVpoc.toFixed(4)} (+7% vPOC edge).`);
+          }
+        }
+        // 7d. Developing POC migration alignment
+        if (kl?.dProcTrend === 'STEPPING_UP' && action === 'LONG') {
+          technicalScore = Math.min(72, technicalScore + 4);
+          reasons.push(`📈 D-POC MIGRATION [Sim Lab]: Developing POC stepping up — bullish value migration (+4%).`);
+        } else if (kl?.dProcTrend === 'STEPPING_DOWN' && action === 'SHORT') {
+          technicalScore = Math.min(72, technicalScore + 4);
+          reasons.push(`📉 D-POC MIGRATION [Sim Lab]: Developing POC stepping down — bearish value migration (+4%).`);
+        }
+      }
+
       // ── 3. LAYER 3: Smart Money Concepts (SMC) Confluence Key ──────────────
       let smcBonus = 0;
       if (ind.smc && activeStrategy.layer3.enabled) {
@@ -1219,20 +1259,56 @@ export class StandaloneTradingEngine {
       layer5: activeStrategy.layer5,
     });
 
-    let leverage = dynamicLev.leverage;
+    const hardMaxLev = config.MAX_LEVERAGE || 5;
+    let leverage = Math.min(dynamicLev.leverage, hardMaxLev);
     if (pairOverrides && typeof pairOverrides.maxLeverage === 'number' && pairOverrides.maxLeverage > 0) {
-      if (leverage > pairOverrides.maxLeverage) {
-        reasons.push(`🛡️ PAIR LEVERAGE CAP: Leverage ${leverage}x capped to pair limit ${pairOverrides.maxLeverage}x`);
-        leverage = pairOverrides.maxLeverage;
+      const pairCap = Math.min(pairOverrides.maxLeverage, hardMaxLev);
+      if (leverage > pairCap) {
+        reasons.push(`🛡️ PAIR LEVERAGE CAP: Leverage ${leverage}x capped to pair limit ${pairCap}x`);
+        leverage = pairCap;
       }
     }
     if (action !== 'HOLD') {
       reasons.push(dynamicLev.explanation);
+
+      // Strict Invariant: Soft SL must ALWAYS stay strictly between entry and catastrophic Hard SL
+      if (entry > 0) {
+        const hardSlDist = entry * (0.15 / Math.max(1, leverage));
+        const hardSlEst = action === 'LONG' ? entry - hardSlDist : entry + hardSlDist;
+        if (action === 'LONG') {
+          const maxSoftSl = entry * 0.997;
+          const minSoftSl = hardSlEst * 1.002;
+          sl = Number(Math.max(minSoftSl, Math.min(maxSoftSl, sl)).toFixed(4));
+        } else if (action === 'SHORT') {
+          const minSoftSl = entry * 1.003;
+          const maxSoftSl = hardSlEst * 0.998;
+          sl = Number(Math.min(maxSoftSl, Math.max(minSoftSl, sl)).toFixed(4));
+        }
+      }
     }
 
     // Gate threshold check (pair override or active strategy)
     const minGate = pairOverrides?.minConfidenceGate || activeStrategy.layer5?.minConfidenceGate || 75;
-    const isTriggered = action !== 'HOLD' && confidence >= minGate;
+    let isTriggered = action !== 'HOLD' && confidence >= minGate;
+
+    // Institutional Veto 1: Empirical Pair Quarantine & Pair Ban Check
+    if (pairOverrides) {
+      const pOver = pairOverrides as any;
+      if (pOver.probationActive || pOver.shadowModeOnly || pOver.bannedSide === 'BOTH') {
+        isTriggered = false;
+        reasons.push(`🛑 QUANT QUARANTINE: ${symbol} is quarantined to Paper Shadow Simulation. Live orders forbidden.`);
+      } else if (pOver.bannedSide === action) {
+        isTriggered = false;
+        reasons.push(`🛑 PAIR BAN: Direction ${action} is banned for ${symbol} by Sim Lab directive.`);
+      }
+    }
+
+    // Institutional Veto 2: Hard Directional Ban in RISK_ON_BETA / TRENDING_BULL
+    const isRiskOnBetaOrBull = this.directives.regime === 'RISK_ON_BETA' || this.directives.regime === 'TRENDING_BULL' || this.directives.bannedSides?.includes('SHORT');
+    if (action === 'SHORT' && isRiskOnBetaOrBull) {
+      isTriggered = false;
+      reasons.push(`🛑 HARD DIRECTIONAL BAN: SHORTs are strictly prohibited across all pairs under ${this.directives.regime || 'RISK_ON_BETA'} regime.`);
+    }
 
     const isCustomPair = Boolean(pairOverrides && (
       typeof pairOverrides.layer1 === 'boolean' ||

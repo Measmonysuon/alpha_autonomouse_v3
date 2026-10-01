@@ -617,6 +617,15 @@ export class SimLabSuperchargeClient {
       if (stratName) {
         sanitized.activeStrategy = String(stratName);
       }
+      const clientMaxLev = config.MAX_LEVERAGE || 5;
+      const clientMaxAlloc = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 35;
+      const safeLeverage = typeof bundle.strategy.leverage === 'number'
+        ? Math.min(bundle.strategy.leverage, clientMaxLev)
+        : clientMaxLev;
+      const safeMaxAlloc = typeof bundle.strategy.maxAllocPct === 'number'
+        ? Math.min(bundle.strategy.maxAllocPct, clientMaxAlloc)
+        : clientMaxAlloc;
+
       applySimStrategyDirectives({
         activeStrategyId: bundle.strategy.activeStrategyId,
         activeStrategyName: bundle.strategy.activeStrategyName,
@@ -625,9 +634,9 @@ export class SimLabSuperchargeClient {
         author: bundle.strategy.author,
         fullStrategy: bundle.strategy.fullStrategy,
         minConfidenceGate: bundle.strategy.minConfidenceGate,
-        leverage: bundle.strategy.leverage,
+        leverage: safeLeverage,
         minAllocPct: bundle.strategy.minAllocPct,
-        maxAllocPct: bundle.strategy.maxAllocPct,
+        maxAllocPct: safeMaxAlloc,
         minRiskRewardRatio: bundle.strategy.minRiskRewardRatio,
         tp1CloseRatio: bundle.strategy.tp1CloseRatio,
         stagnationTimeStopBars: bundle.strategy.stagnationTimeStopBars,
@@ -643,7 +652,16 @@ export class SimLabSuperchargeClient {
       });
 
       if (bundle.pairDirectives && typeof bundle.pairDirectives === 'object') {
-        applySimPairDirectives(bundle.pairDirectives);
+        const sanitizedPairDirectives: Record<string, any> = {};
+        for (const [sym, dir] of Object.entries(bundle.pairDirectives as Record<string, any>)) {
+          if (dir && typeof dir === 'object') {
+            sanitizedPairDirectives[sym] = {
+              ...dir,
+              ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, clientMaxLev) } : {}),
+            };
+          }
+        }
+        applySimPairDirectives(sanitizedPairDirectives);
       }
 
       if (bundle.harvester && typeof bundle.harvester === 'object') {
@@ -888,6 +906,22 @@ export class SimLabSuperchargeClient {
       subaccountAddress: config.DECIBEL_SUBACCOUNT_ADDRESS,
       paperTrading: config.PAPER_TRADING,
       budgetUsd: config.BUDGET_USD,
+      budgetCeilingUsd: config.BUDGET_USD,
+      maxLeverage: config.MAX_LEVERAGE || 5,
+      maxLeverageCap: config.MAX_LEVERAGE || 5,
+      maxPositionUsd: (config as any).MAX_POSITION_USD || 60,
+      maxAllocPct: config.MAX_ALLOC_PCT || 35,
+      maxCapitalCeilingPct: 100,
+      lockLocalRiskLimits: true,
+      tradingSettings: {
+        budgetCeilingUsd: config.BUDGET_USD,
+        budgetUsd: config.BUDGET_USD,
+        maxLeverage: config.MAX_LEVERAGE || 5,
+        maxLeverageCap: config.MAX_LEVERAGE || 5,
+        maxPositionUsd: (config as any).MAX_POSITION_USD || 60,
+        maxAllocPct: config.MAX_ALLOC_PCT || 35,
+        lockLocalRiskLimits: true,
+      },
       totalTrades: stats.totalTrades,
       winRate: stats.winRate,
       totalPnlUsd: stats.totalPnlUsd,

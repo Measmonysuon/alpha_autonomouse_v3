@@ -138,8 +138,12 @@ export class TradeExecutor {
     this.initAptosSigner();
   }
 
-  public markExecutionInFlight(symbol: string): void {
-    this.inFlightSymbols.add(symbol.replace('-', '/').toUpperCase());
+  public markExecutionInFlight(symbol: string, durationMs?: number): void {
+    const key = symbol.replace('-', '/').toUpperCase();
+    this.inFlightSymbols.add(key);
+    if (durationMs && durationMs > 0) {
+      setTimeout(() => this.inFlightSymbols.delete(key), durationMs);
+    }
   }
 
   public clearExecutionInFlight(symbol: string): void {
@@ -495,9 +499,14 @@ export class TradeExecutor {
         } else if (!isLong && ratchetedSl > 0 && initialSoftSl > 0) {
           activeSl = Math.min(ratchetedSl, initialSoftSl);
         }
-        const softRatchet = existing?.softRatchetPrice && existing.softRatchetPrice > 0
+        let softRatchet = existing?.softRatchetPrice && existing.softRatchetPrice > 0
           ? (isLong ? Math.max(existing.softRatchetPrice, activeSl) : Math.min(existing.softRatchetPrice, activeSl))
           : activeSl;
+        // Invariant: If trade has NOT locked breakeven/profit, softRatchet MUST NOT sit above entry price
+        if (!existing || !existing.breakevenMoved) {
+          if (isLong && softRatchet >= pos.entryPrice) softRatchet = activeSl;
+          else if (!isLong && softRatchet <= pos.entryPrice) softRatchet = activeSl;
+        }
 
         // 3. Dynamic Take Profit (anchored to 1.5x - 2.0x ATR, ~1.5% - 2.2% price move)
         const dynamicTpDist = Math.min(pos.entryPrice * 0.025, Math.max(pos.entryPrice * 0.012, softSlDist * 1.5));
@@ -597,6 +606,16 @@ export class TradeExecutor {
             existing.allocatedUsd = pos.allocatedUsd;
             modified = true;
           }
+          if (pos.unrealizedPnl !== undefined) {
+            existing.unrealizedPnlUsd = Number(pos.unrealizedPnl.toFixed(4));
+            const alloc = existing.allocatedUsd || 1;
+            existing.unrealizedPnlPct = Number(((pos.unrealizedPnl / alloc) * 100).toFixed(2));
+            existing.pnlUsd = Number(pos.unrealizedPnl.toFixed(4));
+            existing.netPnlUsd = Number(pos.unrealizedPnl.toFixed(4));
+          }
+          if (pos.markPrice && pos.markPrice > 0) {
+            existing.currentPrice = pos.markPrice;
+          }
           // Update strategy name and attribution if generic, template default, or out-of-sync with active Sim Lab directive
           const isGenericStrat = !existing.strategyName ||
             existing.strategyName === 'Decibel On-Chain Position' ||
@@ -624,16 +643,10 @@ export class TradeExecutor {
             modified = true;
           }
           if (pos.stopLoss && pos.stopLoss > 0) {
-            const localSl = existing.stopLoss || 0;
-            const isLong = existing.action === 'LONG';
-            // Protect ratcheted / trailing SL:
-            // Only adopt on-chain SL if local SL is unset (0),
-            // OR if on-chain SL is strictly MORE protective than local ratcheted SL
-            const isMoreProtective = localSl === 0 ||
-              (isLong ? pos.stopLoss > localSl : pos.stopLoss < localSl);
-            if (isMoreProtective && pos.stopLoss !== existing.stopLoss) {
-              logger.info(`🛡️ [RECONCILE] Updating ${existing.symbol} SL from DEX: $${existing.stopLoss} → $${pos.stopLoss} (more protective)`);
-              existing.stopLoss = pos.stopLoss;
+            // pos.stopLoss from DEX is the on-chain catastrophic Hard SL
+            if (existing.hardStopLoss !== pos.stopLoss) {
+              logger.info(`🛡️ [RECONCILE] Updating ${existing.symbol} Hard SL from DEX: $${existing.hardStopLoss} → $${pos.stopLoss}`);
+              existing.hardStopLoss = pos.stopLoss;
               modified = true;
             }
           }
@@ -646,16 +659,27 @@ export class TradeExecutor {
             modified = true;
           }
           // Calibrate dynamic stop loss to protected ATR level if missing or stuck at wide hard SL
-          if (!existing.stopLoss || existing.stopLoss <= 0 || Math.abs(existing.stopLoss - staticHardSl) / staticHardSl < 0.015 || (Math.abs(existing.stopLoss - (pos.entryPrice || existing.entryPrice)) / (pos.entryPrice || existing.entryPrice) > 0.025)) {
+          if (!existing.breakevenMoved && (!existing.stopLoss || existing.stopLoss <= 0 || Math.abs(existing.stopLoss - staticHardSl) / staticHardSl < 0.015)) {
             existing.stopLoss = initialSoftSl;
+            existing.softRatchetPrice = initialSoftSl;
             modified = true;
           }
           if (existing.softRatchetPrice && existing.softRatchetPrice > 0) {
             const isLong = existing.action === 'LONG';
-            // Ratchet can ONLY improve in favor of trade (up for Long, down for Short), never backward
-            existing.softRatchetPrice = isLong
-              ? Math.max(existing.softRatchetPrice, existing.stopLoss || 0)
-              : Math.min(existing.softRatchetPrice, existing.stopLoss || Infinity);
+            // Invariant: If trade has NOT locked breakeven/profit, ratchet MUST NOT sit above entry price
+            if (!existing.breakevenMoved) {
+              const maxSoft = isLong ? existing.entryPrice * 0.997 : (existing.hardStopLoss || hardSl) * 0.998;
+              const minSoft = isLong ? (existing.hardStopLoss || hardSl) * 1.002 : existing.entryPrice * 1.003;
+              existing.stopLoss = isLong
+                ? Number(Math.max(minSoft, Math.min(maxSoft, existing.stopLoss || initialSoftSl)).toFixed(4))
+                : Number(Math.min(maxSoft, Math.max(minSoft, existing.stopLoss || initialSoftSl)).toFixed(4));
+              existing.softRatchetPrice = existing.stopLoss;
+            } else {
+              // Ratchet can ONLY improve in favor of trade (up for Long, down for Short), never backward
+              existing.softRatchetPrice = isLong
+                ? Math.max(existing.softRatchetPrice, existing.stopLoss || 0)
+                : Math.min(existing.softRatchetPrice, existing.stopLoss || Infinity);
+            }
           }
           if (pos.liquidationPrice) existing.estimatedLiquidationPrice = pos.liquidationPrice;
 
@@ -882,19 +906,53 @@ export class TradeExecutor {
     }
 
     // Check if duplicate open trade exists for symbol or execution is already in flight
-    const existing = this.getOpenTrades().find((t) => t.symbol.replace('-', '/').toUpperCase() === symKey);
+    const openTrades = this.getOpenTrades();
+    const maxOpenPositions = (config as any).MAX_OPEN_POSITIONS || 3;
+    if (openTrades.length >= maxOpenPositions) {
+      const reason = `🛑 Max Concurrent Positions Reached: Active open positions (${openTrades.length}) >= configured limit (${maxOpenPositions}). Order rejected.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return { success: false, error: reason };
+    }
+
+    const existing = openTrades.find((t) => t.symbol.replace('-', '/').toUpperCase() === symKey);
     if (existing || this.isExecutionInFlight(symKey)) {
       return { success: false, error: `Position already open or order execution in flight for ${signal.symbol}` };
     }
 
+    // Real-time on-chain position & resting order checks: guarantee we don't open duplicate or stack orders
+    let liveOnChainPositions: any[] = [];
+    if (!config.PAPER_TRADING && this.aptosAccount) {
+      try {
+        liveOnChainPositions = await mcpClient.getPositions();
+        const hasOnChain = liveOnChainPositions.some((p) => p.symbol.replace('-', '/').toUpperCase() === symKey && ((p.sizeBase && p.sizeBase > 0) || (p.sizeUsd && p.sizeUsd > 0)));
+        if (hasOnChain) {
+          logger.warn(`🛡️ [DUPLICATE GUARD] On-chain position already exists for ${signal.symbol} on Decibel DEX. Order aborted.`);
+          return { success: false, error: `On-chain position already exists on Decibel DEX for ${signal.symbol}` };
+        }
+
+        // Check if resting uncancelled orders exist on DEX book for this symbol:
+        const liveOrders = await mcpClient.getOrders(signal.symbol);
+        const hasResting = liveOrders.some((o: any) => {
+          const oSym = (o.market || o.symbol || '').replace('-', '/').toUpperCase();
+          return oSym === symKey || oSym.includes(symKey.split('/')[0]);
+        });
+        if (hasResting) {
+          logger.warn(`🛡️ [RESTING ORDER GUARD] Resting order already pending on Decibel DEX for ${signal.symbol} (${liveOrders.length} orders). Aborting new entry to prevent order stacking.`);
+          return { success: false, error: `Resting limit order already pending on Decibel DEX for ${signal.symbol}` };
+        }
+      } catch {}
+    }
+
     this.markExecutionInFlight(symKey);
     try {
-      const currentAllocated = this.getOpenTrades().reduce((sum, t) => sum + (t.allocatedUsd || 0), 0);
+      const onChainAllocated = liveOnChainPositions.reduce((sum, p) => sum + (p.allocatedUsd || 0), 0);
+      const localAllocated = openTrades.reduce((sum, t) => sum + (t.allocatedUsd || 0), 0);
+      const currentAllocated = Math.max(onChainAllocated, localAllocated);
       const accountEquity = config.BUDGET_USD; // or live margin balance
       const availableMargin = Math.max(0, config.BUDGET_USD - currentAllocated);
 
       // 1. Run Pre-Trade Risk Guard
-      const risk = riskGuard.validateSignal(signal, aiEval, accountEquity, availableMargin, currentAllocated);
+      const risk = riskGuard.validateSignal(signal, aiEval, accountEquity, availableMargin, currentAllocated, openTrades.length);
       if (!risk.approved) {
         return { success: false, error: risk.reason };
       }
@@ -956,16 +1014,22 @@ export class TradeExecutor {
             risk.positionSizeUsd = liveResult.actualSize * signal.entryPrice;
           }
 
+          // Hard Stop Loss barrier (15% margin max risk catastrophic circuit breaker for on-chain DEX order book)
+          const hardSlPrice = signal.action === 'LONG'
+            ? Number((signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))).toFixed(4))
+            : Number((signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage))).toFixed(4));
+
           // Attach on-chain TP/SL directly onto Decibel DEX order book (position is guaranteed filled!)
-          if (signal.takeProfit > 0 || signal.stopLoss > 0) {
-            logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | SL: $${signal.stopLoss} on ${signal.symbol}...`);
+          // On-chain SL is strictly the HARD SL. Soft SL / Ratchet SL is managed off-chain inside our software system.
+          if (signal.takeProfit > 0 || hardSlPrice > 0) {
+            logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | Hard SL (On-Chain): $${hardSlPrice} on ${signal.symbol} (Soft Ratchet SL: $${signal.stopLoss} in-system)...`);
             try {
               await mcpClient.setTpSl({
                 symbol: signal.symbol,
                 tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
-                slTrigger: signal.stopLoss > 0 ? signal.stopLoss : undefined,
+                slTrigger: hardSlPrice > 0 ? hardSlPrice : undefined,
               });
-              logger.info(`✅ [ON-CHAIN TP/SL] Confirmed TP/SL placement for ${signal.symbol}`);
+              logger.info(`✅ [ON-CHAIN TP/SL] Confirmed Hard TP/SL placement for ${signal.symbol}`);
             } catch (tpErr: any) {
               logger.warn(`⚠️ [ON-CHAIN TP/SL] Placement note: ${tpErr?.message || tpErr}`);
             }
@@ -990,25 +1054,45 @@ export class TradeExecutor {
 
       // Hard Stop Loss barrier (15% margin max risk)
       const hardSlPrice = signal.action === 'LONG'
-        ? signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))
-        : signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage));
+        ? Number((signal.entryPrice * (1 - 0.15 / Math.max(1, risk.leverage))).toFixed(4))
+        : Number((signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage))).toFixed(4));
 
-      const slDistPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - (signal.stopLoss || hardSlPrice)) / signal.entryPrice * 100).toFixed(2) : '1.66';
-      const marginRiskPct = (Number(slDistPct) * risk.leverage).toFixed(1);
+      const hardSlDistPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - hardSlPrice) / signal.entryPrice * 100).toFixed(2) : '5.00';
+      const marginRiskPct = (Number(hardSlDistPct) * risk.leverage).toFixed(1);
       const coinSym = signal.symbol.split('/')[0] || signal.symbol;
 
       const initialLifecycleEvent: TradeLifecycleEvent = {
         timestamp: Date.now(),
         stage: 'ENTRY',
         title: `Entry: ${signal.action === 'LONG' ? 'Bought' : 'Sold short'} ${risk.positionSizeBase || ''} ${coinSym} @ $${signal.entryPrice.toFixed(2)} (${risk.leverage}x leverage)`,
-        description: `Initial Hard SL armed on-chain at $${(signal.stopLoss || hardSlPrice).toFixed(2)} (-${slDistPct}% price / -${marginRiskPct}% margin). Target TP1: $${(signal.takeProfit1 || signal.takeProfit || 0).toFixed(2)} | Target TP2: $${(signal.takeProfit2 || 0) > 0 ? '$' + signal.takeProfit2!.toFixed(2) : 'Dynamic Runner'}`,
+        description: `Initial Hard SL armed on-chain at $${hardSlPrice.toFixed(2)} (-${hardSlDistPct}% price / -${marginRiskPct}% margin). Soft Ratchet SL: $${(signal.stopLoss || hardSlPrice).toFixed(2)}. Target TP1: $${(signal.takeProfit1 || signal.takeProfit || 0).toFixed(2)} | Target TP2: $${(signal.takeProfit2 || 0) > 0 ? '$' + signal.takeProfit2!.toFixed(2) : 'Dynamic Runner'}`,
         price: signal.entryPrice,
         details: [
-          `Initial Hard SL armed on-chain at $${(signal.stopLoss || hardSlPrice).toFixed(2)} (-${slDistPct}% price / -${marginRiskPct}% margin).`,
+          `Initial Hard SL armed on-chain at $${hardSlPrice.toFixed(2)} (-${hardSlDistPct}% price / -${marginRiskPct}% margin).`,
+          `Initial Soft Ratchet SL in-system at $${(signal.stopLoss || hardSlPrice).toFixed(2)}.`,
           `Target TP1: $${(signal.takeProfit1 || signal.takeProfit || 0).toFixed(2)} | Target TP2: $${(signal.takeProfit2 || 0) > 0 ? '$' + signal.takeProfit2!.toFixed(2) : 'Dynamic Runner'}`,
           `Capital allocated: $${risk.allocatedUsd.toFixed(2)} (${risk.leverage}x cross-margin)`
         ]
       };
+
+      // Invariant: Soft SL must ALWAYS stay strictly between entryPrice and hardStopLoss at entry
+      const isLongTrade = signal.action === 'LONG';
+      let safeSoftSl = signal.stopLoss;
+      if (isLongTrade) {
+        // LONG: hardSlPrice < softSL < entryPrice
+        const maxSoftSl = Number((signal.entryPrice * 0.997).toFixed(4));
+        const minSoftSl = Number((hardSlPrice * 1.002).toFixed(4));
+        if (!safeSoftSl || safeSoftSl <= hardSlPrice || safeSoftSl >= signal.entryPrice) {
+          safeSoftSl = Number(Math.max(minSoftSl, Math.min(maxSoftSl, safeSoftSl || (signal.entryPrice * 0.985))).toFixed(4));
+        }
+      } else {
+        // SHORT: entryPrice < softSL < hardSlPrice
+        const minSoftSl = Number((signal.entryPrice * 1.003).toFixed(4));
+        const maxSoftSl = Number((hardSlPrice * 0.998).toFixed(4));
+        if (!safeSoftSl || safeSoftSl >= hardSlPrice || safeSoftSl <= signal.entryPrice) {
+          safeSoftSl = Number(Math.min(maxSoftSl, Math.max(minSoftSl, safeSoftSl || (signal.entryPrice * 1.015))).toFixed(4));
+        }
+      }
 
       // Record trade
       const trade: TradeRecord = {
@@ -1021,7 +1105,7 @@ export class TradeExecutor {
         takeProfit1: signal.takeProfit1,
         takeProfit2: signal.takeProfit2,
         isDualTp: signal.isDualTp,
-        stopLoss: signal.stopLoss,
+        stopLoss: safeSoftSl,
         sizeUsd: risk.positionSizeUsd,
         sizeBase: risk.positionSizeBase,
         leverage: risk.leverage,
@@ -1037,7 +1121,7 @@ export class TradeExecutor {
         strategyAttribution: signal.strategyAttribution,
         notes: aiEval.reasoning,
         hardStopLoss: hardSlPrice,
-        softRatchetPrice: signal.stopLoss || hardSlPrice,
+        softRatchetPrice: safeSoftSl,
         estimatedProfitPct: signal.takeProfit && signal.entryPrice ? Number((Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 * risk.leverage).toFixed(1)) : 15.0,
         estimatedLossPct: (signal.stopLoss || hardSlPrice) && signal.entryPrice ? Number((Math.abs((signal.entryPrice - (signal.stopLoss || hardSlPrice)) / signal.entryPrice) * 100 * risk.leverage).toFixed(1)) : 15.0,
         estimatedWinRatePct: aiEval.confidenceScore || 78,
@@ -1276,10 +1360,11 @@ export class TradeExecutor {
         try {
           const positions = await mcpClient.getPositions();
           const pos = positions.find((p) => p.symbol.replace('-', '/').toUpperCase() === symUpper);
-          if (pos && pos.size > 0) {
+          const hasFill = pos && ((pos.sizeBase && pos.sizeBase > 0) || (pos.sizeUsd && pos.sizeUsd > 0) || ((pos as any).size && (pos as any).size > 0));
+          if (hasFill) {
             fillConfirmed = true;
             actualFillPrice = pos.entryPrice || actualFillPrice;
-            actualFillSize = pos.size;
+            actualFillSize = pos.sizeBase || (pos as any).size || actualFillSize;
             logger.info(`⚡ [MAKER FILLED] Confirmed Maker execution on Decibel DEX! Symbol=${symbol} Entry=$${actualFillPrice} Size=${actualFillSize} (Zero Taker Fee Captured)`);
             break;
           }
@@ -1289,12 +1374,32 @@ export class TradeExecutor {
       }
 
       if (!fillConfirmed) {
-        logger.warn(`⏳ [MAKER TIMEOUT] Order unfilled after ${timeoutMs / 1000}s. Cancelling resting maker order to eliminate phantom risk...`);
+        logger.warn(`⏳ [MAKER TIMEOUT] Order unfilled after ${timeoutMs / 1000}s. Cancelling resting maker order ${clientOrderId} to eliminate phantom risk...`);
         try {
+          await mcpClient.cancelClientOrder(symbol, clientOrderId);
           await mcpClient.cancelAllOrders(symbol);
         } catch (cErr: any) {
-          logger.warn(`[MAKER TIMEOUT] cancelAllOrders notice: ${cErr?.message || cErr}`);
+          logger.warn(`[MAKER TIMEOUT] order cancellation notice: ${cErr?.message || cErr}`);
         }
+        // Enforce 60s cooldown for this symbol to prevent consecutive cycles from stacking resting orders
+        this.markExecutionInFlight(symUpper, 60000);
+
+        // Post-cancellation check: verify if the order filled right before/during the cancel window
+        try {
+          const finalPositions = await mcpClient.getPositions();
+          const finalPos = finalPositions.find((p) => p.symbol.replace('-', '/').toUpperCase() === symUpper);
+          if (finalPos && ((finalPos.sizeBase && finalPos.sizeBase > 0) || (finalPos.sizeUsd && finalPos.sizeUsd > 0))) {
+            logger.info(`⚡ [MAKER FILLED (JUST-IN-TIME)] Fill confirmed during cancel window! Symbol=${symbol} Entry=$${finalPos.entryPrice} Size=${finalPos.sizeBase}`);
+            return {
+              orderId: clientOrderId,
+              txHash: txRes.txHash,
+              filled: true,
+              isMaker: true,
+              actualEntryPrice: finalPos.entryPrice || actualFillPrice,
+              actualSize: finalPos.sizeBase || actualFillSize,
+            };
+          }
+        } catch {}
 
         if (allowTakerFallback) {
           logger.info(`⚡ [MAKER TIMEOUT] Fallback allowed — executing urgent IOC Taker order for ${symbol}...`);

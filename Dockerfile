@@ -31,7 +31,7 @@ COPY scripts ./scripts
 RUN mkdir -p logs data
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD curl -fs http://localhost:5000/health || exit 1
+  CMD curl -fs http://localhost:${HEALTH_PORT:-5000}/health || curl -fs http://localhost:5050/health || curl -fs http://localhost:5000/health || exit 1
 
 EXPOSE 5000
 
@@ -54,7 +54,7 @@ COPY dashboard ./dashboard
 RUN mkdir -p logs data
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD curl -fs http://localhost:5000/health || exit 1
+  CMD curl -fs http://localhost:${HEALTH_PORT:-5000}/health || curl -fs http://localhost:5050/health || curl -fs http://localhost:5000/health || exit 1
 
 EXPOSE 5000
 

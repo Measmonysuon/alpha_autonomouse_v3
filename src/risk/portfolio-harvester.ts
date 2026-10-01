@@ -157,7 +157,7 @@ export class PortfolioHarvester {
     minHarvestPct: 1.5,
     minHarvestUsd: 0.15,
     accelerateBreakevenR: 1.75,
-    breakevenFeeBufferPct: 0.25,
+    breakevenFeeBufferPct: 0.75,
     breakevenMinAtrMultiple: 2.0,
     executionStyle: 'PARTIAL_FIRST',
     enableDefensiveCut: true,
@@ -196,7 +196,7 @@ export class PortfolioHarvester {
     logger.info(
       `🌾 [HARVESTER] Config updated [Source: ${source}]: enabled=${this.config.enabled}, mode=${this.config.syncMode}, ` +
       `harvestGate=${this.config.harvestScoreThreshold}, minPct=${this.config.minHarvestPct}%, minUsd=$${this.config.minHarvestUsd}, ` +
-      `accelR=${this.config.accelerateBreakevenR}R, feeBuffer=${this.config.breakevenFeeBufferPct ?? 0.25}%, style=${this.config.executionStyle}`
+      `accelR=${this.config.accelerateBreakevenR}R, feeBuffer=${this.config.breakevenFeeBufferPct ?? 0.75}%, style=${this.config.executionStyle}`
     );
     return true;
   }
@@ -285,35 +285,62 @@ export class PortfolioHarvester {
       // Autonomous Anti-Hunt R: Check per-pair Sim Lab directive first, fallback to Harvester config
       const pairDir = this.config.syncMode === 'SIM_LAB_SYNC' ? getSimPairDirective(trade.symbol) : null;
       const targetR = pairDir?.accelerateBreakevenR || this.config.accelerateBreakevenR || 1.35;
-      const feeBufferPct = (this.config.breakevenFeeBufferPct ?? 0.25);
+      const feeBufferPct = (this.config.breakevenFeeBufferPct ?? 0.75);
 
       // Dynamic Trailing SL: Accelerate to breakeven if profit >= targetR or pnlPct >= minHarvestPct
       let breakevenLocked = false;
       const riskRewardRatio = distanceToSlPct > 0 ? Number((distanceToTpPct / distanceToSlPct).toFixed(2)) : 1.67;
 
-      // UNIVERSAL SL CLAMP INVARIANT:
-      // A LONG Stop Loss must NEVER sit on top of or above live market price.
-      // A SHORT Stop Loss must NEVER sit on top of or below live market price.
-      if (isLong && trade.stopLoss > 0 && currentPrice > 0 && trade.stopLoss >= currentPrice) {
-        const breakevenFloor = Number((trade.entryPrice * (1 + feeBufferPct / 100)).toFixed(4));
-        const maxSafeSl = Number((currentPrice * 0.997).toFixed(4));
-        const clampedSl = Math.min(maxSafeSl, Math.max(breakevenFloor, Number((trade.entryPrice * 0.985).toFixed(4))));
-        logger.warn(
-          `⚠️ [SL CLAMP] LONG stop loss was inverted ($${trade.stopLoss} >= market $${currentPrice.toFixed(4)}) for ${trade.symbol}! ` +
-          `Clamping to safe floor $${clampedSl} (entry: $${trade.entryPrice})`
-        );
-        trade.stopLoss = clampedSl;
+      // TRAILING / BREAKEVEN STOP LOSS HIT TRIGGER:
+      // If a trade already locked in breakeven or trailing profit and live price touches the ratchet:
+      const isTrailingOrBeHit = isLong
+        ? (trade.stopLoss > 0 && currentPrice > 0 && currentPrice <= trade.stopLoss && (trade.breakevenMoved || trade.stopLoss >= trade.entryPrice))
+        : (trade.stopLoss > 0 && currentPrice > 0 && currentPrice >= trade.stopLoss && (trade.breakevenMoved || trade.stopLoss <= trade.entryPrice));
+
+      if (isTrailingOrBeHit) {
+        logger.info(`🌾 [TRAILING / BREAKEVEN HIT] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched soft ratchet ($${trade.stopLoss})! Securing profit/breakeven exit...`);
+        const symKey = trade.symbol.replace('-', '/').toUpperCase();
+        tradeExecutor.markExecutionInFlight(symKey);
+        trade.status = 'closed_tp';
+        trade.exitPrice = currentPrice;
+        trade.exitReason = 'TRAILING_TP';
+        trade.closedAt = Date.now();
         tradeExecutor.saveTrades();
-      } else if (!isLong && trade.stopLoss > 0 && currentPrice > 0 && trade.stopLoss <= currentPrice) {
-        const breakevenFloor = Number((trade.entryPrice * (1 - feeBufferPct / 100)).toFixed(4));
-        const minSafeSl = Number((currentPrice * 1.003).toFixed(4));
-        const clampedSl = Math.max(minSafeSl, Math.min(breakevenFloor, Number((trade.entryPrice * 1.015).toFixed(4))));
-        logger.warn(
-          `⚠️ [SL CLAMP] SHORT stop loss was inverted ($${trade.stopLoss} <= market $${currentPrice.toFixed(4)}) for ${trade.symbol}! ` +
-          `Clamping to safe ceiling $${clampedSl} (entry: $${trade.entryPrice})`
-        );
-        trade.stopLoss = clampedSl;
+        if (!trade.isPaper) {
+          mcpClient.closePosition(trade.symbol).catch((err: any) => {
+            logger.warn(`Could not close on-chain position for ${trade.symbol} during trailing exit: ${err.message}`);
+          }).finally(() => {
+            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
+          });
+        }
+        tradeExecutor.notifyTradeClosed(trade);
+        continue;
+      }
+
+      // INITIAL SOFT STOP LOSS HIT TRIGGER (pre-breakeven):
+      // If live market price touches or breaches the soft stop loss, execute defensive market close:
+      const isInitialSlHit = isLong
+        ? (trade.stopLoss > 0 && currentPrice > 0 && currentPrice <= trade.stopLoss)
+        : (trade.stopLoss > 0 && currentPrice > 0 && currentPrice >= trade.stopLoss);
+
+      if (isInitialSlHit) {
+        logger.info(`🛑 [SOFT SL HIT] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched soft stop loss ($${trade.stopLoss})! Executing defensive market close...`);
+        const symKey = trade.symbol.replace('-', '/').toUpperCase();
+        tradeExecutor.markExecutionInFlight(symKey);
+        trade.status = 'closed_sl';
+        trade.exitPrice = currentPrice;
+        trade.exitReason = 'SOFT_STOP_LOSS';
+        trade.closedAt = Date.now();
         tradeExecutor.saveTrades();
+        if (!trade.isPaper) {
+          mcpClient.closePosition(trade.symbol).catch((err: any) => {
+            logger.warn(`Could not close on-chain position for ${trade.symbol} during soft SL exit: ${err.message}`);
+          }).finally(() => {
+            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
+          });
+        }
+        tradeExecutor.notifyTradeClosed(trade);
+        continue;
       }
 
       // Dynamic Trailing SL: Accelerate to breakeven only when price achieves confirmed statistical breakaway
@@ -335,15 +362,13 @@ export class PortfolioHarvester {
           trade.softRatchetPrice = breakevenFloor;
           breakevenLocked = true;
           tradeExecutor.saveTrades();
-          logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} LONG stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Mode: ${this.config.syncMode}${pairDir?.accelerateBreakevenR ? ' - Pair Autonomous R' : ''})`);
-          this.pushStopLossOnChain(trade);
+          logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} LONG soft stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
         } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > breakevenFloor + 0.0001) && breakevenFloor > currentPrice) {
           trade.stopLoss = breakevenFloor;
           trade.softRatchetPrice = breakevenFloor;
           breakevenLocked = true;
           tradeExecutor.saveTrades();
-          logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} SHORT stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Mode: ${this.config.syncMode}${pairDir?.accelerateBreakevenR ? ' - Pair Autonomous R' : ''})`);
-          this.pushStopLossOnChain(trade);
+          logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} SHORT soft stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
         } else if (isLong ? trade.stopLoss >= breakevenFloor - 0.0001 : trade.stopLoss <= breakevenFloor + 0.0001) {
           breakevenLocked = true;
         }
@@ -412,15 +437,13 @@ export class PortfolioHarvester {
             trade.softRatchetPrice = lockedProfitFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
-            logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} LONG trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}%`);
-            this.pushStopLossOnChain(trade);
+            logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} LONG soft trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
           } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > lockedProfitFloor + 0.0001) && lockedProfitFloor > currentPrice) {
             trade.stopLoss = lockedProfitFloor;
             trade.softRatchetPrice = lockedProfitFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
-            logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} SHORT trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}%`);
-            this.pushStopLossOnChain(trade);
+            logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} SHORT soft trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
           }
         }
       }
@@ -549,9 +572,9 @@ export class PortfolioHarvester {
 
           if (isTighter) {
             trade.stopLoss = Number(tightenedStopPrice.toFixed(4));
+            trade.softRatchetPrice = Number(tightenedStopPrice.toFixed(4));
             factors.push(`⏱️ Stagnation SL Tightened: Risk window reduced by 40% after ${holdHours.toFixed(1)}h chop`);
-            logger.info(`⏱️ [STAGNATION RATCHET] ${trade.symbol} stop loss tightened to $${trade.stopLoss} after ${holdHours.toFixed(1)}h stagnation.`);
-            this.pushStopLossOnChain(trade);
+            logger.info(`⏱️ [STAGNATION RATCHET] ${trade.symbol} soft stop loss tightened to $${trade.stopLoss} after ${holdHours.toFixed(1)}h stagnation (Soft SL on-system, On-Chain Hard SL remains intact).`);
           }
         }
       }
@@ -927,32 +950,8 @@ export class PortfolioHarvester {
     };
   }
 
-  private pushStopLossOnChain(trade: TradeRecord): void {
-    if (trade.isPaper) return;
-    const now = Date.now();
-    const sym = trade.symbol;
-    const lastTime = this.lastSlPushTime[sym] || 0;
-    const lastSl = this.lastPushedSl[sym] || 0;
-
-    // Minimum 10 seconds between pushes to avoid tx queue spam & sequence number conflicts
-    if (now - lastTime < 10000) return;
-
-    // Minimum meaningful price change (0.05%)
-    if (lastSl > 0 && Math.abs(trade.stopLoss - lastSl) / lastSl < 0.0005) return;
-
-    this.lastSlPushTime[sym] = now;
-    this.lastPushedSl[sym] = trade.stopLoss;
-
-    mcpClient.setTpSl({
-      symbol: trade.symbol,
-      slTrigger: trade.stopLoss,
-      tpTrigger: trade.takeProfit > 0 ? trade.takeProfit : undefined,
-    }).then(() => {
-      logger.info(`🔗 [ON-CHAIN SL SYNC] Successfully pushed ratcheted SL ($${trade.stopLoss}) to Decibel for ${trade.symbol}`);
-    }).catch((err: any) => {
-      logger.warn(`⚠️ [ON-CHAIN SL SYNC] Failed to push ratcheted SL to Decibel for ${trade.symbol}: ${err.message}`);
-    });
-  }
+  // Ratchet SL is purely soft SL on our system — do NOT push to on-chain DEX order book.
+  // On-chain SL is strictly reserved for the catastrophic Hard SL (15% margin risk).
 }
 
 export const portfolioHarvester = new PortfolioHarvester();
@@ -989,7 +988,7 @@ export function applySimHarvesterCalibration(cal: SimHarvesterCalibration): bool
   const accelerateBreakevenR = typeof cal.accelerateBreakevenR === 'number'
     ? Math.max(1.50, cal.accelerateBreakevenR)
     : 1.75;
-  const breakevenFeeBufferPct = typeof cal.breakevenFeeBufferPct === 'number' ? cal.breakevenFeeBufferPct : 0.25;
+  const breakevenFeeBufferPct = typeof cal.breakevenFeeBufferPct === 'number' ? Math.max(0.75, cal.breakevenFeeBufferPct) : 0.75;
   const breakevenMinAtrMultiple = typeof (cal as any).breakevenMinAtrMultiple === 'number'
     ? Math.max(1.5, (cal as any).breakevenMinAtrMultiple)
     : 2.0;

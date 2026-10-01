@@ -50,6 +50,8 @@ const configSchema = z.object({
 
   // ── Trading Settings ─────────────────────────────────────────────────────────
   BUDGET_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('BUDGET_USD') || 30.0)),
+  MAX_POSITION_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('MAX_POSITION_USD') || 60.0)),
+  MAX_OPEN_POSITIONS: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MAX_OPEN_POSITIONS') || 3)),
   CLIENT_ID: z.string().default(() => {
     const fromEnv = envOrFallback('CLIENT_ID');
     if (fromEnv) return fromEnv;
@@ -261,6 +263,10 @@ if (savedSettings.telegramChatId) rawConfig.TELEGRAM_CHAT_ID = savedSettings.tel
 
 const savedBudget = savedSettings.trading?.budgetUsd ?? savedSettings.budgetUsd;
 if (savedBudget !== undefined) rawConfig.BUDGET_USD = Number(savedBudget);
+const savedMaxPos = savedSettings.trading?.maxPositionUsd ?? savedSettings.maxPositionUsd;
+if (savedMaxPos !== undefined) rawConfig.MAX_POSITION_USD = Number(savedMaxPos);
+const savedMaxOpen = savedSettings.trading?.maxOpenPositions ?? savedSettings.maxOpenPositions;
+if (savedMaxOpen !== undefined) rawConfig.MAX_OPEN_POSITIONS = Number(savedMaxOpen);
 if (savedSettings.trading) {
   if (savedSettings.trading.paperTrading !== undefined) rawConfig.PAPER_TRADING = Boolean(savedSettings.trading.paperTrading);
   if (savedSettings.trading.watchPairs && savedSettings.trading.watchPairs.split(',').length >= 25) {
@@ -672,8 +678,15 @@ export function updateDynamicSettings(updates: any): void {
       if (tradingUpdates.maxPositionUsd !== undefined) {
         const rawMaxPos = Number(tradingUpdates.maxPositionUsd);
         const safeMaxPos = Math.min(rawMaxPos, config.BUDGET_USD);
+        config.MAX_POSITION_USD = safeMaxPos;
         merged.maxPositionUsd = safeMaxPos;
         merged.trading.maxPositionUsd = safeMaxPos;
+      }
+      if (tradingUpdates.maxOpenPositions !== undefined) {
+        const safeMaxOpen = Math.max(1, Number(tradingUpdates.maxOpenPositions));
+        config.MAX_OPEN_POSITIONS = safeMaxOpen;
+        merged.maxOpenPositions = safeMaxOpen;
+        merged.trading.maxOpenPositions = safeMaxOpen;
       }
       if (tradingUpdates.paperTrading !== undefined) {
         config.PAPER_TRADING = Boolean(tradingUpdates.paperTrading);
@@ -783,6 +796,8 @@ export function updateDynamicSettings(updates: any): void {
       TELEGRAM_BOT_TOKEN: config.TELEGRAM_BOT_TOKEN,
       TELEGRAM_CHAT_ID: config.TELEGRAM_CHAT_ID,
       BUDGET_USD: config.BUDGET_USD,
+      MAX_POSITION_USD: config.MAX_POSITION_USD,
+      MAX_OPEN_POSITIONS: config.MAX_OPEN_POSITIONS,
       PAPER_TRADING: config.PAPER_TRADING,
     });
   } catch (err: any) {

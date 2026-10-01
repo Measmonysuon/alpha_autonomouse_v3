@@ -54,6 +54,7 @@ import {
 } from './strategy/manager';
 import { dbClient, DbTrade } from './db/database';
 import { processUserMessage, registerCopilotHandlers } from './agent/copilot';
+import { getSystemHardwareStats, getDesktopGUIStatus, setDesktopGUIState } from './utils/system';
 
 export interface LogEntry {
   ts: number;
@@ -474,7 +475,7 @@ const origError = logger.error.bind(logger);
   pushLog('error', msg);
 };
 
-function parseBody(req: http.IncomingMessage): Promise<any> {
+function parseBody<T = any>(req: http.IncomingMessage): Promise<T> {
   return new Promise((resolve) => {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -482,7 +483,7 @@ function parseBody(req: http.IncomingMessage): Promise<any> {
       try {
         resolve(JSON.parse(body || '{}'));
       } catch {
-        resolve({});
+        resolve({} as T);
       }
     });
   });
@@ -1785,6 +1786,38 @@ function triggerBackgroundOnChainSync(): void {
       return;
     }
 
+    // ── 9b. System & Hardware Telemetry ──────────────────────────────────────
+    if (pathname === '/api/system/stats') {
+      try {
+        const stats = getSystemHardwareStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(stats));
+      } catch (err: any) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/system/gui' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getDesktopGUIStatus()));
+      return;
+    }
+
+    if (pathname === '/api/system/gui' && req.method === 'POST') {
+      try {
+        const data = await parseBody<{ enabled: boolean }>(req);
+        const status = await setDesktopGUIState(Boolean(data.enabled));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, gui: status }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
     // ── 10. General Settings Endpoint ────────────────────────────────────────
     if (pathname === '/api/settings') {
       if (req.method === 'GET') {
@@ -1833,6 +1866,8 @@ function triggerBackgroundOnChainSync(): void {
               hasSecondaryApiKey: Boolean(saved.ai?.secondaryApiKey || saved.secondaryApiKey || saved.secondaryAiApiKey),
               trading: {
                 budgetUsd: config.BUDGET_USD,
+                maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 60,
+                maxOpenPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
                 paperTrading: config.PAPER_TRADING,
                 clientName: config.CLIENT_NAME,
                 watchPairs: config.WATCH_PAIRS,
@@ -1841,6 +1876,8 @@ function triggerBackgroundOnChainSync(): void {
                 maxLeverage: config.MAX_LEVERAGE,
                 maxAllocPct: config.MAX_ALLOC_PCT,
               },
+              maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 60,
+              maxOpenPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
               telegram: telegramNotifier.getSettings(),
               security: {
                 hasAdminPassword: Boolean(config.ADMIN_PASSWORD && config.ADMIN_PASSWORD.trim() !== ''),
@@ -2947,7 +2984,7 @@ function triggerBackgroundOnChainSync(): void {
         currentPort = nextPort;
         config.HEALTH_PORT = currentPort;
         setTimeout(() => {
-          server.listen(currentPort);
+          server.listen(currentPort, '0.0.0.0');
         }, 200);
         return;
       }
@@ -2955,7 +2992,7 @@ function triggerBackgroundOnChainSync(): void {
     logger.error(`❌ [API SERVER] Server error: ${err.message}`);
   });
 
-  server.listen(currentPort, () => {
+  server.listen(currentPort, '0.0.0.0', () => {
     config.HEALTH_PORT = currentPort;
     logger.info(`🖥️  Dashboard & Health API listening on http://localhost:${currentPort}`);
     logger.info(`🩺 Health Check: http://localhost:${currentPort}/health`);

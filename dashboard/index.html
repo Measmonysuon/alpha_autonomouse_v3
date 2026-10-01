@@ -1552,6 +1552,38 @@
       border: 1px solid var(--border);
     }
 
+    .regime-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 7px;
+      border-radius: 12px;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    .regime-pill.regime-trend {
+      background: rgba(14, 165, 233, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(14, 165, 233, 0.35);
+    }
+    .regime-pill.regime-range {
+      background: rgba(168, 85, 247, 0.15);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.35);
+    }
+    .regime-pill.regime-volatile {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+    .regime-pill.regime-squeeze {
+      background: rgba(234, 179, 8, 0.15);
+      color: #facc15;
+      border: 1px solid rgba(234, 179, 8, 0.35);
+    }
+
     .market-price {
       font-size: 27px;
       font-weight: 800;
@@ -10378,6 +10410,18 @@
     let lastTrades = [];
     let lastStats = {};
 
+    window._cachedSimDirectives = null;
+    try {
+      const saved = localStorage.getItem('alpha_cached_sim_directives');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          window._latestSimDirectives = parsed;
+          window._cachedSimDirectives = parsed;
+        }
+      }
+    } catch (e) {}
+
     function isSameSymbol(a, b) {
       if (!a || !b) return false;
       if (a === b) return true;
@@ -13303,9 +13347,10 @@
       );
 
       const symUpper = (m.symbol || '').toUpperCase();
+      const pairDir = getSimPairDirectiveForCard(m.symbol);
       const rawOverrides = (window._pairOverrides && (window._pairOverrides[m.symbol] || window._pairOverrides[symUpper]))
         || (lastState?.pairOverrides && (lastState.pairOverrides[m.symbol] || lastState.pairOverrides[symUpper]))
-        || (_isSimConn && lastState?.simPairDirectives && (lastState.simPairDirectives[m.symbol] || lastState.simPairDirectives[symUpper]))
+        || (_isSimConn && pairDir)
         || {};
 
       // If disconnected, discard any residual SIM_LAB preset
@@ -14551,7 +14596,7 @@
           const defaultHardSl = isLong 
             ? p.entryPrice * (1 - 0.15 / lev) 
             : p.entryPrice * (1 + 0.15 / lev);
-          const hardSlPrice = p.hardStopLoss > 0 ? p.hardStopLoss : (p.stopLoss > 0 ? p.stopLoss : defaultHardSl);
+          const hardSlPrice = (p.hardStopLoss && p.hardStopLoss > 0) ? p.hardStopLoss : defaultHardSl;
 
           // Dual-Phase Dynamic Ratchet: ALWAYS active and visible (never hidden).
           // Phase 1 (GUARD): In Red or pre-breakaway, sits between Entry and Hard SL as a soft defense.
@@ -14725,7 +14770,8 @@
 
     // ── Positions ─────────────────────────────────────────────────────────────────
     function renderPositionCard(p) {
-      const sideClass = p.action === 'LONG' ? 'long' : 'short';
+      const isLong = (p.action || 'LONG').toUpperCase() === 'LONG';
+      const sideClass = isLong ? 'long' : 'short';
       const age = Math.floor((Date.now() - p.openedAt) / 60000);
       const ageStr = age < 60 ? age + 'm ago' : Math.floor(age / 60) + 'h ago';
 
@@ -14757,7 +14803,7 @@
       // Dual-Layer Stop Loss: 🛑 Hard On-chain SL vs 🛡️ Soft Dynamic Ratchet (ALWAYS ACTIVE)
       const lev = Math.max(1, p.leverage || 1);
       const defaultHardSl = isLong ? (p.entryPrice * (1 - 0.15 / lev)) : (p.entryPrice * (1 + 0.15 / lev));
-      const hardSlPrice = p.hardStopLoss > 0 ? p.hardStopLoss : (p.stopLoss > 0 ? p.stopLoss : defaultHardSl);
+      const hardSlPrice = (p.hardStopLoss && p.hardStopLoss > 0) ? p.hardStopLoss : defaultHardSl;
 
       // Dual-Phase Dynamic Ratchet: ALWAYS active and visible (never hidden).
       // Phase 1 (GUARD): In Red or pre-breakaway, sits between Entry and Hard SL as a soft defense.
@@ -15035,7 +15081,7 @@
       const lev = Math.max(1, p.leverage || 1);
       const isLong = p.action === 'LONG';
       const defaultHardSl = isLong ? (p.entryPrice * (1 - 0.15 / lev)) : (p.entryPrice * (1 + 0.15 / lev));
-      const hardSlPrice = p.hardStopLoss > 0 ? p.hardStopLoss : (p.stopLoss > 0 ? p.stopLoss : defaultHardSl);
+      const hardSlPrice = (p.hardStopLoss && p.hardStopLoss > 0) ? p.hardStopLoss : defaultHardSl;
       
       // Dual-Phase Dynamic Ratchet: ALWAYS active and visible (never hidden).
       const isLocked = (p.softRatchetPrice && p.softRatchetPrice > 0)
@@ -16615,7 +16661,7 @@
 
       // Determine active AI / Sim Lab engine for this pair
       const pairCoolOff = shockwave?.activeCoolOffs ? shockwave.activeCoolOffs[m.symbol] : null;
-      const isSimDirective = Boolean((pairCoolOff?.reason && pairCoolOff.reason.includes('SIM LAB')) || (lastState?.simPairDirectives && lastState.simPairDirectives[m.symbol]));
+      const isSimDirective = Boolean((pairCoolOff?.reason && pairCoolOff.reason.includes('SIM LAB')) || getSimPairDirectiveForCard(m.symbol));
       const routingEngine = lastState?.intelligenceRouting?.activeEngine;
 
       let modelUsed = trapVal?.modelUsed || (recentTrap?.modelUsed);
@@ -16648,6 +16694,12 @@
 
       const smcSummary = m.candlestick?.smc?.summary || 'SSL/BSL Sweeps & FVG Retest Active';
 
+      const pairDir = getSimPairDirectiveForCard(m.symbol);
+      const regimeData = pairDir?.regime;
+      const keyLevels = pairDir?.keyLevels;
+      const regimeBadgeHtml = generateRegimeBadgeHtml(pairDir);
+      const vpRowHtml = generateVpRowHtml(pairDir);
+
       return `
   <div class="market-card-container" id="${cardId}">
     <div class="market-card-inner${flippedClass}">
@@ -16663,7 +16715,10 @@
               </div>
               <div class="market-sub">${new Date(m.updatedAt).toLocaleTimeString()}</div>
             </div>
-            <span class="trend-badge trend-${m.trend}">${m.trend}</span>
+            <div style="display:flex;align-items:center;gap:5px;">
+              ${regimeBadgeHtml}
+              <span class="trend-badge trend-${m.trend}">${m.trend}</span>
+            </div>
           </div>
           <div class="market-price">${fmt(m.markPrice)}</div>
           <div class="market-change ${chgClass}">${fmtPct(chg)} 24h</div>
@@ -16687,6 +16742,7 @@
           </div>
           ${candle_badge}
           ${(cg_oi || cg_ls) ? `<div class="cg-row">${cg_oi}${cg_ls}</div>` : ''}
+          ${vpRowHtml}
           <div class="signal-row">
             <span class="action-badge action-${openPos ? (openPos.action || 'LONG').toUpperCase() : m.action}">${openPos ? `ACTIVE ${(openPos.action || 'LONG').toUpperCase()}` : m.action}</span>
             <span class="risk-badge risk-${m.riskLevel}">${m.riskLevel} RISK</span>
@@ -16792,6 +16848,24 @@
               </div>
               <div class="smc-scroll-box" style="font-weight:600;font-size:10.5px;line-height:1.4;color:#a7f3d0;max-height:56px;overflow-y:auto;white-space:pre-line;word-break:break-word;padding-right:4px;">${(smcSummary || 'Institutional liquidity footprints neutral').replace(/ · /g, '\n')}</div>
             </div>
+
+            <!-- Dedicated Volume Profile & Key Levels Box -->
+            ${keyLevels && keyLevels.poc ? `
+            <div style="background:rgba(0,0,0,0.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(56,189,248,0.25);margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span style="color:#38bdf8;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.4px;">📊 Volume Profile & Key Levels</span>
+                <span style="font-size:9px;color:var(--text-muted);">${regimeData?.displayName || 'Session Profile'}</span>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:4px;font-size:10px;font-family:'JetBrains Mono',monospace;margin-top:4px;">
+                <div style="background:rgba(255,255,255,0.03);padding:3px 5px;border-radius:4px;">POC: <span style="color:#fff;font-weight:700;">${fmt(keyLevels.poc)}</span></div>
+                <div style="background:rgba(255,255,255,0.03);padding:3px 5px;border-radius:4px;">VAH: <span style="color:#a7f3d0;">${fmt(keyLevels.vah)}</span></div>
+                <div style="background:rgba(255,255,255,0.03);padding:3px 5px;border-radius:4px;">VAL: <span style="color:#f87171;">${fmt(keyLevels.val)}</span></div>
+              </div>
+              <div style="font-size:9.5px;color:var(--text-muted);margin-top:4px;line-height:1.35;">
+                ${keyLevels.activeVpocs?.length ? `🎯 Virgin POCs: <b style="color:#fbbf24;">${keyLevels.activeVpocs.map(v => fmt(v)).join(', ')}</b><br>` : ''}
+                ${regimeData?.reasons ? `🧠 Drivers: <span style="color:var(--text-primary);">${regimeData.reasons.slice(0, 2).join(' · ')}</span>` : ''}
+              </div>
+            </div>` : ''}
           </div>
         </div>
 
@@ -16807,6 +16881,142 @@
       </div>
     </div>
   </div>`;
+    }
+
+    function getSimPairDirectiveForCard(symbol) {
+      if (!symbol) return null;
+      const symClean = String(symbol).trim().toUpperCase();
+      const symSlash = symClean.replace(/[-_]/g, '/');
+      const symDash = symClean.replace(/[\/_]/g, '-');
+      const symRaw = symClean.replace(/[^A-Z0-9]/g, '');
+
+      const sources = [
+        window._latestSimDirectives,
+        window.lastState?.simPairDirectives,
+        lastState?.simPairDirectives,
+        window._cachedSimDirectives
+      ];
+
+      for (const src of sources) {
+        if (!src || typeof src !== 'object') continue;
+        if (src[symbol]) return src[symbol];
+        if (src[symClean]) return src[symClean];
+        if (src[symSlash]) return src[symSlash];
+        if (src[symDash]) return src[symDash];
+        for (const k in src) {
+          if (!src[k]) continue;
+          const kClean = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (kClean === symRaw) return src[k];
+        }
+      }
+      return null;
+    }
+
+    function getRegimeBadgeData(pairDir) {
+      const regimeData = pairDir?.regime;
+      if (!regimeData) return null;
+      let pillClass = 'regime-range';
+      let label = '🔄 Range-Bound';
+      if (regimeData.type === 'REGIME_STRONG_TREND') {
+        pillClass = 'regime-trend';
+        label = regimeData.trendDirection === 'BULLISH' ? '⚡ Trend ↑' : (regimeData.trendDirection === 'BEARISH' ? '⚡ Trend ↓' : '⚡ Trend');
+      } else if (regimeData.type === 'REGIME_HIGH_VOLATILITY' || regimeData.type === 'REGIME_HIGH_VOL_EXPANSION') {
+        pillClass = 'regime-volatile';
+        label = '💥 Vol Expansion';
+      } else if (regimeData.type === 'REGIME_COMPRESSION_SQUEEZE' || regimeData.type === 'REGIME_LOW_VOL_SQUEEZE' || regimeData.isBbSqueeze) {
+        pillClass = 'regime-squeeze';
+        label = '📦 BB Squeeze';
+      } else {
+        pillClass = 'regime-range';
+        label = '🔄 Range-Bound';
+      }
+      const title = `Regime: ${regimeData.displayName || label} (${regimeData.confidence || 0}% Conf)\nPrimary: ${regimeData.primaryBlueprint || ''}\n${(regimeData.reasons || []).join('\n')}`;
+      return { pillClass, label, title };
+    }
+
+    function generateRegimeBadgeHtml(pairDir) {
+      const data = getRegimeBadgeData(pairDir);
+      if (!data) return '';
+      return `<span class="regime-pill ${data.pillClass}" title="${data.title.replace(/"/g, '&quot;')}">${data.label}</span>`;
+    }
+
+    function generateVpRowHtml(pairDir) {
+      const keyLevels = pairDir?.keyLevels;
+      if (!keyLevels || !keyLevels.poc) return '';
+      const vpocStr = keyLevels.activeVpocs && keyLevels.activeVpocs.length > 0
+        ? `<span style="color:#fbbf24;" title="Untested Virgin POCs: ${keyLevels.activeVpocs.join(', ')}">🎯 ${keyLevels.activeVpocs.length} vPOC</span>`
+        : '';
+      const isUp = keyLevels.dProcTrend === 'MIGRATING_UP' || keyLevels.dProcTrend === 'STEPPING_UP';
+      const dProcStr = keyLevels.dProcTrend && keyLevels.dProcTrend !== 'STATIONARY'
+        ? `<span style="color:#38bdf8;" title="Developing POC Trend: ${keyLevels.dProcTrend}">${isUp ? 'd-POC ↑' : 'd-POC ↓'}</span>`
+        : '';
+      return `
+        <div class="market-vp-row" style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.05);padding:3px 7px;border-radius:4px;font-size:9.5px;color:var(--text-muted);margin:4px 0 6px 0;">
+          <span>POC: <strong style="color:var(--text-primary);font-family:'JetBrains Mono',monospace;">${fmt(keyLevels.poc)}</strong></span>
+          <span>VA: <span style="color:#a7f3d0;font-family:'JetBrains Mono',monospace;">${fmt(keyLevels.val)} - ${fmt(keyLevels.vah)}</span></span>
+          ${dProcStr}
+          ${vpocStr}
+        </div>`;
+    }
+
+    function updateCardDirectivesInPlace(card, m) {
+      const pairDir = getSimPairDirectiveForCard(m.symbol);
+
+      // 1. Update or inject Regime Pill (BB Squeeze, Vol Expansion, Trend, Range)
+      const headerRight = card.querySelector('.market-header > div:last-child');
+      if (headerRight) {
+        let pillEl = headerRight.querySelector('.regime-pill');
+        const badgeData = getRegimeBadgeData(pairDir);
+        if (badgeData) {
+          if (!pillEl) {
+            pillEl = document.createElement('span');
+            const trendEl = headerRight.querySelector('.trend-badge');
+            if (trendEl) {
+              headerRight.insertBefore(pillEl, trendEl);
+            } else {
+              headerRight.prepend(pillEl);
+            }
+          }
+          const desiredClass = `regime-pill ${badgeData.pillClass}`;
+          if (pillEl.className !== desiredClass) pillEl.className = desiredClass;
+          if (pillEl.textContent !== badgeData.label) pillEl.textContent = badgeData.label;
+          pillEl.title = badgeData.title;
+        } else if (!pairDir && window._latestSimDirectives && Object.keys(window._latestSimDirectives).length > 0) {
+          if (pillEl) pillEl.remove();
+        }
+      }
+
+      // 2. Update or inject Volume Profile (POC / vPOC / Value Area)
+      const frontFace = card.querySelector('.market-card-front');
+      const innerDiv = frontFace ? frontFace.firstElementChild : null;
+      if (innerDiv) {
+        let vpRowEl = innerDiv.querySelector('.market-vp-row');
+        const newVpHtml = generateVpRowHtml(pairDir);
+        if (newVpHtml) {
+          if (vpRowEl) {
+            const temp = document.createElement('div');
+            temp.innerHTML = newVpHtml.trim();
+            const newContent = temp.firstElementChild ? temp.firstElementChild.innerHTML : '';
+            if (vpRowEl.innerHTML !== newContent) {
+              vpRowEl.innerHTML = newContent;
+            }
+          } else {
+            const signalRow = innerDiv.querySelector('.signal-row');
+            const temp = document.createElement('div');
+            temp.innerHTML = newVpHtml.trim();
+            const newEl = temp.firstElementChild;
+            if (newEl) {
+              if (signalRow) {
+                innerDiv.insertBefore(newEl, signalRow);
+              } else {
+                innerDiv.appendChild(newEl);
+              }
+            }
+          }
+        } else if (!pairDir && window._latestSimDirectives && Object.keys(window._latestSimDirectives).length > 0) {
+          if (vpRowEl) vpRowEl.remove();
+        }
+      }
     }
 
     function updateCardOpenPositionInPlace(card, m, openPos) {
@@ -17037,7 +17247,7 @@
       });
 
       // Check if all cards already exist in DOM for fast, smooth in-place update
-      let canUpdateInPlace = grids.some(id => {
+      let canUpdateInPlace = grids.every(id => {
         const el = document.getElementById(id);
         return el && el.children.length === marketList.length;
       });
@@ -17084,6 +17294,9 @@
               // Live update / injection / removal of small opening position banner on top of card
               updateCardOpenPositionInPlace(card, m, openPos);
 
+              // Live update / injection / persistence of Regime Pill (BB Squeeze, Trend, Range) and vPOC Key Levels
+              updateCardDirectivesInPlace(card, m);
+
               // 1. Live Price with Green/Red Micro-Glow Flash
               const priceEl = card.querySelector('.market-price');
               if (priceEl && m.markPrice) {
@@ -17128,7 +17341,25 @@
                 if (m.low24h) metaValues[3].textContent = fmt(m.low24h);
               }
 
-              // 6. Confluence board & layer overview (keep synced with live Sim Lab directives)
+              // 6. Signal Row & Confidence Progress
+              const riskBadge = card.querySelector('.signal-row .risk-badge');
+              if (riskBadge && m.riskLevel) {
+                riskBadge.className = `risk-badge risk-${m.riskLevel}`;
+                riskBadge.textContent = `${m.riskLevel} RISK`;
+              }
+              const confBadge = card.querySelector('.signal-row .action-badge:last-child');
+              if (confBadge && m.confidence !== undefined) {
+                confBadge.textContent = `⚡ ${m.confidence}%`;
+              }
+              const gaugeFill = card.querySelector('.market-flip-gauge-fill');
+              const gaugeLine = card.querySelector('.market-flip-gauge-line');
+              if (gaugeFill && m.confidence !== undefined) {
+                const confWidth = Math.min(100, Math.max(0, m.confidence));
+                gaugeFill.style.width = `${confWidth}%`;
+                if (gaugeLine) gaugeLine.style.width = `${confWidth}%`;
+              }
+
+              // 7. Confluence board & layer overview (keep synced with live Sim Lab directives)
               const v1 = card.querySelector('.card-back-view-1');
               if (v1 && !card.querySelector('.card-back-view-1 input:focus')) {
                 try {
@@ -17656,6 +17887,17 @@
     }
 
     function renderState(state) {
+      if (state) {
+        if (state.simPairDirectives && typeof state.simPairDirectives === 'object' && Object.keys(state.simPairDirectives).length > 0) {
+          window._latestSimDirectives = state.simPairDirectives;
+          window._cachedSimDirectives = state.simPairDirectives;
+          try {
+            localStorage.setItem('alpha_cached_sim_directives', JSON.stringify(state.simPairDirectives));
+          } catch (e) {}
+        } else if ((!state.simPairDirectives || Object.keys(state.simPairDirectives).length === 0) && window._latestSimDirectives) {
+          state.simPairDirectives = window._latestSimDirectives;
+        }
+      }
       lastState = state;
       window.lastState = state;
       if (state && state.activeStrategy) {
@@ -17671,7 +17913,7 @@
       if (state && state.simPipeline) {
         window._latestSimStatus = state.simPipeline;
       }
-      if (state && state.simPairDirectives) {
+      if (state && state.simPairDirectives && Object.keys(state.simPairDirectives).length > 0) {
         window._latestSimDirectives = state.simPairDirectives;
       }
       if (state && state.markets) {
@@ -20433,16 +20675,9 @@
       }
     }
 
-    // ── System & Hardware Telemetry ───────────────────────────────────────────────
+    // ── System & Hardware Telemetry (Disabled for Client V3) ───────────────────
     async function fetchSystemStats() {
-      try {
-        const res = await fetch(API + '/api/system/stats');
-        if (!res.ok) return;
-        const s = await res.json();
-        renderSystemStats(s);
-      } catch (err) {
-        console.error('Failed to fetch system stats:', err);
-      }
+      return;
     }
 
     function renderSystemStats(s) {

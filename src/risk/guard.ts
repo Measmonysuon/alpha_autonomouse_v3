@@ -123,6 +123,7 @@ export class RiskGuard {
     accountEquity: number,
     availableMargin: number,
     currentAllocatedUsd: number,
+    openPositionsCount = 0,
   ): RiskValidationResult {
     const directives = standaloneEngine.getDirectives();
     const action = signal.action;
@@ -238,7 +239,37 @@ export class RiskGuard {
         logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
         return this.reject(reason, directives, accountEquity, availableMargin);
       }
+
+      // ── Directional Regime Ban & Empirical Pair Quarantine Guard ──
+      const normSym = signal.symbol.replace('-', '/').toUpperCase();
+      const pairDir = b?.pairDirectives?.[signal.symbol] || b?.pairDirectives?.[normSym];
+      if (pairDir) {
+        if (pairDir.bannedSide === 'BOTH' || pairDir.probationActive || pairDir.shadowModeOnly) {
+          const reason = `🛑 [QUANT QUARANTINE] ${signal.symbol} is quarantined to Paper Shadow Simulation: ${pairDir.reason || 'Persistent negative expectancy'}. Order blocked.`;
+          logger.warn(`[Risk Guard] ${reason}`);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        } else if (pairDir.bannedSide === action) {
+          const reason = `🛑 [PAIR BAN] Direction ${action} is banned for ${signal.symbol} by Sim Lab directive: ${pairDir.reason || 'Restricted'}.`;
+          logger.warn(`[Risk Guard] ${reason}`);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        }
+      }
+
+      const isBullRegime = b?.macro?.regime === 'RISK_ON_BETA' || b?.macro?.regime === 'TRENDING_BULL' || b?.macro?.marketBias === 'BULLISH';
+      if (action === 'SHORT' && isBullRegime) {
+        const reason = `🛑 [HARD DIRECTIONAL BAN] SHORTs are strictly prohibited across all pairs under ${b?.macro?.regime || 'RISK_ON_BETA'} macro regime.`;
+        logger.warn(`[Risk Guard] ${reason}`);
+        return this.reject(reason, directives, accountEquity, availableMargin);
+      }
     } catch {}
+
+    // ── 3c. Max Concurrent Positions Guard ───────────────────────────────────
+    const maxOpenPositions = (config as any).MAX_OPEN_POSITIONS || 3;
+    if (openPositionsCount >= maxOpenPositions) {
+      const reason = `🛑 Max Concurrent Positions Reached: Active open positions (${openPositionsCount}) >= configured limit (${maxOpenPositions}). Order rejected.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
 
     // ── 4. Budget & Allocation Ceiling ─────────────────────────────────────────
     const maxBudget = config.BUDGET_USD;
@@ -259,12 +290,18 @@ export class RiskGuard {
     } catch {}
 
     const remainingBudget = Math.max(0, maxBudget - currentAllocatedUsd);
+    const userMaxPosUsd = Math.min((config as any).MAX_POSITION_USD || 60, maxBudget);
     const baseTargetAlloc = Math.min(
       remainingBudget,
       maxBudget * (config.MAX_ALLOC_PCT / 100),
-      config.BUDGET_USD,
+      userMaxPosUsd,
     );
-    const targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
+    let targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
+
+    // STRICT HARD CLAMPS:
+    // 1. Can NEVER exceed userMaxPosUsd ($60)
+    // 2. Can NEVER exceed remainingBudget ($200 - deployed)
+    targetAllocUsd = Math.min(targetAllocUsd, userMaxPosUsd, remainingBudget);
 
     if (targetAllocUsd < 2.0) {
       const reason = `🛑 Remaining budget ($${remainingBudget.toFixed(2)}) is insufficient for minimum viable position.`;

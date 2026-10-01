@@ -25,6 +25,10 @@ export interface Layer2Config {
   fundingRateAsymmetry: boolean;      // Require favorable funding skew
   maxFundingAbsPct: number;           // e.g. 0.03% (block extreme carry cost)
   whaleRetailDivergence: boolean;     // Contrast top traders vs retail
+  requireWhaleAlignment?: boolean;
+  requireCvdConfirmation?: boolean;
+  spotPerpCvdFilter?: boolean;
+  minL2DepthRatio?: number;
 }
 
 export interface Layer3Config {
@@ -35,6 +39,9 @@ export interface Layer3Config {
   structureShiftChoch: boolean;       // Require 15m CHoCH or BOS displacement
   fvgRetestEntry: boolean;            // Limit order entry at Fair Value Gap boundary
   equalHighsLowsMagnet: boolean;      // Target EQH/EQL stop-loss pools
+  boxConsolidationRetest?: boolean;   // Require breakout + pullback to Box POC (anti-chasing)
+  boxTimeframe?: '15m' | '1h';        // Timeframe for horizontal consolidation box
+  antiChaseBreakoutFilter?: boolean;  // Veto entering late breakouts outside the value area
 }
 
 export interface Layer4Config {
@@ -46,6 +53,8 @@ export interface Layer4Config {
   convictionBoostAllowed: boolean;    // Allow AI to award +5% to +10% for A+ setups
   defillamaBorrowVeto?: boolean;      // Veto late longs when DefiLlama borrow APY is overheated (>18-22%)
   maxBorrowApyThreshold?: number;     // e.g. 20% (defaults to 20%)
+  whaleRetailDivergenceVeto?: boolean;
+  futuresLeverageTrapVeto?: boolean;
 }
 
 export type LeverageMode = 
@@ -91,6 +100,10 @@ export interface StrategyConfig {
   layer3: Layer3Config;
   layer4: Layer4Config;
   layer5: Layer5Config;
+  certifiedByRiskSentinel?: boolean;
+  certificationScore?: number;
+  optimalRegimes?: string[];
+  stagedStatus?: 'ACTIVE_LIVE' | 'READY_ARSENAL' | 'DRAFT';
 }
 
 export interface AIEvaluationResult {

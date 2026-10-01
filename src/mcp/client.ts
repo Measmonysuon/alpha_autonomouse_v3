@@ -416,6 +416,9 @@ export class DecibelMCPClient {
         }
         const allocatedUsd = rawMargin > 0 ? rawMargin : (sizeUsd / (leverage || 1));
 
+        const unrealizedPnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : (p.unrealized_pnl != null ? Number(p.unrealized_pnl) : undefined);
+        const markPrice = p.markPrice != null ? Number(p.markPrice) : (p.mark_price != null ? Number(p.mark_price) : undefined);
+
         normalized.push({
           symbol,
           side,
@@ -425,6 +428,8 @@ export class DecibelMCPClient {
           sizeUsd,
           leverage,
           allocatedUsd,
+          unrealizedPnl,
+          markPrice,
           liquidationPrice: p.estimated_liquidation_price ? Number(p.estimated_liquidation_price) : undefined,
           takeProfit: p.tp_trigger_price ? Number(p.tp_trigger_price) : undefined,
           stopLoss: p.sl_trigger_price ? Number(p.sl_trigger_price) : undefined,
@@ -857,12 +862,116 @@ export class DecibelMCPClient {
     return res;
   }
 
+  async getOrders(symbol?: string): Promise<any[]> {
+    const toolName = this.hasTool('get_orders') ? 'get_orders' : 'orders';
+    const toolArgs: any = { venue: 'decibel' };
+    if (config.DECIBEL_SUBACCOUNT_ADDRESS) {
+      toolArgs.subaccount = config.DECIBEL_SUBACCOUNT_ADDRESS;
+    }
+    if (symbol) {
+      toolArgs.market = symbol;
+      toolArgs.symbol = symbol;
+    }
+    try {
+      const res = await this.call<any>(toolName, toolArgs, 7500);
+      const items = res?.orders?.items || (Array.isArray(res) ? res : (res?.orders || []));
+      return Array.isArray(items) ? items : [];
+    } catch (err: any) {
+      logger.debug(`MCP get_orders notice for ${symbol || 'all'}: ${err.message}`);
+      return [];
+    }
+  }
+
+  async cancelClientOrder(symbol: string, clientOrderId: string): Promise<unknown> {
+    logger.info(`🚫 Cancelling resting order ${clientOrderId} for ${symbol}`);
+    if (this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
+      try {
+        const market = await this.getMarketDetail(symbol);
+        if (market) {
+          logger.info(`⚡ Executing cancel_client_order_to_subaccount on-chain: ${clientOrderId} (${symbol})...`);
+          const tx = await this.aptos.transaction.build.simple({
+            sender: this.aptosAccount.accountAddress,
+            data: {
+              function: '0x50ead22afd6ffd9769e3b3d6e0e64a2a350d68e8b102c4e72e33d0b8cfdfdb06::dex_accounts_entry::cancel_client_order_to_subaccount',
+              typeArguments: [],
+              functionArguments: [
+                config.DECIBEL_SUBACCOUNT_ADDRESS,
+                clientOrderId,
+                market.address,
+              ],
+            },
+          });
+          const senderAuth = this.aptos.transaction.sign({
+            signer: this.aptosAccount,
+            transaction: tx,
+          });
+          const committed = await this.aptos.transaction.submit.simple({
+            transaction: tx,
+            senderAuthenticator: senderAuth,
+          });
+          const executed = await this.aptos.waitForTransaction({
+            transactionHash: committed.hash,
+          });
+          if (executed.success) {
+            logger.info(`✅ Successfully cancelled resting order ${clientOrderId} on-chain! Tx: ${committed.hash}`);
+            return { success: true, txHash: committed.hash };
+          }
+        }
+      } catch (err: any) {
+        logger.warn(`Direct cancel_client_order failed: ${err.message}. Falling back to cancelAllOrders...`);
+      }
+    }
+    return this.cancelAllOrders(symbol);
+  }
+
   async cancelAllOrders(symbol?: string): Promise<unknown> {
     logger.info(`🚫 Cancelling all open orders ${symbol ? `for ${symbol}` : ''}`);
+
+    // 1. Direct on-chain bulk cancel via Aptos SDK (instant, deterministic)
+    if (this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS && symbol) {
+      try {
+        const market = await this.getMarketDetail(symbol);
+        if (market) {
+          logger.info(`⚡ Executing cancel_bulk_order_to_subaccount on-chain: ${symbol} (${market.address})...`);
+          const tx = await this.aptos.transaction.build.simple({
+            sender: this.aptosAccount.accountAddress,
+            data: {
+              function: '0x50ead22afd6ffd9769e3b3d6e0e64a2a350d68e8b102c4e72e33d0b8cfdfdb06::dex_accounts_entry::cancel_bulk_order_to_subaccount',
+              typeArguments: [],
+              functionArguments: [
+                config.DECIBEL_SUBACCOUNT_ADDRESS,
+                market.address,
+              ],
+            },
+          });
+          const senderAuth = this.aptos.transaction.sign({
+            signer: this.aptosAccount,
+            transaction: tx,
+          });
+          const committed = await this.aptos.transaction.submit.simple({
+            transaction: tx,
+            senderAuthenticator: senderAuth,
+          });
+          const executed = await this.aptos.waitForTransaction({
+            transactionHash: committed.hash,
+          });
+          if (executed.success) {
+            logger.info(`✅ Successfully cancelled all resting orders on-chain for ${symbol}! Tx: ${committed.hash}`);
+            return { success: true, txHash: committed.hash };
+          }
+        }
+      } catch (err: any) {
+        logger.warn(`Direct Aptos SDK cancel_bulk_order failed: ${err.message}. Falling back to MCP tool...`);
+      }
+    }
+
+    // 2. Fallback to MCP tool with appropriate timeout & subaccount parameter
     return this.call('cancel_all_orders', {
       venue: 'decibel',
+      subaccount: config.DECIBEL_SUBACCOUNT_ADDRESS,
+      market: symbol,
       ...(symbol ? { symbol } : {}),
-    });
+    }, 12000);
   }
 
   async closePosition(symbol: string, partialRatio = 1.0): Promise<unknown> {

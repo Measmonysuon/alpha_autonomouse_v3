@@ -77,17 +77,24 @@ async function main() {
   let relRes = await apiRequest('GET', `/repos/${OWNER}/${REPO}/releases/tags/${TAG}`);
   let release = relRes.body;
 
-  const releaseTitle = `Alpha Autonomous Client ${TAG} — Production Fleet Release`;
-  const releaseNotes = `### 🚀 Alpha Autonomous Client ${TAG} — Institutional Fleet Release
+  const releaseTitle = `Alpha Autonomous Client ${TAG} — Institutional Fleet Release`;
+  const releaseNotes = `### 🚀 Alpha Autonomous Client ${TAG} — Institutional Safeguards & On-Chain PnL Parity Release
 
-#### 🌟 Key Upgrades & Features
-- **Always-Active Dual-Phase Ratchet Mechanism**:
-  - **Capital Guard Phase (\`[GUARD]\`)**: Active between Entry and Hard SL during drawdowns (Red). Rendered in Cyan across candlestick canvas and 4-tile price matrix (never hidden).
-  - **Profit Lock Phase (\`[LOCK]\`)**: Sits between Entry and Take-Profit with emerald badge once Sim Lab confirms statistical breakaway.
-  - **Anti-Pullback / Wick Tolerance**: Prevents premature profit locking on small market pullbacks or minor wicks; strictly governed by Sim Lab breakaway clearance ($\ge 1.75R$ and $\ge 2.0\times\\text{ ATR}$).
-- **Real-Time Sim Lab Synchronization**: Live directives ingestion (regime adaptation, cool-off locks, dynamic harvester parameters).
-- **Dual-Layer Stop Loss Armor**: Permanent side-by-side visibility of On-Chain Hard SL and Soft Dynamic Ratchet on 4-tile matrix, candlestick canvas, and range progress gauges.
-- **Trade Execution Invariant Hardening**: Safe ATR stop loss anchoring and clean Decibel DEX on-chain fill reconciliation.
+#### 🌟 Key Institutional Safeguards & Upgrades:
+- **Direct On-Chain Aptos SDK Order Cancellation**:
+  - Replaced CLI stdio tool calls with direct blockchain smart contract transactions (\`dex_accounts_entry::cancel_client_order_to_subaccount\` & \`cancel_bulk_order_to_subaccount\`).
+  - Guarantees sub-second deterministic cancellation of unfilled Maker Post-Only orders with on-chain cryptographic receipts.
+- **Resting Order Book Pre-Flight Guard**:
+  - Pre-flight inspection (\`getOrders(symbol)\`) blocks order dispatch if unexecuted resting orders exist on the Decibel DEX book, completely eliminating order stacking and multi-fill exposure.
+- **Live On-Chain Margin Floor & Capital Ceiling**:
+  - Dynamically enforces deployed margin via $\\max(\\text{onChainAllocated}, \\text{localAllocated})$ so on-chain positions are never ignored when calculating remaining budget ceiling.
+- **60-Second Maker Timeout Cooldown Lock**:
+  - Automatically enforces a 60-second in-flight lock upon Maker timeout to prevent consecutive 15-second cycles from re-triggering orders.
+- **Exact On-Chain PnL & Pyth Oracle Mark Price Synchronization**:
+  - Direct ingestion of Decibel Pyth oracle \`markPrice\` and on-chain \`unrealizedPnl\`, eliminating discrepancies between bot PnL and Decibel DEX on-chain PnL.
+- **Always-Active Dual-Phase Ratchet Mechanism & Concrete Armor**:
+  - Continuous side-by-side visibility of On-Chain Hard SL (-15% max margin risk) and Soft Dynamic Ratchet (ATR value pullback).
+  - Real-time synchronization with Sim Lab Port 4000 alpha bundle, macro regime directives, and quant pair quarantines.
 
 #### 📦 Downloadable Standalone Packages:
 - \`alpha-client-v3-macos.zip\` (macOS Standalone 1-Click Launcher)
