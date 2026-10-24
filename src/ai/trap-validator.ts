@@ -13,6 +13,9 @@ import { riskGuard, cleanImmunityReason } from '../risk/guard';
 import { getSimPairDirective, getPairOverrides } from '../strategy/manager';
 import { getLastSyncedBundle } from '../pipeline/sim-consumer';
 import { loadAISettings } from './settings';
+import { evaluateOICoMovement } from '../engine/oi-matrix';
+import { evaluateCVDConfirmation } from '../engine/cvd-analyzer';
+
 
 export interface EvaluatedTrapMetrics {
   priceChange24h: number;
@@ -213,8 +216,49 @@ export function evaluateAITrapShield(
     return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
+  // 1D-2. Fail-Closed Feed Staleness Guard
+  const bundleAge = bundle?.timestamp ? (Date.now() - bundle.timestamp) : 0;
+  if (bundle && bundleAge > 180000 && (directives?.regime === 'HIGH_VOLATILITY' || directives?.regime === 'RANGING_CHOP')) {
+    const res: AITrapValidationResult = {
+      timestamp: Date.now(),
+      symbol,
+      candidateAction,
+      signalConfidence: signal.confidence,
+      verdict: 'TRAP_EVENT',
+      trapCategory: 'STALE_DATA_FEED',
+      vetoTrade: true,
+      confidence: 85,
+      convictionBonus: 0,
+      metricsEvaluated: metrics,
+      reasoning: `🛡️ [FAIL-CLOSED] Alpha telemetry feed is stale (${Math.round(bundleAge / 1000)}s > 180s) during ${directives.regime}. Entry vetoed until fresh feed synchronizes.`,
+      modelUsed: modelUsedStr,
+    };
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+  }
+
+  // ── 1E. Institutional OI Co-Movement Matrix ──────────────────────────────
+  const oiResult = evaluateOICoMovement(change24h, oiChange24h, candidateAction);
+  if ((candidateAction === 'LONG' && !oiResult.isLongApproved) || (candidateAction === 'SHORT' && !oiResult.isShortApproved)) {
+    const res: AITrapValidationResult = {
+      timestamp: Date.now(),
+      symbol,
+      candidateAction,
+      signalConfidence: signal.confidence,
+      verdict: 'TRAP_EVENT',
+      trapCategory: candidateAction === 'LONG' ? 'SHORT_SQUEEZE_EXHAUSTION' : 'LONG_SQUEEZE_FLUSH',
+      vetoTrade: true,
+      confidence: 88,
+      convictionBonus: 0,
+      metricsEvaluated: metrics,
+      reasoning: oiResult.vetoReason || 'Vetoed by OI Co-Movement Matrix',
+      modelUsed: 'Institutional OI Matrix (Pillar 4)',
+    };
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+  }
+
   // ── 2. TECHNICAL TRAP VALIDATION ───────────────────────────────────────────
   // A. Rejection Wick Traps
+
   const wickTol = simDir?.upperWickThresholdPct || directives?.bullTrapUpperWickPct || 45;
   if (candidateAction === 'LONG' && ind.upperWickPct > wickTol) {
     const res: AITrapValidationResult = {
@@ -250,6 +294,51 @@ export function evaluateAITrapShield(
       modelUsed: modelUsedStr,
     };
     return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+  }
+
+  // A2. Falling Knife / Unconfirmed Pullback Veto
+  if (candidateAction === 'LONG') {
+    const isRed = ind.candleColor === 'RED';
+    const weakLowerWick = ind.lowerWickPct < 25;
+    if (isRed && weakLowerWick) {
+      const res: AITrapValidationResult = {
+        timestamp: Date.now(),
+        symbol,
+        candidateAction,
+        signalConfidence: signal.confidence,
+        verdict: 'TRAP_EVENT',
+        trapCategory: 'LONG_SQUEEZE_FLUSH',
+        vetoTrade: true,
+        confidence: 85,
+        convictionBonus: 0,
+        metricsEvaluated: metrics,
+        reasoning: `🛡️ [FALLING KNIFE VETO] 15m candle is actively red with weak buyer absorption (lower wick ${ind.lowerWickPct.toFixed(1)}% < 25%). Buying into unconfirmed dump is strictly vetoed.`,
+        modelUsed: modelUsedStr,
+      };
+      return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    }
+  }
+
+  if (candidateAction === 'SHORT') {
+    const isGreen = ind.candleColor === 'GREEN';
+    const weakUpperWick = ind.upperWickPct < 25;
+    if (isGreen && weakUpperWick) {
+      const res: AITrapValidationResult = {
+        timestamp: Date.now(),
+        symbol,
+        candidateAction,
+        signalConfidence: signal.confidence,
+        verdict: 'TRAP_EVENT',
+        trapCategory: 'SHORT_SQUEEZE_SPIKE',
+        vetoTrade: true,
+        confidence: 85,
+        convictionBonus: 0,
+        metricsEvaluated: metrics,
+        reasoning: `🛡️ [ROCKET KNIFE VETO] 15m candle is actively green with weak seller absorption (upper wick ${ind.upperWickPct.toFixed(1)}% < 25%). Shorting into unconfirmed rally is strictly vetoed.`,
+        modelUsed: modelUsedStr,
+      };
+      return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    }
   }
 
   // B. SMC Body Run Breakout Fakeout

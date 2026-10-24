@@ -23,6 +23,8 @@ export interface ClientTelemetryPayload {
   botName: string;                // e.g. "Alpha Autonomous Client"
   source: 'live_mainnet';
   triggerReason: 'periodic_sync' | 'trade_closed' | 'shadow_trade_resolved';
+  syncedStrategyName?: string;
+  assignedStrategyId?: string;
 
   // 1. Live Execution Reality
   execution: {
@@ -110,7 +112,10 @@ let isInitialized = false;
 export async function buildTelemetryPayload(
   triggerReason: ClientTelemetryPayload['triggerReason'] = 'periodic_sync'
 ): Promise<ClientTelemetryPayload> {
-  await tradeExecutor.syncOnChainPositions().catch(() => {});
+  const timeoutPromise = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+    Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+
+  await timeoutPromise(tradeExecutor.syncOnChainPositions().catch(() => {}), 1500, undefined);
   const closedTrades = tradeExecutor.getClosedTrades();
   const openTrades = tradeExecutor.getOpenTrades();
   const stats = tradeExecutor.getStats();
@@ -241,7 +246,7 @@ export async function buildTelemetryPayload(
   // 5. Open Positions & Gas / Collateral Status
   let gasApt = 0;
   try {
-    const onChain = await tradeExecutor.fetchOnChainBalance();
+    const onChain = await timeoutPromise(tradeExecutor.fetchOnChainBalance(), 1500, { balanceUsd: 0, aptBalance: 0 });
     gasApt = onChain.aptBalance;
   } catch {}
 
@@ -258,6 +263,15 @@ export async function buildTelemetryPayload(
     leverage: t.leverage,
   }));
 
+  let syncedStrategyName = '6-Pillar Fleet CIO V13 - RISK_ON_BETA Momentum & Bi-Directional EV';
+  let assignedStrategyId = 'ai_strategy_1790750000000';
+  try {
+    const { getActiveStrategy } = require('../strategy/manager');
+    const strat = getActiveStrategy();
+    if (strat?.name) syncedStrategyName = strat.name;
+    if (strat?.id) assignedStrategyId = strat.id;
+  } catch {}
+
   const payload: ClientTelemetryPayload = {
     timestamp: Date.now(),
     clientId: config.CLIENT_ID,
@@ -265,6 +279,8 @@ export async function buildTelemetryPayload(
     botName: config.CLIENT_NAME,
     source: 'live_mainnet',
     triggerReason,
+    syncedStrategyName,
+    assignedStrategyId,
     execution: {
       totalTradesClosed: stats.closedTradesCount,
       winRatePct: stats.winRate,

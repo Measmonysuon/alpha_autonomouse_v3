@@ -14,6 +14,7 @@ import { logger } from '../utils/logger';
 import { standaloneEngine, StrategyDirectives } from '../engine/standalone-engine';
 import { AIBrainEvaluation } from '../ai/brain';
 import { StandaloneSignal } from '../engine/standalone-engine';
+import { AUTHORITATIVE_DECIBEL_MARKETS } from '../mcp/client';
 
 export interface RiskValidationResult {
   approved: boolean;
@@ -65,15 +66,32 @@ export class RiskGuard {
     trapCategory: string,
     reason: string,
     durationMinutes = 15,
+    forcedExpiresAt?: number,
   ): void {
     const norm = symbol.toUpperCase().replace('-', '/');
     const cleanReason = cleanImmunityReason(reason);
-    const expiresAt = Date.now() + durationMinutes * 60 * 1000;
+    const now = Date.now();
+
+    const setLock = (side: 'LONG' | 'SHORT') => {
+      const lockKey = `${norm}:${side}`;
+      const existing = this.trapCoolOffs.get(lockKey);
+      let expiresAt: number;
+      if (forcedExpiresAt && forcedExpiresAt > now) {
+        expiresAt = forcedExpiresAt;
+      } else if (existing && existing.expiresAt > now) {
+        // MONOTONIC EXPIRATION: Retain existing timer so countdown never resets or jumps forward on heartbeat ticks!
+        expiresAt = existing.expiresAt;
+      } else {
+        expiresAt = now + durationMinutes * 60 * 1000;
+      }
+      this.trapCoolOffs.set(lockKey, { expiresAt, reason: cleanReason, trapCategory });
+    };
+
     if (action === 'BOTH') {
-      this.trapCoolOffs.set(`${norm}:LONG`, { expiresAt, reason: cleanReason, trapCategory });
-      this.trapCoolOffs.set(`${norm}:SHORT`, { expiresAt, reason: cleanReason, trapCategory });
+      setLock('LONG');
+      setLock('SHORT');
     } else {
-      this.trapCoolOffs.set(`${norm}:${action}`, { expiresAt, reason: cleanReason, trapCategory });
+      setLock(action);
     }
     logger.warn(
       `🛡️ [AI SHIELD COOL-OFF] ${norm} ${action} locked for ${durationMinutes}m: ${trapCategory} — ${cleanReason}`
@@ -101,14 +119,16 @@ export class RiskGuard {
     return { locked: false };
   }
 
-  public getAllActiveCoolOffs(): Array<{ symbol: string; action: string; trapCategory: string; reason: string; remainingMinutes: number }> {
+  public getAllActiveCoolOffs(): Array<{ symbol: string; action: string; trapCategory: string; reason: string; remainingMinutes: number; expiresAt: number }> {
     const now = Date.now();
     const results: any[] = [];
     for (const [key, lock] of this.trapCoolOffs.entries()) {
       if (lock.expiresAt > now) {
         const [symbol, action] = key.split(':');
         const remainingMinutes = Math.ceil((lock.expiresAt - now) / 60000);
-        results.push({ symbol, action, trapCategory: lock.trapCategory, reason: cleanImmunityReason(lock.reason), remainingMinutes });
+        results.push({ symbol, action, trapCategory: lock.trapCategory, reason: cleanImmunityReason(lock.reason), remainingMinutes, expiresAt: lock.expiresAt });
+      } else {
+        this.trapCoolOffs.delete(key);
       }
     }
     return results;
@@ -168,6 +188,71 @@ export class RiskGuard {
             return this.reject(reason, directives, accountEquity, availableMargin);
           }
         }
+
+        // Check Kronos Financial Foundation Multi-Shield Directives
+        if (simDir?.kronosForecast) {
+          const kf = simDir.kronosForecast;
+          // 1. Falling Knife Shield for Longs
+          if (action === 'LONG' && kf.knifeRiskScore >= 0.70) {
+            const reason = `🔪 Blocked by Kronos Falling Knife Shield: Neural down-tail probability is ${(kf.knifeRiskScore * 100).toFixed(0)}% (Expected Return: ${kf.expectedReturnPct.toFixed(2)}%). Entry vetoed.`;
+            logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+          // 2. Runaway Melt-Up Shield for Shorts
+          if (action === 'SHORT' && kf.meltUpRiskScore && kf.meltUpRiskScore >= 0.70) {
+            const reason = `🚀 Blocked by Kronos Runaway Melt-Up Shield: Squeeze impulse velocity is ${(kf.meltUpRiskScore * 100).toFixed(0)}% (Expected Return: +${kf.expectedReturnPct.toFixed(2)}%). Entry vetoed.`;
+            logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+          // 3. Entropy Chop Gate
+          if ((kf.entropyScore && kf.entropyScore >= 0.68) || simDir.confidenceSizing?.entropyState === 'HIGH_ENTROPY_CHOP') {
+            const reason = `🌪️ Blocked by Kronos Entropy Chop Gate: High market randomness (${((kf.entropyScore || 0.7) * 100).toFixed(0)}%) suppresses entry to preserve capital.`;
+            logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+
+          // 4. Adopt Optimal Limit Entry & Dynamic Protection TP/SL
+          if (simDir.dynamicProtection?.recommendedTpPrice && simDir.dynamicProtection.recommendedTpPrice > 0) {
+            signal.takeProfit = simDir.dynamicProtection.recommendedTpPrice;
+            if (simDir.dynamicProtection.recommendedSlPrice && simDir.dynamicProtection.recommendedSlPrice > 0) {
+              signal.stopLoss = simDir.dynamicProtection.recommendedSlPrice;
+            }
+          }
+          if (simDir.optimalEntry?.limitPrice && simDir.optimalEntry.limitPrice > 0) {
+            signal.limitPrice = simDir.optimalEntry.limitPrice;
+            signal.entryPrice = simDir.optimalEntry.limitPrice;
+          }
+
+          // 5. Check Capital Routing: Exclusive Funneling to Top 10 Most Predictable Assets
+          if (simDir.capitalRouting) {
+            const isHighConviction = (aiEval.confidenceScore ?? 0) >= 85;
+            if (!simDir.capitalRouting.isRouted && !isHighConviction) {
+              const reason = `🛑 Blocked by Capital Routing Gate: ${signal.symbol} is rank #${simDir.capitalRouting.rank} outside Top 10 predictable pairs. Capital funneled exclusively to top predictable assets.`;
+              logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+              return this.reject(reason, directives, accountEquity, availableMargin);
+            }
+            if (!simDir.capitalRouting.isRouted && isHighConviction) {
+              logger.info(
+                `✨ [Risk Guard] ${signal.symbol} (Rank #${simDir.capitalRouting.rank}) granted High-Conviction Exemption ` +
+                `(${aiEval.confidenceScore}% confidence >= 85%) through Capital Routing Gate.`
+              );
+            }
+          }
+
+          // 6. Check Lead-Lag Alpha: Front-Running via BTC Impulse Forecasts
+          if (simDir.leadLagAlpha && simDir.leadLagAlpha.impulseDetected) {
+            const lla = simDir.leadLagAlpha;
+            if (lla.action === action) {
+              logger.info(
+                `⚡ [Risk Guard - Lead-Lag Alpha] Authorizing early breakout for ${signal.symbol} ` +
+                `via BTC impulse (+${lla.leaderExpectedReturnPct.toFixed(2)}%). Confidence Bonus: +${lla.frontRunConfidenceBonus}pts.`
+              );
+              if (aiEval.confidenceScore) {
+                aiEval.confidenceScore = Math.min(99, aiEval.confidenceScore + lla.frontRunConfidenceBonus);
+              }
+            }
+          }
+        }
       } catch {}
 
       // Check Institutional Liquidity Depth Screening ($4M Min Clusters per Pillar 3)
@@ -189,17 +274,22 @@ export class RiskGuard {
       } catch {}
     }
 
-    // ── 1. Directional Banning Check (Sim Lab or Local Directive) ──────────────
-    if (directives.bannedSides && directives.bannedSides.includes(action)) {
-      const reason = `🛑 Direction ${action} is strictly BANNED by active directives (${directives.source}: ${directives.activeStrategy}).`;
-      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
-      return this.reject(reason, directives, accountEquity, availableMargin);
-    }
+    // ── 1. Asymmetric Regime Directional Hurdle Gate ───────────────────────────
+    let isCounterTrendTrade = false;
+    const COUNTER_TREND_CONFIDENCE_HURDLE = 85;
 
-    if (directives.regime && (directives.regime.includes('BEAR') || directives.regime.includes('DUMP') || String(directives.notes || '').includes('SHORT ONLY')) && action === 'LONG') {
-      const reason = `🛑 Direction LONG is strictly BANNED in ${directives.regime} / SHORT ONLY regime. Trade rejected to protect capital.`;
-      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
-      return this.reject(reason, directives, accountEquity, availableMargin);
+    const isBearRegime = Boolean(
+      (directives.regime && (directives.regime.includes('BEAR') || directives.regime.includes('DUMP') || String(directives.notes || '').includes('SHORT ONLY')))
+    );
+
+    if (isBearRegime && action === 'LONG') {
+      isCounterTrendTrade = true;
+      if (aiEval.confidenceScore < COUNTER_TREND_CONFIDENCE_HURDLE) {
+        const reason = `🛑 [ASYMMETRIC REGIME HURDLE] Counter-trend LONG under ${directives.regime || 'BEARISH'} requires elevated confidence (>= ${COUNTER_TREND_CONFIDENCE_HURDLE}%). Current score (${aiEval.confidenceScore}%) is insufficient.`;
+        logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+        return this.reject(reason, directives, accountEquity, availableMargin);
+      }
+      logger.info(`✨ [Risk Guard] ${signal.symbol} Counter-trend LONG authorized under ${directives.regime} with elevated confidence (${aiEval.confidenceScore}% >= ${COUNTER_TREND_CONFIDENCE_HURDLE}%). Sizing damped to 0.5x.`);
     }
 
     // ── 2. Rejection Wick Tolerance Check ──────────────────────────────────────
@@ -212,6 +302,18 @@ export class RiskGuard {
 
     if (action === 'SHORT' && signal.indicators.lowerWickPct > wickTolerance) {
       const reason = `🛑 Rejection Wick Trap: Lower wick ${signal.indicators.lowerWickPct.toFixed(1)}% exceeds max tolerance of ${wickTolerance}%.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
+    // ── 2b. Pullback Candle Confirmation & Falling Knife Guard ─────────────────
+    if (action === 'LONG' && signal.indicators.candleColor === 'RED' && signal.indicators.lowerWickPct < 25) {
+      const reason = `🛑 Falling Knife Guard: Active 15m candle is red without buyer absorption (lower wick ${signal.indicators.lowerWickPct.toFixed(1)}% < 25%). Waiting for green reversal candle.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+    if (action === 'SHORT' && signal.indicators.candleColor === 'GREEN' && signal.indicators.upperWickPct < 25) {
+      const reason = `🛑 Rocket Knife Guard: Active 15m candle is green without seller absorption (upper wick ${signal.indicators.upperWickPct.toFixed(1)}% < 25%). Waiting for red reversal candle.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
@@ -257,62 +359,206 @@ export class RiskGuard {
 
       const isBullRegime = b?.macro?.regime === 'RISK_ON_BETA' || b?.macro?.regime === 'TRENDING_BULL' || b?.macro?.marketBias === 'BULLISH';
       if (action === 'SHORT' && isBullRegime) {
-        const reason = `🛑 [HARD DIRECTIONAL BAN] SHORTs are strictly prohibited across all pairs under ${b?.macro?.regime || 'RISK_ON_BETA'} macro regime.`;
-        logger.warn(`[Risk Guard] ${reason}`);
-        return this.reject(reason, directives, accountEquity, availableMargin);
+        isCounterTrendTrade = true;
+        if (aiEval.confidenceScore < COUNTER_TREND_CONFIDENCE_HURDLE) {
+          const reason = `🛑 [ASYMMETRIC REGIME HURDLE] Counter-trend SHORT under ${b?.macro?.regime || 'RISK_ON_BETA'} requires elevated confidence (>= ${COUNTER_TREND_CONFIDENCE_HURDLE}%). Current score (${aiEval.confidenceScore}%) is insufficient.`;
+          logger.warn(`[Risk Guard] ${reason}`);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        }
+        logger.info(`✨ [Risk Guard] ${signal.symbol} Counter-trend SHORT authorized under ${b?.macro?.regime || 'RISK_ON_BETA'} with elevated confidence (${aiEval.confidenceScore}% >= ${COUNTER_TREND_CONFIDENCE_HURDLE}%). Sizing damped to 0.5x.`);
+      }
+
+      // Fleet Quarantine Directive Check from Sim Lab
+      if (b?.quarantineDirectives && b.quarantineDirectives[normSym]) {
+        const q = b.quarantineDirectives[normSym];
+        if (q.quarantinedUntil && Date.now() < q.quarantinedUntil) {
+          const remMin = Math.ceil((q.quarantinedUntil - Date.now()) / 60000);
+          const reason = `🛑 Blocked by Sim Lab Fleet Quarantine: ${normSym} is quarantined for ${remMin}m (${q.reason || 'Post-stop toxic flow'}). Order blocked.`;
+          logger.warn(`[Risk Guard] ${reason}`);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        }
       }
     } catch {}
 
-    // ── 3c. Max Concurrent Positions Guard ───────────────────────────────────
-    const maxOpenPositions = (config as any).MAX_OPEN_POSITIONS || 3;
+    // ── 3c. Concurrent & Directional Basket Caps ──────────────────────────────
+    let simLabBundle: any = null;
+    try {
+      const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+      simLabBundle = getLastSyncedBundle();
+    } catch {}
+    const activeDirectives: any = directives || simLabBundle;
+
+    const clientMaxOpen = (config as any).MAX_OPEN_POSITIONS ?? 2;
+    const simLabMaxOpen = activeDirectives?.portfolioLimits?.maxConcurrentPositions;
+    const maxOpenPositions = typeof simLabMaxOpen === 'number' ? Math.min(clientMaxOpen, simLabMaxOpen) : clientMaxOpen;
     if (openPositionsCount >= maxOpenPositions) {
       const reason = `🛑 Max Concurrent Positions Reached: Active open positions (${openPositionsCount}) >= configured limit (${maxOpenPositions}). Order rejected.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
+    let sameDirCount = 0;
+    let sameDirMargin = 0;
+    try {
+      const { tradeExecutor } = require('../trades/executor');
+      const open = tradeExecutor.getOpenTrades();
+      for (const t of open) {
+        if (t.action === action) {
+          sameDirCount++;
+          sameDirMargin += (t.allocatedUsd || 0);
+        }
+      }
+    } catch {}
+
+    if (sameDirCount >= 2) {
+      const reason = `🛑 Directional Basket Cap Reached: Maximum 2 concurrent ${action} positions active. New ${action} for ${signal.symbol} blocked for portfolio diversification.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
+    const maxDirMargin = 80.0;
+    if (sameDirMargin >= maxDirMargin) {
+      const reason = `🛑 Directional Margin Ceiling Reached: Total ${action} margin deployed is $${sameDirMargin.toFixed(2)} (>= $${maxDirMargin.toFixed(2)} limit). New ${action} blocked to prevent correlated beta cascade.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
     // ── 4. Budget & Allocation Ceiling ─────────────────────────────────────────
-    const maxBudget = config.BUDGET_USD;
+    // Live capital guard: The working budget ceiling can never exceed real on-chain account equity when available.
+    const effectiveBudget = (accountEquity > 0)
+      ? Math.min(config.BUDGET_USD, accountEquity)
+      : config.BUDGET_USD;
+    const maxBudget = effectiveBudget;
     if (currentAllocatedUsd >= maxBudget) {
-      const reason = `🛑 Budget Exhausted: Currently deployed $${currentAllocatedUsd.toFixed(2)} reaches max budget $${maxBudget.toFixed(2)}.`;
+      const reason = `🛑 Budget Exhausted: Currently deployed $${currentAllocatedUsd.toFixed(2)} reaches max budget $${maxBudget.toFixed(2)} (Configured: $${config.BUDGET_USD.toFixed(2)}, Real Equity: $${accountEquity.toFixed(2)}).`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
     // Size this trade: default 30% of remaining budget scaled by Sim Lab macro risk multiplier (0.5x to 1.2x)
     let macroMultiplier = 1.0;
-    try {
-      const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
-      const b = getLastSyncedBundle();
-      if (b && typeof b.macro?.riskMultiplier === 'number') {
-        macroMultiplier = Math.max(0.5, Math.min(1.2, b.macro.riskMultiplier));
-      }
-    } catch {}
+    if (simLabBundle && typeof simLabBundle.macro?.riskMultiplier === 'number') {
+      macroMultiplier = Math.max(0.5, Math.min(1.2, simLabBundle.macro.riskMultiplier));
+    }
 
     const remainingBudget = Math.max(0, maxBudget - currentAllocatedUsd);
-    const userMaxPosUsd = Math.min((config as any).MAX_POSITION_USD || 60, maxBudget);
-    const baseTargetAlloc = Math.min(
-      remainingBudget,
-      maxBudget * (config.MAX_ALLOC_PCT / 100),
-      userMaxPosUsd,
-    );
-    let targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
+    const clientMaxPos = (config as any).MAX_POSITION_USD || 60;
+    const simLabMaxPos = activeDirectives?.portfolioLimits?.maxPositionUsd || activeDirectives?.pairDirectives?.[signal.symbol]?.maxPositionUsd;
+    const effectiveMaxPosCeiling = typeof simLabMaxPos === 'number' ? Math.min(clientMaxPos, simLabMaxPos) : clientMaxPos;
+    const userMaxPosUsd = Math.min(effectiveMaxPosCeiling, maxBudget);
 
-    // STRICT HARD CLAMPS:
-    // 1. Can NEVER exceed userMaxPosUsd ($60)
-    // 2. Can NEVER exceed remainingBudget ($200 - deployed)
-    targetAllocUsd = Math.min(targetAllocUsd, userMaxPosUsd, remainingBudget);
+    const normSym = signal.symbol.toUpperCase().replace('-', '/');
+    const pairDir = activeDirectives?.pairDirectives?.[normSym] || activeDirectives?.pairDirectives?.[signal.symbol];
 
-    if (targetAllocUsd < 2.0) {
-      const reason = `🛑 Remaining budget ($${remainingBudget.toFixed(2)}) is insufficient for minimum viable position.`;
+    // Probation / Sandbox Protection:
+    if (pairDir?.assignedTier === 'TIER_3_PROBATION' || pairDir?.tierAllocPct === 0) {
+      const reason = `🛑 Tier 3 Probation: ${signal.symbol} is quarantined in paper shadow mode. Live allocation is 0%.`;
+      logger.warn(`[Risk Guard] ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+    if (pairDir?.shadowModeOnly || (pairDir?.sandboxTradesRemaining || 0) > 0) {
+      const reason = `🧪 Sandbox Shadow Mode: ${signal.symbol} has ${pairDir?.sandboxTradesRemaining || 3} trial trades remaining. Live execution held.`;
+      logger.info(`[Risk Guard] ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    const leverage = Math.min(signal.suggestedLeverage || 3, config.MAX_LEVERAGE || 5);
+    const stratMinMargin = Math.max(
+      20.0,
+      activeDirectives?.strategy?.layer5?.minMarginUsd ??
+      (activeDirectives?.strategy as any)?.minMarginUsd ??
+      20.0,
+    );
+
+    let targetAllocUsd: number;
+    // Dynamic Percentage Sizing: Respects client working budget and pair tier allocation %
+    const pairAllocPct = (typeof pairDir?.tierAllocPct === 'number')
+      ? pairDir.tierAllocPct
+      : (typeof (activeDirectives?.strategy?.maxAllocPct) === 'number' ? activeDirectives.strategy.maxAllocPct : config.MAX_ALLOC_PCT);
+    const effectiveAllocPct = Math.min(pairAllocPct, config.MAX_ALLOC_PCT);
+
+    const baseTargetAlloc = Math.min(
+      remainingBudget,
+      maxBudget * (effectiveAllocPct / 100),
+      userMaxPosUsd,
+    );
+    targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
+
+    // Kronos Confidence-Calibrated Sizing Multiplier (0.3x for chop up to 1.0x for high conviction)
+    if (typeof pairDir?.confidenceSizing?.positionMultiplier === 'number') {
+      const kronosMult = Math.max(0.3, Math.min(1.0, pairDir.confidenceSizing.positionMultiplier));
+      targetAllocUsd = Number((targetAllocUsd * kronosMult).toFixed(2));
+      if (kronosMult !== 1.0) {
+        logger.info(`[Risk Guard] ${signal.symbol} — Kronos confidence sizing multiplier applied: ${kronosMult.toFixed(2)}x (Confidence: ${pairDir?.confidenceSizing?.confidenceScore || 'N/A'}, Adjusted Allocation: $${targetAllocUsd.toFixed(2)})`);
+      }
+    }
+    // Counter-trend asymmetric sizing dampener (0.5x margin allocation)
+    if (isCounterTrendTrade) {
+      targetAllocUsd = Number((targetAllocUsd * 0.5).toFixed(2));
+      logger.info(`⚖️ [Risk Guard] ${signal.symbol} — Counter-trend 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
+    }
+
+    // Enforce strategy minimum margin floor of $20.00
+    targetAllocUsd = Math.max(targetAllocUsd, stratMinMargin);
+
+    // STRICT HARD CLAMPS:
+    // 1. Can NEVER exceed userMaxPosUsd (ceiling)
+    // 2. Can NEVER exceed remainingBudget ($200 - deployed)
+    targetAllocUsd = Math.min(targetAllocUsd, userMaxPosUsd, remainingBudget);
+
+    if (targetAllocUsd < stratMinMargin) {
+      const reason = `🛑 Remaining budget ($${remainingBudget.toFixed(2)}) is insufficient for minimum margin allocation of $${stratMinMargin.toFixed(2)} (allocated: $${targetAllocUsd.toFixed(2)}).`;
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
+    // Adaptive Leverage Min-Clamp:
+    // Sim Lab may recommend lower leverage (e.g. 3x on volatile alts) under client max ceiling (e.g. 5x)
+    // Strictly respects exchange maximum leverage caps (e.g. 5x for SUI, NEAR, TAO, LDO, ZRO)
+    const marketAuth = AUTHORITATIVE_DECIBEL_MARKETS[normSym];
+    const exchangeMaxLev = marketAuth?.maxLeverage || 10;
+
+    const simLabSuggestedLev = pairDir?.confidenceSizing?.recommendedLeverage || pairDir?.maxLeverage || signal.suggestedLeverage || activeDirectives?.strategy?.leverage || 3;
+    const clientMaxLev = Math.min(config.MAX_LEVERAGE || 5, exchangeMaxLev);
+    const leverage = Math.min(simLabSuggestedLev, clientMaxLev, exchangeMaxLev);
+
+    // ── Risk-Parity Hard Cap: Maximum Dollar Loss at Stop Loss (UNCONDITIONAL) ──
+    const entryPrice = signal.entryPrice || signal.limitPrice || 0;
+    const stopLossPrice = signal.stopLoss || 0;
+    const rawSlDistPct = (entryPrice > 0 && stopLossPrice > 0)
+      ? Math.abs(entryPrice - stopLossPrice) / entryPrice
+      : 0.02;
+    const bufferedSlDistPct = rawSlDistPct + 0.0030; // 30 bps slippage & taker fee buffer
+
+    // Maximum loss at SL is percentage-scaled, calibrated for minimum margin (e.g. $20 min margin @ 15% hard SL = $3.00)
+    const maxLossPerTradeUsd = Math.max(stratMinMargin * 0.15, maxBudget * 0.02);
+    if (bufferedSlDistPct > 0 && leverage > 0) {
+      const maxSafeAllocForSl = maxLossPerTradeUsd / (bufferedSlDistPct * leverage);
+      if (targetAllocUsd > maxSafeAllocForSl) {
+        logger.info(
+          `🛡️ [RISK PARITY CAP] ${signal.symbol} — Allocation capped from $${targetAllocUsd.toFixed(2)} to $${maxSafeAllocForSl.toFixed(2)} ` +
+          `to guarantee max SL loss is strictly ≤ $${maxLossPerTradeUsd.toFixed(2)} (${(bufferedSlDistPct * 100).toFixed(2)}% buffered SL dist @ ${leverage}x)`
+        );
+        targetAllocUsd = Math.max(stratMinMargin, Number(maxSafeAllocForSl.toFixed(2)));
+      }
+    }
+
+    // Clamp allocation so directional margin does not exceed $80 limit
+    const remainingDirMargin = Math.max(0, maxDirMargin - sameDirMargin);
+    if (targetAllocUsd > remainingDirMargin) {
+      logger.info(
+        `🛡️ [DIRECTIONAL MARGIN CAP] ${signal.symbol} — Allocation trimmed from $${targetAllocUsd.toFixed(2)} to $${remainingDirMargin.toFixed(2)} to respect $${maxDirMargin.toFixed(2)} ceiling on ${action}s`
+      );
+      targetAllocUsd = Math.max(0, Number(remainingDirMargin.toFixed(2)));
+    }
+
+    if (targetAllocUsd < stratMinMargin) {
+      const reason = `🛑 Sizing clamped allocation ($${targetAllocUsd.toFixed(2)}) is insufficient for minimum margin allocation of $${stratMinMargin.toFixed(2)}.`;
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
     const positionSizeUsd = targetAllocUsd * leverage;
 
     // Safety sanity check: block anomalous sizing beyond configured budget x maxLeverage
-    const maxAllowedNotional = (config.BUDGET_USD * (config.MAX_LEVERAGE || 5)) * 1.10;
+    const maxAllowedNotional = (config.BUDGET_USD * clientMaxLev) * 1.10;
     if (positionSizeUsd > maxAllowedNotional) {
       const reason = `🛑 Safety Cap: Sizing calculation anomaly ($${positionSizeUsd.toFixed(2)}) exceeds absolute max allowable notional ($${maxAllowedNotional.toFixed(2)}). Order aborted.`;
       logger.error(`[Risk Guard] ${reason}`);

@@ -13,11 +13,11 @@ import { dbClient } from '../db/database';
 import { config } from '../config';
 
 const shockwaveDetector = {
-  triggerSimDirectiveCoolOff(symbol: string, bannedSide: string, reason: string, durationMin: number) {
+  triggerSimDirectiveCoolOff(symbol: string, bannedSide: string, reason: string, durationMin: number, forcedExpiresAt?: number) {
     try {
       const { riskGuard, cleanImmunityReason } = require('../risk/guard');
       const cleanReason = cleanImmunityReason ? cleanImmunityReason(reason) : reason;
-      riskGuard.triggerL4TrapCoolOff(symbol, bannedSide as any, 'SIM_LAB_DIRECTIVE', cleanReason, durationMin);
+      riskGuard.triggerL4TrapCoolOff(symbol, bannedSide as any, 'SIM_LAB_DIRECTIVE', cleanReason, durationMin, forcedExpiresAt);
     } catch {}
     logger.info(`⏳ [COOL-OFF] Triggered for ${symbol} (${bannedSide}): ${reason.slice(0, 80)} (${durationMin}m)`);
   },
@@ -36,6 +36,8 @@ export interface SimStrategyDirectives {
   maxAllocPct?: number;
   minRiskRewardRatio?: number;
   tp1CloseRatio?: number;
+  dynamicTakeProfit1R?: number;
+  stagnationProfitHarvestR?: number;
   stagnationTimeStopBars?: number;
   layer1?: any;
   layer2?: any;
@@ -46,6 +48,7 @@ export interface SimStrategyDirectives {
   enforcePostOnly?: boolean;
   makerFillTimeoutMs?: number;
   allowTakerFallback?: boolean;
+  minMarginUsd?: number;
 }
 
 const STRATEGIES_FILE = path.join(process.cwd(), 'data', 'user-strategies.json');
@@ -93,6 +96,12 @@ function loadStorage(): StoragePayload {
     }
   }
 
+  for (const s of customStrategies) {
+    if (s.layer5) {
+      s.layer5.minMarginUsd = Math.max(20, Number(s.layer5.minMarginUsd ?? 20));
+    }
+  }
+
   return { activeId, customStrategies };
 }
 
@@ -128,7 +137,7 @@ export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
     isPrebuilt: false,
     isSimLab: true,
     author: 'AI Agent (Autonomous 6-Pillar CIO)',
-    winRatePct: 65.0,
+    winRatePct: 52.2,
     createdAt: 1790750000000,
     updatedAt: 1790750000000,
     layerOrder: ['layer1_macro', 'layer2_liquidity', 'layer3_smc', 'layer4_ai', 'layer5_execution'],
@@ -146,6 +155,7 @@ export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
       leverage: 5,
       minAllocPct: 20,
       maxAllocPct: 35,
+      minMarginUsd: 20,
       dualTakeProfit: true,
       tp1CloseRatio: 0.5,
       moveSlToBreakevenAtTp1: true,
@@ -156,7 +166,7 @@ export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
     },
     certifiedByRiskSentinel: true,
     certificationScore: 100,
-    optimalRegimes: ['RISK_ON_BETA', 'TRENDING_BULL', 'EXPANSION', 'MOMENTUM_EXPANSION', 'RANGING_CHOP', 'STAGFLATION_CHOP', 'CONSOLIDATION'],
+    optimalRegimes: ['RISK_ON_BETA', 'TRENDING_BULL', 'EXPANSION', 'MOMENTUM_EXPANSION'],
     stagedStatus: 'ACTIVE_LIVE',
   },
   {
@@ -185,6 +195,7 @@ export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
       leverage: 5,
       minAllocPct: 25,
       maxAllocPct: 40,
+      minMarginUsd: 20,
       dualTakeProfit: true,
       tp1CloseRatio: 0.4,
       moveSlToBreakevenAtTp1: true,
@@ -217,6 +228,7 @@ export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
       leverage: 6,
       minAllocPct: 22,
       maxAllocPct: 45,
+      minMarginUsd: 20,
       dualTakeProfit: true,
       tp1CloseRatio: 0.55,
       moveSlToBreakevenAtTp1: true,
@@ -249,6 +261,7 @@ export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
       leverage: 6,
       minAllocPct: 25,
       maxAllocPct: 50,
+      minMarginUsd: 20,
       dualTakeProfit: true,
       tp1CloseRatio: 0.6,
       moveSlToBreakevenAtTp1: true,
@@ -493,6 +506,7 @@ export function applySimStrategyDirectives(strat: SimStrategyDirectives): void {
         leverage: strat.leverage ?? 4,
         minAllocPct: strat.minAllocPct ?? 20,
         maxAllocPct: strat.maxAllocPct ?? 35,
+        minMarginUsd: Math.max(20, Number(strat.minMarginUsd ?? strat.fullStrategy?.layer5?.minMarginUsd ?? 20)),
         minRiskRewardRatio: strat.minRiskRewardRatio ?? 2.5,
         tp1CloseRatio: strat.tp1CloseRatio ?? 0.5,
         stagnationTimeStopBars: strat.stagnationTimeStopBars ?? 8,
@@ -568,11 +582,13 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
 
     // 1. If cool-off requested by sim, trigger in shockwaveDetector (only if directional bans are enabled)
     if (dir.coolOffActive && flags.syncDirectionalBans) {
+      const explicitExpires = Number(dir.expiresAt || dir.coolOffExpiresAt || 0);
       shockwaveDetector.triggerSimDirectiveCoolOff(
         symbol,
         dir.bannedSide || 'BOTH',
         dir.reason || 'Sim Lab Alpha Directive cool-off',
         15,
+        explicitExpires > Date.now() ? explicitExpires : undefined,
       );
     }
 
@@ -594,7 +610,9 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
       typeof dir.slMultiplier === 'number' ||
       typeof dir.minConfidenceGate === 'number';
 
-    if (hasLayerSwitches || hasRiskOverrides) {
+    const hasStrategyAssignment = Boolean(dir.assignedStrategyId || dir.assignedTier || typeof dir.tierAllocPct === 'number');
+
+    if (hasLayerSwitches || hasRiskOverrides || hasStrategyAssignment) {
       const updated: PairLayerOverrides = {
         ...current,
         preset: 'SIM_LAB',
@@ -605,6 +623,13 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
         ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, config.MAX_LEVERAGE) } : {}),
         ...(typeof dir.slMultiplier === 'number' ? { slMultiplier: Math.max(0.8, Math.min(2.5, dir.slMultiplier)) } : {}),
         ...(typeof dir.minConfidenceGate === 'number' ? { minConfidenceGate: Math.max(50, Math.min(95, dir.minConfidenceGate)) } : {}),
+        ...(dir.assignedStrategyId ? { assignedStrategyId: dir.assignedStrategyId } : {}),
+        ...(dir.assignedStrategyName ? { assignedStrategyName: dir.assignedStrategyName } : {}),
+        ...(dir.assignedTier ? { assignedTier: dir.assignedTier } : {}),
+        ...(typeof dir.tierAllocPct === 'number' ? { tierAllocPct: dir.tierAllocPct } : {}),
+        ...(typeof dir.sandboxTradesRemaining === 'number' ? { sandboxTradesRemaining: dir.sandboxTradesRemaining } : {}),
+        ...(typeof dir.sandboxWins === 'number' ? { sandboxWins: dir.sandboxWins } : {}),
+        ...(dir.executionProfile ? { executionProfile: dir.executionProfile } : {}),
         updatedAt: Date.now(),
       };
       pairOverridesCache[symbol] = updated;
@@ -614,7 +639,8 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
         logger.error(`Failed to save updated Sim Lab pair override for ${symbol}: ${err.message}`);
       }
       logger.info(
-        `🧪 [SIM PAIR SYNC] Inherited directives for ${symbol}: L1=${updated.layer1 ?? 'def'} L2=${updated.layer2 ?? 'def'} ` +
+        `🧪 [SIM PAIR SYNC] Inherited directives for ${symbol}: Strat="${updated.assignedStrategyName || updated.assignedStrategyId || 'def'}" ` +
+        `Tier=${updated.assignedTier || 'def'} Alloc=${updated.tierAllocPct ?? 'def'}% L1=${updated.layer1 ?? 'def'} L2=${updated.layer2 ?? 'def'} ` +
         `L3=${updated.layer3 ?? 'def'} L4=${updated.layer4 ?? 'def'} Lev=${updated.maxLeverage ?? 'def'}x Gate=${updated.minConfidenceGate ?? 'def'}%`
       );
     }
@@ -675,6 +701,7 @@ export function getActiveStrategy(): StrategyConfig {
         minAllocPct: typeof activeDirectives.minAllocPct === 'number'
           ? Math.max(5, Math.min(activeDirectives.minAllocPct, maxAlloc))
           : simBase.layer5.minAllocPct,
+        minMarginUsd: Math.max(20, Number(activeDirectives.minMarginUsd ?? simBase.layer5?.minMarginUsd ?? 20)),
         minRiskRewardRatio: typeof activeDirectives.minRiskRewardRatio === 'number'
           ? Math.max(1.5, activeDirectives.minRiskRewardRatio)
           : simBase.layer5.minRiskRewardRatio,
@@ -703,6 +730,7 @@ export function getActiveStrategy(): StrategyConfig {
     ...base,
     layer5: {
       ...base.layer5,
+      minMarginUsd: Math.max(20, Number(base.layer5?.minMarginUsd ?? 20)),
       enforcePostOnly: base.layer5.enforcePostOnly ?? true,
       makerFillTimeoutMs: base.layer5.makerFillTimeoutMs ?? 25000,
       allowTakerFallback: base.layer5.allowTakerFallback ?? false,
@@ -772,7 +800,7 @@ export function getPairOverrides(symbol: string): PairLayerOverrides | null {
 
 export function setPairLayerOverride(
   symbol: string,
-  layer: 'layer1' | 'layer2' | 'layer3' | 'layer4',
+  layer: 'layer0_kronos' | 'layer1' | 'layer2' | 'layer3' | 'layer4',
   enabled: boolean
 ): PairLayerOverrides {
   const norm = (symbol || '').toUpperCase();
@@ -844,7 +872,7 @@ export function resetSimLabOverrides(): void {
 }
 
 export function setBulkPairLayerOverride(
-  layer: 'layer1' | 'layer2' | 'layer3' | 'layer4',
+  layer: 'layer0_kronos' | 'layer1' | 'layer2' | 'layer3' | 'layer4',
   enabled: boolean
 ): Record<string, PairLayerOverrides> {
   const symbols = Object.keys(pairOverridesCache);
@@ -869,24 +897,43 @@ export function setBulkPairLayerOverride(
 }
 
 export function getStrategyForPair(symbol: string): StrategyConfig {
-  const base = getActiveStrategy();
+  let base = getActiveStrategy();
   const norm = (symbol || '').toUpperCase();
   const overrides = pairOverridesCache[norm] || pairOverridesCache[symbol];
   if (!overrides) return base;
 
+  // ── Dynamic Strategy Affinity: Resolve pair's designated strategy from Ready Arsenal / templates ──
+  if (overrides.assignedStrategyId) {
+    const specific = getStrategyById(overrides.assignedStrategyId) || PREBUILT_TEMPLATES.find((t) => t.id === overrides.assignedStrategyId);
+    if (specific) {
+      base = specific;
+    }
+  }
+
+  // Certified Core Lock: When running an assigned champion template (e.g. Turtle Soup on SUI),
+  // preserve the flat original preset for core signal layers (L1, L2, L3) to maintain proven empirical edge.
+  // Manual operator pins (preset === 'MANUAL') still maintain full override authority.
+  const isCertifiedTemplateAssigned = Boolean(overrides.assignedStrategyId);
+  const isOperatorManual = overrides.preset === 'MANUAL';
+  const lockCoreToPreset = isCertifiedTemplateAssigned && !isOperatorManual;
+
   return {
     ...base,
+    layer0_kronos: base.layer0_kronos ? {
+      ...base.layer0_kronos,
+      enabled: typeof overrides.layer0_kronos === 'boolean' ? overrides.layer0_kronos : base.layer0_kronos.enabled,
+    } : undefined,
     layer1: {
       ...base.layer1,
-      enabled: typeof overrides.layer1 === 'boolean' ? overrides.layer1 : base.layer1.enabled,
+      enabled: lockCoreToPreset ? base.layer1.enabled : (typeof overrides.layer1 === 'boolean' ? overrides.layer1 : base.layer1.enabled),
     },
     layer2: {
       ...base.layer2,
-      enabled: typeof overrides.layer2 === 'boolean' ? overrides.layer2 : base.layer2.enabled,
+      enabled: lockCoreToPreset ? base.layer2.enabled : (typeof overrides.layer2 === 'boolean' ? overrides.layer2 : base.layer2.enabled),
     },
     layer3: {
       ...base.layer3,
-      enabled: typeof overrides.layer3 === 'boolean' ? overrides.layer3 : base.layer3.enabled,
+      enabled: lockCoreToPreset ? base.layer3.enabled : (typeof overrides.layer3 === 'boolean' ? overrides.layer3 : base.layer3.enabled),
     },
     layer4: {
       ...base.layer4,
@@ -898,15 +945,18 @@ export function getStrategyForPair(symbol: string): StrategyConfig {
       minConfidenceGate: typeof overrides.minConfidenceGate === 'number' ? overrides.minConfidenceGate : base.layer5.minConfidenceGate,
       maxLeverage: typeof overrides.maxLeverage === 'number' ? overrides.maxLeverage : base.layer5.maxLeverage,
       leverage: typeof overrides.maxLeverage === 'number' ? Math.min(base.layer5.leverage, overrides.maxLeverage) : base.layer5.leverage,
+      minAllocPct: typeof overrides.tierAllocPct === 'number' ? Math.max(10, overrides.tierAllocPct - 10) : base.layer5.minAllocPct,
+      maxAllocPct: typeof overrides.tierAllocPct === 'number' ? overrides.tierAllocPct : base.layer5.maxAllocPct,
     },
   };
 }
 
-export function applyPairPreset(symbol: string, preset: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB'): PairLayerOverrides {
+export function applyPairPreset(symbol: string, preset: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CREAMER_ORDERFLOW'): PairLayerOverrides {
   const base = getActiveStrategy();
   let updated: PairLayerOverrides;
   if (preset === 'MAJOR_TREND') {
     updated = {
+      layer0_kronos: true,
       layer1: true,
       layer2: base.layer2.enabled,
       layer3: true,
@@ -920,6 +970,7 @@ export function applyPairPreset(symbol: string, preset: 'MAJOR_TREND' | 'HIGH_BE
   } else if (preset === 'HIGH_BETA_ALT') {
     // HIGH_BETA_ALT: Bypasses L1 EMA lag in chop, Turtle soup sweep ON, max 3x lev, wider 1.5x SL buffer, 75% gate
     updated = {
+      layer0_kronos: true,
       layer1: false,
       layer2: base.layer2.enabled,
       layer3: true,
@@ -930,6 +981,21 @@ export function applyPairPreset(symbol: string, preset: 'MAJOR_TREND' | 'HIGH_BE
       preset: 'HIGH_BETA_ALT',
       updatedAt: Date.now(),
     };
+  } else if (preset === 'CREAMER_ORDERFLOW') {
+    // CREAMER_ORDERFLOW: Robbins World Cup Champion Order-Flow Absorption model
+    // L0 ON (15m Neural Trajectory Confluence), L1 ON (Box POC anchor), L2 ON (CVD & Liquidation clusters), L3 ON (Turtle soup & Retest), L4 ON (AI Trap Shield), Lev 6x, tight 1.0x SL behind extreme wick, 78% gate
+    updated = {
+      layer0_kronos: true,
+      layer1: true,
+      layer2: true,
+      layer3: true,
+      layer4: true,
+      maxLeverage: 6,
+      slMultiplier: 1.0,
+      minConfidenceGate: 78,
+      preset: 'CREAMER_ORDERFLOW',
+      updatedAt: Date.now(),
+    };
   } else if (preset === 'SIM_LAB') {
     // SIM_LAB: Synchronized micro individual strategy from Port 4000 Sim Lab
     const norm = (symbol || '').toUpperCase();
@@ -938,6 +1004,7 @@ export function applyPairPreset(symbol: string, preset: 'MAJOR_TREND' | 'HIGH_BE
     const safeMaxLev = config.MAX_LEVERAGE || 5;
 
     updated = {
+      layer0_kronos: simDir?.layer0_kronos !== undefined ? simDir.layer0_kronos : true,
       layer1: simDir?.layer1 !== undefined ? simDir.layer1 : (simStrat?.layer1?.enabled ?? base.layer1.enabled),
       layer2: simDir?.layer2 !== undefined ? simDir.layer2 : base.layer2.enabled,
       layer3: simDir?.layer3 !== undefined ? simDir.layer3 : (simStrat?.layer3?.enabled ?? base.layer3.enabled),
@@ -1038,6 +1105,21 @@ export async function autoTunePairWithAI(symbol: string): Promise<PairAutoTuneRe
   const regime = macroDir?.regime || 'RANGING_CHOP';
   const isChop = regime === 'RANGING_CHOP' || regime === 'HIGH_VOLATILITY';
 
+  // Layer 0: Kronos Foundation Forward Trajectory Confluence (15m, 15-bar)
+  let recL0 = true;
+  let kronosContextStr = 'Neutral path';
+  try {
+    const { getSimPairDirective } = require('../pipeline/sim-consumer');
+    const pairDir = getSimPairDirective?.(symbol);
+    const kf = pairDir?.layer0_kronos;
+    if (kf) {
+      kronosContextStr = `Direction: ${kf.predictedDirection}, Return: ${(kf.expectedReturnPct || 0).toFixed(2)}%, EV: ${(kf.evRatio || 1.4).toFixed(2)}x, Entropy: ${(kf.entropyScore || 0.4).toFixed(2)}`;
+      if (kf.entropyScore > 0.75 && (kf.evRatio || 1.0) < 1.0) {
+        recL0 = false;
+      }
+    }
+  } catch {}
+
   let recL1 = !isChop && isMajor;
   let recL2 = true;
   let recL3 = true;
@@ -1045,29 +1127,48 @@ export async function autoTunePairWithAI(symbol: string): Promise<PairAutoTuneRe
   let recMaxLev = isMajor ? (isChop ? 7 : 10) : (isChop ? 3 : 5);
   let recSlMult = isMajor ? 1.0 : (isChop ? 1.5 : 1.25);
   let recGate = isChop ? (isMajor ? 70 : 75) : (isMajor ? 65 : 70);
-  let presetMatch: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'CUSTOM' = isMajor ? 'MAJOR_TREND' : 'HIGH_BETA_ALT';
+  let presetMatch: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CREAMER_ORDERFLOW' | 'CUSTOM' = isMajor ? 'MAJOR_TREND' : 'HIGH_BETA_ALT';
+  if (isChop || regime === 'CONSOLIDATION' || regime === 'REGIME_RANGE_ROTATIONAL') {
+    presetMatch = 'CREAMER_ORDERFLOW';
+  }
 
   let rationale = `Analyzed ${historyClosed.length} historical trades on ${symbol} (${winRate.toFixed(1)}% WR) in ${regime} regime.\n` +
+    `• Layer 0 (Kronos Trajectory): Recommend ${recL0 ? 'ON' : 'OFF'} — ${recL0 ? 'Enables 15-bar neural trajectory confirmation (+15 pts) and symmetrical EV >= 1.4x filtering.' : 'Bypassed due to elevated chop/entropy (>75%) — allows faster mean-reversion entries.'} [${kronosContextStr}]\n` +
     (recL1 
       ? `• Layer 1 (Technical Indicators): Recommend ON — ${symbol} has deep liquidity with clean EMA trend adherence.\n` 
       : `• Layer 1 (Technical Indicators): Recommend OFF — in ${regime}, lagging 15m EMAs produce false whipsaws on ${symbol}.\n`) +
     `• Layers 2 & 3 (Order Flow & SMC): Recommend ON — Turtle soup sweeps and liquidation magnets capture optimal risk/reward.\n` +
-    `• Layer 4 (AI Trap Shield): Recommend ON — Crucial for verifying genuine spot volume vs spoofed book walls.\n` +
-    `• Risk Calibration: Capped leverage to ${recMaxLev}x and set SL buffer to ${recSlMult}x ATR for volatility defense.`;
+    `• Layer 4 (AI Trap Shield): Recommend ON — Crucial for verifying genuine spot volume vs spoofed book walls and knife protection.\n` +
+    `• Layer 5 (Risk & Execution): Volatility Cone TP/SL active with 15-bar stagnation harvest. Leverage capped to ${recMaxLev}x, SL buffer set to ${recSlMult}x ATR.`;
 
   try {
     const { loadAISettings } = require('../ai/settings');
     const { generateAIResponse } = require('../ai/client');
     const aiSettings = loadAISettings();
     if (aiSettings.enabled && (aiSettings.apiKey || aiSettings.provider === 'custom')) {
-      const prompt = `You are an institutional crypto quantitative researcher. Recommend the optimal layer configuration and risk limits for pair: ${symbol}.
+      const prompt = `You are an institutional crypto quantitative researcher. Recommend the optimal 6-layer configuration and risk limits for pair: ${symbol}.
 Macro Regime: ${regime} (BTC Bias: ${macroDir?.btcBias || 'Neutral'}, Alt Policy: ${macroDir?.altPolicy || 'Selective'})
 Pair Historical Win Rate: ${winRate.toFixed(1)}% across ${historyClosed.length} closed trades.
 Asset Profile: ${isMajor ? 'Tier-1 Major' : 'High-Beta Altcoin'}.
+Kronos 15-Bar Forecast: ${kronosContextStr}.
 
-Decide recommended layer switches (layer1: boolean, layer2: boolean, layer3: boolean, layer4: boolean), maxLeverage (1-10), slMultiplier (0.8-2.0), minConfidenceGate (50-85).
+Our quantitative engine uses a 6-Layer Modular Architecture:
+- Layer 0 (layer0_kronos): Foundation neural time-series trajectory (15m, 15-bar). Awards +15pt confluence bonus, enforces contradiction vetos, and requires symmetrical EV >= 1.4x.
+- Layer 1 (layer1): Technical Indicators (RSI-14, EMA structure, Volume Profile POC).
+- Layer 2 (layer2): Order Flow & Liquidation sweeps (CVD, OI divergence).
+- Layer 3 (layer3): Smart Money Concepts (FVG, Order Blocks, Liquidity Turtle Soup).
+- Layer 4 (layer4): AI Trap Shield (adversarial book defense, spoofed walls, falling knife/melt-up veto).
+- Layer 5: Execution, Volatility Cone TP/SL boundaries, and 15-Bar Stagnation Harvest (Locked Safety Layer).
+
+Archetype Presets Available:
+- MAJOR_TREND: Trend-following with EMA envelope and macro momentum.
+- HIGH_BETA_ALT: High-beta alt volatility management with wider SL.
+- CREAMER_ORDERFLOW: Robbins World Cup Champion Order-Flow Absorption (absorbs aggressive participants at extremes, enters on failed re-test with invalidation SL behind wick).
+
+Decide recommended layer switches (layer0_kronos: boolean, layer1: boolean, layer2: boolean, layer3: boolean, layer4: boolean), maxLeverage (1-10), slMultiplier (0.8-2.0), minConfidenceGate (50-85), and presetMatch.
 Respond ONLY in valid JSON:
 {
+  "layer0_kronos": boolean,
   "layer1": boolean,
   "layer2": boolean,
   "layer3": boolean,
@@ -1075,20 +1176,25 @@ Respond ONLY in valid JSON:
   "maxLeverage": number,
   "slMultiplier": number,
   "minConfidenceGate": number,
+  "presetMatch": "MAJOR_TREND" | "HIGH_BETA_ALT" | "CREAMER_ORDERFLOW" | "CUSTOM",
   "confidence": number,
-  "rationale": "2-3 concise bullet points"
+  "rationale": "2-3 concise bullet points explaining L0 Kronos trajectory, L4 trap shield, and L5 risk settings"
 }`;
       const aiRaw = await generateAIResponse(prompt, 'You are an institutional quant researcher. Return pure JSON only.');
       const cleaned = aiRaw.replace(/```json/gi, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleaned);
-      if (typeof parsed.layer1 === 'boolean') {
-        recL1 = parsed.layer1;
+      if (typeof parsed.layer1 === 'boolean' || typeof parsed.layer0_kronos === 'boolean') {
+        recL0 = parsed.layer0_kronos ?? recL0;
+        recL1 = parsed.layer1 ?? true;
         recL2 = parsed.layer2 ?? true;
         recL3 = parsed.layer3 ?? true;
         recL4 = parsed.layer4 ?? true;
         if (typeof parsed.maxLeverage === 'number') recMaxLev = Math.min(15, Math.max(1, parsed.maxLeverage));
         if (typeof parsed.slMultiplier === 'number') recSlMult = Math.min(2.5, Math.max(0.8, parsed.slMultiplier));
         if (typeof parsed.minConfidenceGate === 'number') recGate = Math.min(90, Math.max(50, parsed.minConfidenceGate));
+        if (['MAJOR_TREND', 'HIGH_BETA_ALT', 'CREAMER_ORDERFLOW', 'CUSTOM'].includes(parsed.presetMatch)) {
+          presetMatch = parsed.presetMatch;
+        }
         if (parsed.rationale) rationale = parsed.rationale;
       }
     }
@@ -1099,6 +1205,7 @@ Respond ONLY in valid JSON:
   return {
     symbol,
     recommendedLayers: {
+      layer0_kronos: recL0,
       layer1: recL1,
       layer2: recL2,
       layer3: recL3,
@@ -1161,6 +1268,10 @@ export function setActiveStrategy(id: string): boolean {
 export function saveCustomStrategy(config: StrategyConfig): StrategyConfig {
   const now = Date.now();
   const existingIdx = storageCache.customStrategies.findIndex((s) => s.id === config.id);
+
+  if (config.layer5) {
+    config.layer5.minMarginUsd = Math.max(20, Number(config.layer5.minMarginUsd ?? 20));
+  }
 
   const updated: StrategyConfig = {
     ...config,

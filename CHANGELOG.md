@@ -5,6 +5,26 @@ All notable changes to Alpha Autonomous Client V3 will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-10-24
+
+### Added
+- **Kingfisher & Hyblock Liquidation Heatmap UI**:
+  - Live horizontal liquidation rays and volume profile histograms directly overlaid on active position candlestick charts.
+  - Directional color-coding: high-density short liquidation clusters above mark price in Mint (`#2dd4bf`), high-density long liquidation clusters below mark in Coral (`#f43f5e`).
+  - Target radar bullseye markers (concentric rings) highlighting primary institutional liquidation gravity magnets.
+  - Institutional Microstructure HUD with real-time VPIN risk classification, Primary Magnet distance, and Dynamic Safety Wall buffer metrics.
+- **ByKaranteli Microstructure & Liquidation Magnet Integration**:
+  - Seamless ingestion of ByKaranteli real-time order book asymmetry, VPIN toxicity, and liquidation depth profiles via Sim Lab Alpha Bundle.
+  - Dynamic Wall Soft SL Shielding: Positions automatically place and adjust soft stop losses behind the nearest opposing liquidation wall ($\ge \$1.5\text{M}$ cluster depth) with adaptive safety clearance.
+  - Magnet-Assisted Dynamic TP1: Snaps TP1 targets just inside the nearest massive liquidation magnet pool to capture cascading squeeze volume.
+  - Portfolio Harvester Proximity Hold: Automatically pauses trailing profit harvest execution if price is actively charging toward a high-conviction liquidation cluster ($\le 0.40\%$ away).
+  - Multi-Layer AI Shield Vetoes: Evaluates order flow toxicity (VPIN $> 0.38$) and opposes trades entering directly into unyielding counter-liquidation walls.
+- **Zero-Config Clean Public Onboarding**:
+  - Default connection URLs set to authoritative public Cloudflare endpoints (`https://simlab.measmony.me/api/pipeline/alpha-bundle` and `telemetry`) for seamless new host deployment out of the box.
+  - Clean pre-onboarding host state: No local test keys, test databases, or private credentials committed. Fresh hosts launch directly into the guided onboarding wizard.
+
+---
+
 ## [3.1.0] - 2026-09-29
 
 ### Added

@@ -94,7 +94,7 @@ export class SimLabSuperchargeClient {
     }
 
     // Default to Jetson or configured URL if none set
-    if (!this.serverUrl) {
+    if (!this.serverUrl || (this.serverUrl.includes('measmony.me') && config.SIMLAB_SERVER_URL)) {
       this.serverUrl = (config.SIMLAB_SERVER_URL || 'https://simlab.measmony.me').replace(/\/+$/, '');
     }
 
@@ -125,7 +125,12 @@ export class SimLabSuperchargeClient {
       if (fs.existsSync(settingsPath)) {
         const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
         if (parsed.simlab) {
-          if (parsed.simlab.url) this.serverUrl = String(parsed.simlab.url).trim().replace(/\/+$/, '');
+          const candidateUrl = parsed.simlab.url ? String(parsed.simlab.url).trim().replace(/\/+$/, '') : '';
+          if (config.SIMLAB_SERVER_URL && (candidateUrl.includes('measmony.me') || !candidateUrl)) {
+            this.serverUrl = config.SIMLAB_SERVER_URL.replace(/\/+$/, '');
+          } else if (candidateUrl) {
+            this.serverUrl = candidateUrl;
+          }
           if (parsed.simlab.key) this.rawToken = parsed.simlab.key;
           if (parsed.simlab.features) {
             this.featureFlags = { ...this.featureFlags, ...parsed.simlab.features };
@@ -570,7 +575,7 @@ export class SimLabSuperchargeClient {
 
     // ── Feature 1: Macro Market Regime Sync ──────────────────────────────────────
     if (this.featureFlags.syncMacroRegime) {
-      const macroRegime = bundle.macro?.regime || bundle.macroIntelligence?.decouplingRegime;
+      const macroRegime = bundle.macro?.regime || (bundle.macroIntelligence?.regime) || bundle.macroIntelligence?.decouplingRegime || 'RISK_ON_BETA';
       if (macroRegime) {
         sanitized.regime = String(macroRegime);
       }
@@ -639,6 +644,8 @@ export class SimLabSuperchargeClient {
         maxAllocPct: safeMaxAlloc,
         minRiskRewardRatio: bundle.strategy.minRiskRewardRatio,
         tp1CloseRatio: bundle.strategy.tp1CloseRatio,
+        dynamicTakeProfit1R: (bundle.strategy as any).dynamicTakeProfit1R ?? bundle.strategy.minRiskRewardRatio,
+        stagnationProfitHarvestR: (bundle.strategy as any).stagnationProfitHarvestR ?? 0.80,
         stagnationTimeStopBars: bundle.strategy.stagnationTimeStopBars,
         enforcePostOnly: bundle.strategy.enforcePostOnly ?? bundle.strategy.layer5?.enforcePostOnly,
         makerFillTimeoutMs: bundle.strategy.makerFillTimeoutMs ?? bundle.strategy.layer5?.makerFillTimeoutMs,
@@ -927,81 +934,85 @@ export class SimLabSuperchargeClient {
       totalPnlUsd: stats.totalPnlUsd,
     };
 
-    const fallbackUrl = 'https://simlab.measmony.me';
-    let targetBaseUrl = this.serverUrl;
+    const candidates = Array.from(new Set([
+      this.serverUrl,
+      config.SIMLAB_SERVER_URL,
+      'http://127.0.0.1:4000',
+      'http://192.168.100.21:4000',
+      'https://simlab.measmony.me',
+    ].filter(Boolean) as string[])).map((u) => u.replace(/\/+$/, ''));
 
-    try {
-      // 1. Post to Sim Lab Pipeline Telemetry endpoint (Feature 5: 8-Second Telemetry Heartbeat)
-      if (this.featureFlags.syncTelemetry) {
-        let posted = false;
+    let telemetryPosted = false;
+    let bundleSynced = false;
+
+    // 1. Post to Sim Lab Pipeline Telemetry endpoint (Feature 5: Continuous Telemetry Heartbeat)
+    if (this.featureFlags.syncTelemetry) {
+      for (const candUrl of candidates) {
         try {
-          await axios.post(`${targetBaseUrl}/api/pipeline/telemetry`, payload, {
+          await axios.post(`${candUrl}/api/pipeline/telemetry`, payload, {
             headers: {
               'Content-Type': 'application/json',
               ...(this.secret ? { 'X-SimLab-Client-Auth': this.secret } : {}),
             },
-            timeout: targetBaseUrl.includes('measmony.me') ? 7000 : 3500,
+            timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
           });
-          posted = true;
-        } catch (primaryErr: any) {
-          // If primary is local and failed, failover to public Cloudflare
-          if (targetBaseUrl !== fallbackUrl) {
-            try {
-              await axios.post(`${fallbackUrl}/api/pipeline/telemetry`, payload, {
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(this.secret ? { 'X-SimLab-Client-Auth': this.secret } : {}),
-                },
-                timeout: 7000,
-              });
-              targetBaseUrl = fallbackUrl;
-              posted = true;
-            } catch {}
+          telemetryPosted = true;
+          if (this.serverUrl !== candUrl && !candUrl.includes('measmony.me')) {
+            this.serverUrl = candUrl;
           }
-        }
-
-        if (!posted) {
-          // Fallback to heartbeat endpoint
-          await axios.post(`${targetBaseUrl}/api/clients/heartbeat`, payload, {
-            headers: {
-              'Content-Type': 'application/json',
-              ...(this.secret ? { 'X-SimLab-Client-Auth': this.secret } : {}),
-            },
-            timeout: 4500,
-          });
+          break;
+        } catch {
+          try {
+            await axios.post(`${candUrl}/api/clients/heartbeat`, payload, {
+              headers: {
+                'Content-Type': 'application/json',
+                ...(this.secret ? { 'X-SimLab-Client-Auth': this.secret } : {}),
+              },
+              timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
+            });
+            telemetryPosted = true;
+            if (this.serverUrl !== candUrl && !candUrl.includes('measmony.me')) {
+              this.serverUrl = candUrl;
+            }
+            break;
+          } catch {}
         }
       }
+    }
 
-      // 2. Ingest bundle directives if connected or enabled
-      if (this.isConnected && (this.featureFlags.syncMacroRegime || this.featureFlags.syncDirectionalBans || this.featureFlags.syncStrategyStudio)) {
-        const authHeaders: Record<string, string> = {};
-        if (this.rawToken) {
-          authHeaders['Authorization'] = `Bearer ${this.rawToken}`;
-          authHeaders['x-api-key'] = this.rawToken;
-        }
-        authHeaders['x-client-id'] = config.CLIENT_ID || 'v3-client';
-
-        const bundleRes = await axios.get(`${targetBaseUrl}/api/pipeline/alpha-bundle`, {
-          headers: authHeaders,
-          timeout: 4000,
-        }).catch(async () => {
-          if (targetBaseUrl !== fallbackUrl) {
-            return axios.get(`${fallbackUrl}/api/pipeline/alpha-bundle`, {
-              headers: authHeaders,
-              timeout: 6000,
-            }).catch(() => null);
-          }
-          return null;
-        });
-        if (bundleRes?.data) {
-          this.applyBundleDirectives(bundleRes.data);
-        }
+    // 2. Ingest bundle directives if connected or enabled
+    if (this.isConnected && (this.featureFlags.syncMacroRegime || this.featureFlags.syncDirectionalBans || this.featureFlags.syncStrategyStudio)) {
+      const authHeaders: Record<string, string> = {};
+      if (this.rawToken) {
+        authHeaders['Authorization'] = `Bearer ${this.rawToken}`;
+        authHeaders['x-api-key'] = this.rawToken;
       }
+      authHeaders['x-client-id'] = config.CLIENT_ID || 'v3-client';
 
+      for (const candUrl of candidates) {
+        try {
+          const bundleRes = await axios.get(`${candUrl}/api/pipeline/alpha-bundle`, {
+            headers: authHeaders,
+            timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
+          });
+          if (bundleRes?.data) {
+            this.applyBundleDirectives(bundleRes.data);
+            bundleSynced = true;
+            if (this.serverUrl !== candUrl && !candUrl.includes('measmony.me')) {
+              this.serverUrl = candUrl;
+            }
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    if (telemetryPosted || bundleSynced) {
       this.consecutiveFailures = 0;
-    } catch (err: any) {
+      this.isConnected = true;
+    } else {
       this.consecutiveFailures++;
-      // If supercharged connection drops, fall back to standalone directives
+      // If supercharged connection drops across all endpoints, fall back to standalone directives
       if (this.consecutiveFailures >= 5 && this.isConnected) {
         this.isConnected = false;
         standaloneEngine.resetToStandaloneDirectives('Sim Lab heartbeat timeout');

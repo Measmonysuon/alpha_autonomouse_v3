@@ -108,7 +108,14 @@ async function runTradingCycle(): Promise<void> {
           // 1b. Refresh 1h klines (cached for 5 minutes per pair)
           await refresh1hKlinesForPair(symbol);
 
-          const currentPrice = klines[klines.length - 1].close;
+          const existingMkt = agentState.markets[symbol];
+          const liveChange24h = (typeof existingMkt?.change24h === 'number') ? existingMkt.change24h : undefined;
+          const currentPrice = (existingMkt?.markPrice && existingMkt.markPrice > 0)
+            ? existingMkt.markPrice
+            : klines[klines.length - 1].close;
+          if (klines.length > 0 && existingMkt?.markPrice && existingMkt.markPrice > 0) {
+            klines[klines.length - 1].close = existingMkt.markPrice;
+          }
           livePrices[symbol] = currentPrice;
 
           // 2. Standalone Engine 5-Layer Strategy Evaluation
@@ -137,14 +144,17 @@ async function runTradingCycle(): Promise<void> {
             cvdTrend: orderflow?.cvdTrend,
             predictedFundingRate: orderflow?.predictedFundingRate,
             liquidationClusters: orderflow?.liquidationClusters,
+            change24h: liveChange24h,
           });
 
           // Market metrics
           const firstPrice = klines[0].open;
-          const high24h = Math.max(...klines.map((k) => k.high));
-          const low24h = Math.min(...klines.map((k) => k.low));
-          const volume24hUsd = klines.reduce((acc, k) => acc + k.volume * k.close, 0);
-          const change24h = firstPrice > 0 ? ((currentPrice - firstPrice) / firstPrice) * 100 : 0;
+          const high24h = (existingMkt?.high24h && existingMkt.high24h > 0) ? existingMkt.high24h : Math.max(...klines.map((k) => k.high));
+          const low24h = (existingMkt?.low24h && existingMkt.low24h > 0) ? existingMkt.low24h : Math.min(...klines.map((k) => k.low));
+          const volume24hUsd = (existingMkt?.volume24hUsd && existingMkt.volume24hUsd > 0) ? existingMkt.volume24hUsd : klines.reduce((acc, k) => acc + k.volume * k.close, 0);
+          const change24h = (typeof liveChange24h === 'number')
+            ? liveChange24h
+            : (firstPrice > 0 ? ((currentPrice - firstPrice) / firstPrice) * 100 : 0);
           const trend = signal.trend;
           const action = signal.triggered ? signal.action : 'WAIT';
           const confidence = signal.confidence;
@@ -190,24 +200,27 @@ async function runTradingCycle(): Promise<void> {
           }));
           const klines1hSerialized = klines1hCache[symbol]?.bars || [];
 
-          // 2. Layer 4 AI Shield Trap Validation (Evaluates all monitored pairs proactively)
+          // 2. Layer 4 AI Shield Trap Validation (Evaluates candidate trade setups)
           const isSimLab = superchargeClient.isActive();
           const currentDirectives = standaloneEngine.getDirectives();
+          const hasCandidate = signal.triggered && (signal.action === 'LONG' || signal.action === 'SHORT');
 
-          const trapVal = evaluateAITrapShield(
-            symbol,
-            signal,
-            currentPrice,
-            change24h,
-            oiChange24h,
-            fundingRate,
-            lsRatio,
-            isSimLab,
-            currentDirectives,
-          );
+          const trapVal = hasCandidate
+            ? evaluateAITrapShield(
+                symbol,
+                signal,
+                currentPrice,
+                change24h,
+                oiChange24h,
+                fundingRate,
+                lsRatio,
+                isSimLab,
+                currentDirectives,
+              )
+            : undefined;
 
           // Record trap event to telemetry if vetoed
-          if (trapVal.vetoTrade) {
+          if (trapVal?.vetoTrade) {
             const existing = agentState.trapShieldEvents.find(
               (e) => e.symbol === symbol && Date.now() - e.timestamp < 60000,
             );
@@ -217,13 +230,21 @@ async function runTradingCycle(): Promise<void> {
             }
           }
 
+          const existingMarket = agentState.markets[symbol];
+          const finalMarkPrice = (existingMarket?.markPrice && existingMarket.markPrice > 0) ? existingMarket.markPrice : currentPrice;
+          const finalChange24h = (existingMarket?.change24h !== undefined) ? existingMarket.change24h : change24h;
+          const finalVolume24hUsd = (existingMarket?.volume24hUsd !== undefined && existingMarket.volume24hUsd > 0) ? existingMarket.volume24hUsd : volume24hUsd;
+          const finalHigh24h = (existingMarket?.high24h !== undefined && existingMarket.high24h > 0) ? existingMarket.high24h : high24h;
+          const finalLow24h = (existingMarket?.low24h !== undefined && existingMarket.low24h > 0) ? existingMarket.low24h : low24h;
+          const finalUpdatedAt = Math.max(existingMarket?.updatedAt || 0, Date.now());
+
           agentState.markets[symbol] = {
             symbol,
-            markPrice: currentPrice,
-            change24h,
-            volume24hUsd,
-            high24h,
-            low24h,
+            markPrice: finalMarkPrice,
+            change24h: finalChange24h,
+            volume24hUsd: finalVolume24hUsd,
+            high24h: finalHigh24h,
+            low24h: finalLow24h,
             trend,
             action,
             confidence,
@@ -258,7 +279,7 @@ async function runTradingCycle(): Promise<void> {
               klines15m: klines15mSerialized,
               klines1h: klines1hSerialized,
             },
-            updatedAt: Date.now(),
+            updatedAt: finalUpdatedAt,
           };
 
           if (!signal.triggered || (signal.action !== 'LONG' && signal.action !== 'SHORT')) {
@@ -396,14 +417,21 @@ async function runTradingCycle(): Promise<void> {
 
   // Ensure all open positions have a price in livePrices even if outside watchPairs
   for (const t of tradeExecutor.getOpenTrades()) {
-    if (!livePrices[t.symbol]) {
-      if (agentState.markets[t.symbol]?.markPrice) {
-        livePrices[t.symbol] = agentState.markets[t.symbol].markPrice;
-      } else {
+    const sym = t.symbol;
+    const symSlash = sym.replace('-', '/');
+    const symDash = sym.replace('/', '-');
+    if (!livePrices[sym] && !livePrices[symSlash] && !livePrices[symDash]) {
+      let mark = agentState.markets[sym]?.markPrice || agentState.markets[symSlash]?.markPrice || agentState.markets[symDash]?.markPrice;
+      if (!mark) {
         try {
-          const p = await mcpClient.getPrice(t.symbol);
-          if (p?.markPrice) livePrices[t.symbol] = p.markPrice;
+          const p = await mcpClient.getPrice(sym);
+          if (p?.markPrice) mark = p.markPrice;
         } catch {}
+      }
+      if (mark && mark > 0) {
+        livePrices[sym] = mark;
+        livePrices[symSlash] = mark;
+        livePrices[symDash] = mark;
       }
     }
   }
@@ -510,6 +538,30 @@ async function bootstrap(): Promise<void> {
     logger.warn(`Telegram interactive chat initialization skipped: ${err.message}`);
   }
 
+  // 4b. Startup Orphan Order Sweeper: Clean any stale orders left by previous crashes or restarts
+  if (!config.PAPER_TRADING && isClientConfigured()) {
+    try {
+      logger.info('🧹 [STARTUP SWEEPER] Checking Decibel DEX for orphaned resting orders from previous runs...');
+      const orphanOrders = await mcpClient.getOrders();
+      if (orphanOrders && orphanOrders.length > 0) {
+        logger.warn(`🧹 [STARTUP SWEEPER] Found ${orphanOrders.length} orphaned resting order(s) on Decibel DEX! Sweeping clean...`);
+        for (const ord of orphanOrders) {
+          const sym = ord.symbol || 'BTC/USD';
+          const cid = ord.clientOrderId || ord.client_order_id;
+          if (cid) {
+            logger.info(`🧹 Cancelling orphan order: ${cid} (${sym})`);
+            await mcpClient.cancelClientOrder(sym, cid).catch((e: any) => logger.warn(`Cancel failed for ${cid}: ${e.message}`));
+          }
+        }
+        logger.info('✅ [STARTUP SWEEPER] Order book clean! Starting autonomous trading engine.');
+      } else {
+        logger.info('✅ [STARTUP SWEEPER] Decibel DEX order book is clean (0 open orders).');
+      }
+    } catch (swErr: any) {
+      logger.warn(`Startup order sweeper notice: ${swErr.message}`);
+    }
+  }
+
   // 5. Start Main Trading Engine Loop
   isRunning = true;
   logger.info(`🚀 Starting autonomous market scanner (polling every ${config.POLL_INTERVAL_MS / 1000}s)...`);
@@ -536,13 +588,19 @@ async function bootstrap(): Promise<void> {
         const openPrices: Record<string, number> = {};
         for (const t of openTrades) {
           const sym = t.symbol;
-          if (agentState.markets[sym]?.markPrice) {
-            openPrices[sym] = agentState.markets[sym].markPrice;
-          } else {
+          const symSlash = sym.replace('-', '/');
+          const symDash = sym.replace('/', '-');
+          let mark = agentState.markets[sym]?.markPrice || agentState.markets[symSlash]?.markPrice || agentState.markets[symDash]?.markPrice;
+          if (!mark) {
             try {
               const p = await mcpClient.getPrice(sym);
-              if (p?.markPrice) openPrices[sym] = p.markPrice;
+              if (p?.markPrice) mark = p.markPrice;
             } catch {}
+          }
+          if (mark && mark > 0) {
+            openPrices[sym] = mark;
+            openPrices[symSlash] = mark;
+            openPrices[symDash] = mark;
           }
         }
         tradeExecutor.monitorOpenTrades(openPrices);

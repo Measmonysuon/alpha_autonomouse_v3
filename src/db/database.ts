@@ -113,6 +113,7 @@ class TradeDatabase {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
     this.initTables();
+    this.rectifyLedgerPnL();
     logger.info(`Trade Database initialized with SQLite at ${this.dbPath}`);
   }
 
@@ -233,9 +234,21 @@ class TradeDatabase {
    * Insert or update a trade record
    */
   upsertTrade(t: DbTrade): void {
+    const netPnl = Number(t.realized_pnl || 0) - Number(t.fee_usd || 0);
+    let status = t.status;
+    let exitReason = t.exit_reason;
+    if (status !== 'OPEN' && status !== 'open') {
+      if (netPnl < -0.0001) {
+        if (status === 'CLOSED_TP' || status === 'closed_tp') status = 'CLOSED_SL';
+        if (exitReason && (exitReason.toUpperCase().includes('TP') || exitReason.toUpperCase().includes('HARVEST') || exitReason.toUpperCase().includes('TRAILING'))) {
+          exitReason = 'ON_CHAIN_SL';
+        }
+      }
+    }
+
     if (!this.db) {
       const existing = this.memoryTrades.get(t.id) || {};
-      this.memoryTrades.set(t.id, { ...existing, ...t });
+      this.memoryTrades.set(t.id, { ...existing, ...t, status, exit_reason: exitReason });
       return;
     }
 
@@ -290,7 +303,7 @@ class TradeDatabase {
       realized_pnl: t.realized_pnl ?? 0,
       realized_pnl_pct: t.realized_pnl_pct ?? 0,
       fee_usd: t.fee_usd ?? 0,
-      status: t.status,
+      status,
       opened_at: t.opened_at,
       closed_at: t.closed_at ?? null,
       strategy_name: t.strategy_name ?? null,
@@ -298,10 +311,38 @@ class TradeDatabase {
       confidence: t.confidence ?? null,
       entry_rationale: t.entry_rationale ?? null,
       entry_snapshot: t.entry_snapshot ?? null,
-      exit_reason: t.exit_reason ?? null,
+      exit_reason: exitReason ?? null,
       post_mortem_lesson: t.post_mortem_lesson ?? null,
       raw_onchain_data: t.raw_onchain_data ?? null,
     });
+  }
+
+  /**
+   * Authoritative Ledger Rectification:
+   * Scans database to rectify any historic trades that ended in a net loss but were mislabeled as TP.
+   */
+  public rectifyLedgerPnL(): { rectifiedCount: number } {
+    if (!this.db) return { rectifiedCount: 0 };
+    try {
+      const res = this.db.prepare(`
+        UPDATE trades
+        SET status = 'CLOSED_SL',
+            exit_reason = CASE 
+              WHEN exit_reason LIKE '%TP%' OR exit_reason LIKE '%HARVEST%' OR exit_reason LIKE '%TRAILING%' THEN 'ON_CHAIN_SL'
+              ELSE COALESCE(NULLIF(exit_reason, ''), 'ON_CHAIN_SL')
+            END
+        WHERE status NOT IN ('OPEN', 'open')
+          AND (realized_pnl - COALESCE(fee_usd, 0)) < -0.0001
+          AND (status IN ('CLOSED_TP', 'closed_tp') OR exit_reason LIKE '%TP%' OR exit_reason LIKE '%HARVEST%')
+      `).run();
+      if (res.changes > 0) {
+        logger.info(`⚖️ [LEDGER RECTIFICATION] Rectified ${res.changes} historic trade(s) with negative net PnL from TP to CLOSED_SL`);
+      }
+      return { rectifiedCount: res.changes };
+    } catch (err: any) {
+      logger.warn(`Ledger rectification error: ${err.message}`);
+      return { rectifiedCount: 0 };
+    }
   }
 
   /**
@@ -360,7 +401,16 @@ class TradeDatabase {
       }
 
       const timestamp = Number(oct.transaction_unix_ms || oct.timestamp || Date.now());
-      const rawSym = oct.symbol || 'DEX';
+      let rawSym = oct.symbol;
+      if (!rawSym || rawSym === 'DEX') {
+        if (oct.market) {
+          try {
+            const { mcpClient } = require('../mcp/client');
+            rawSym = mcpClient.getSymbolForMarket(oct.market) || rawSym;
+          } catch {}
+        }
+      }
+      rawSym = rawSym || 'DEX';
       const normSymbol = rawSym.replace('-', '/').toUpperCase();
       const altSymbol = rawSym.replace('/', '-').toUpperCase();
 
@@ -391,27 +441,53 @@ class TradeDatabase {
       }
 
       if (this.db) {
-        // 1. Try matching by exact client_order_id or tx_version
-        let existing = this.db.prepare(`
-          SELECT * FROM trades 
-          WHERE (client_order_id IS NOT NULL AND client_order_id != '' AND client_order_id = ?) 
-             OR id = ? 
-             OR (tx_version IS NOT NULL AND tx_version != '' AND tx_version = ?)
-          LIMIT 1
-        `).get(clientOrderId, clientOrderId, txVersion || '') as any;
+        // 1. Try matching by exact client_order_id, id, or tx_version (only if same symbol or within 2h)
+        let existing: any = null;
+        if (clientOrderId) {
+          existing = this.db.prepare(`
+            SELECT * FROM trades 
+            WHERE (client_order_id IS NOT NULL AND client_order_id != '' AND client_order_id = ?) 
+               OR id = ?
+            LIMIT 1
+          `).get(clientOrderId, clientOrderId) as any;
+        }
+
+        if (!existing && txVersion) {
+          existing = this.db.prepare(`
+            SELECT * FROM trades 
+            WHERE tx_version = ?
+              AND (symbol = ? OR symbol = ? OR symbol = ? OR ABS(opened_at - ?) < 7200000)
+            LIMIT 1
+          `).get(txVersion, normSymbol, altSymbol, rawSym, timestamp) as any;
+        }
 
         // 2. If close fill and no exact match by ID, match active or recently closed trade on same symbol
         if (!existing && isClose) {
+          // Priority A: Trade currently marked OPEN (exact active trade)
           existing = this.db.prepare(`
             SELECT * FROM trades
             WHERE (symbol = ? OR symbol = ? OR symbol = ?)
-              AND status IN ('OPEN', 'open', 'CLOSED_MANUAL', 'closed_manual')
+              AND status IN ('OPEN', 'open')
               AND opened_at <= ?
             ORDER BY opened_at DESC
             LIMIT 1
           `).get(normSymbol, altSymbol, rawSym, timestamp + 10000) as any;
 
-          // If still not matched, check trades on this symbol within 24h window
+          // Priority B: Trade closed recently (within 10 minutes of on-chain fill)
+          // (Handles the case where in-memory monitor closed the trade right before on-chain fill executed)
+          if (!existing) {
+            existing = this.db.prepare(`
+              SELECT * FROM trades
+              WHERE (symbol = ? OR symbol = ? OR symbol = ?)
+                AND opened_at <= ?
+                AND ABS(COALESCE(closed_at, opened_at) - ?) < 600000
+                AND id NOT LIKE 'txn-%'
+              ORDER BY ABS(COALESCE(closed_at, opened_at) - ?) ASC
+              LIMIT 1
+            `).get(normSymbol, altSymbol, rawSym, timestamp + 10000, timestamp, timestamp) as any;
+          }
+
+          // Priority C: Any un-reconciled trade on this symbol within 24h window
           if (!existing) {
             existing = this.db.prepare(`
               SELECT * FROM trades
@@ -425,7 +501,7 @@ class TradeDatabase {
           }
         }
 
-        // 3. If open fill and no exact match by ID, check if a closed trade without entry_price exists
+        // 3. If open fill and no exact match by ID, check if a trade without entry_price exists
         if (!existing && isOpen) {
           existing = this.db.prepare(`
             SELECT * FROM trades
@@ -438,8 +514,11 @@ class TradeDatabase {
 
         if (existing) {
           if (isClose) {
-            const finalStatus = pnl > 0.005 ? 'CLOSED_TP' : (pnl < -0.005 ? 'CLOSED_SL' : 'CLOSED');
-            const smartReason = pnl > 0.005 ? 'TRAILING_TP' : (pnl < -0.005 ? 'STOP_LOSS' : 'ON_CHAIN_DEX_CLOSE');
+            const netRealizedPnl = Number((pnl - roundTripFee).toFixed(6));
+            const isNetWin = netRealizedPnl > 0.005;
+            const isNetLoss = netRealizedPnl < -0.0001;
+            const finalStatus = isNetWin ? 'CLOSED_TP' : (isNetLoss ? 'CLOSED_SL' : 'CLOSED');
+            const smartReason = isNetWin ? 'TRAILING_TP' : (isNetLoss ? 'ON_CHAIN_SL' : 'ON_CHAIN_DEX_CLOSE');
             let dynStrat = 'Autonomous AI Strategy';
             try {
               const { getActiveStrategy } = require('../strategy/manager');
@@ -458,25 +537,29 @@ class TradeDatabase {
                   fee_usd = ?,
                   realized_pnl = ?,
                   status = ?,
-                  exit_reason = CASE WHEN exit_reason IS NOT NULL AND exit_reason != '' AND exit_reason != 'ON_CHAIN_DEX_CLOSE' THEN exit_reason ELSE ? END,
+                  exit_reason = CASE 
+                    WHEN ? < -0.0001 THEN (CASE WHEN exit_reason LIKE '%TP%' OR exit_reason LIKE '%HARVEST%' OR exit_reason LIKE '%TRAILING%' THEN 'ON_CHAIN_SL' ELSE COALESCE(NULLIF(exit_reason, 'ON_CHAIN_DEX_CLOSE'), 'ON_CHAIN_SL') END)
+                    WHEN exit_reason IS NOT NULL AND exit_reason != '' AND exit_reason != 'ON_CHAIN_DEX_CLOSE' THEN exit_reason 
+                    ELSE ? 
+                  END,
                   strategy_name = COALESCE(strategy_name, ?),
                   is_manual = CASE WHEN ? = 1 THEN 0 ELSE is_manual END,
-                  raw_onchain_data = COALESCE(raw_onchain_data, ?),
+                  raw_onchain_data = ?,
                   action = COALESCE(action, ?),
                   side = COALESCE(side, ?)
               WHERE id = ?
-            `).run(txVersion || null, price, price, timestamp, roundTripFee, pnl, finalStatus, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
+            `).run(txVersion || null, price, price, timestamp, roundTripFee, pnl, finalStatus, netRealizedPnl, smartReason, stratName, isAgent ? 1 : 0, JSON.stringify(oct), action, side, existing.id);
           } else {
             // Open fill updates entry parameters
             this.db.prepare(`
               UPDATE trades 
               SET tx_version = COALESCE(tx_version, ?),
-                  entry_price = CASE WHEN entry_price = 0 THEN ? ELSE entry_price END,
+                  entry_price = CASE WHEN ? > 0 THEN ? ELSE entry_price END,
                   fee_usd = CASE WHEN fee_usd = 0 THEN ? ELSE fee_usd END,
                   opened_at = CASE WHEN opened_at = 0 THEN ? ELSE opened_at END,
                   raw_onchain_data = COALESCE(raw_onchain_data, ?)
               WHERE id = ?
-            `).run(txVersion || null, price, fee, timestamp, JSON.stringify(oct), existing.id);
+            `).run(txVersion || null, price, price, fee, timestamp, JSON.stringify(oct), existing.id);
           }
 
           if (txVersion && existing.id !== `txn-${txVersion}`) {
@@ -502,6 +585,10 @@ class TradeDatabase {
       const fallbackStrategyName = isAgent ? dynStratName : 'Manual Decibel Trade';
       const fallbackStrategyTags = isAgent ? JSON.stringify([dynStratTag]) : JSON.stringify(['Manual', 'On-Chain']);
 
+      const netFallbackPnl = isClose ? Number((pnl - roundTripFee).toFixed(6)) : 0;
+      const fallbackStatus = isClose ? (netFallbackPnl > 0.005 ? 'CLOSED_TP' : (netFallbackPnl < -0.0001 ? 'CLOSED_SL' : 'CLOSED')) : 'OPEN';
+      const fallbackExitReason = isClose ? (netFallbackPnl > 0.005 ? 'TRAILING_TP' : (netFallbackPnl < -0.0001 ? 'ON_CHAIN_SL' : 'ON_CHAIN_DEX_CLOSE')) : undefined;
+
       this.upsertTrade({
         id,
         client_order_id: clientOrderId || undefined,
@@ -518,7 +605,8 @@ class TradeDatabase {
         leverage: 1,
         realized_pnl: pnl,
         fee_usd: isClose ? roundTripFee : fee,
-        status: isClose ? 'CLOSED' : 'OPEN',
+        status: fallbackStatus,
+        exit_reason: fallbackExitReason,
         opened_at: timestamp,
         closed_at: isClose ? timestamp : undefined,
         strategy_name: fallbackStrategyName,

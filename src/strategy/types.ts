@@ -3,7 +3,18 @@
  * Defines modular layer configurations, pre-built templates, and AI evaluation models.
  */
 
-export type LayerId = 'layer1_macro' | 'layer2_liquidity' | 'layer3_smc' | 'layer4_ai' | 'layer5_execution';
+export type LayerId = 'layer0_kronos' | 'layer1_macro' | 'layer2_liquidity' | 'layer3_smc' | 'layer4_ai' | 'layer5_execution';
+
+export interface Layer0Config {
+  enabled: boolean;
+  timeframe: '15m';
+  requireTrajectoryConfluence: boolean;  // Must match trade direction (Long or Short)
+  minExpectedReturnPct: number;          // Min expected return (e.g. ±0.80%)
+  minEvRatio: number;                    // Min Symmetrical EV ratio (e.g. 1.40x)
+  maxEntropyScore: number;               // Max allowable randomness (e.g. 0.60)
+  knifeShieldEnabled?: boolean;          // Falling knife veto (>= 0.70)
+  meltUpShieldEnabled?: boolean;         // Parabolic short squeeze veto (>= 0.70)
+}
 
 export interface Layer1Config {
   enabled: boolean;
@@ -14,6 +25,9 @@ export interface Layer1Config {
   rsiHealthyBand: boolean;            // Require RSI between 40 and 60
   adxTrendThreshold: number;          // Minimum ADX (e.g. 20)
   stochRsiFilter: boolean;            // Block oversold shorts / overbought longs
+  volumeProfileEnabled?: boolean;     // Enable Auction Market Theory Volume Profile
+  boxPocTimeframe?: '15m' | '1h' | 'dual'; // Timeframe for horizontal consolidation box POC
+  boxConsolidationRetest?: boolean;   // Require breakout + pullback to Box POC (anti-chasing)
 }
 
 export interface Layer2Config {
@@ -40,8 +54,9 @@ export interface Layer3Config {
   fvgRetestEntry: boolean;            // Limit order entry at Fair Value Gap boundary
   equalHighsLowsMagnet: boolean;      // Target EQH/EQL stop-loss pools
   boxConsolidationRetest?: boolean;   // Require breakout + pullback to Box POC (anti-chasing)
-  boxTimeframe?: '15m' | '1h';        // Timeframe for horizontal consolidation box
+  boxTimeframe?: '15m' | '1h' | 'dual'; // Timeframe for horizontal consolidation box
   antiChaseBreakoutFilter?: boolean;  // Veto entering late breakouts outside the value area
+  volumeProfileEnabled?: boolean;     // Layer 3 Volume Profile
 }
 
 export interface Layer4Config {
@@ -73,6 +88,7 @@ export interface Layer5Config {
   leverage: number;                   // Fallback / fixed value (e.g. 5x)
   minAllocPct: number;                // e.g. 20% of budget ($10.10)
   maxAllocPct: number;                // e.g. 40% of budget ($20.20)
+  minMarginUsd?: number;              // Minimum margin in USD allocated per trade (defaults to $20.00)
   dualTakeProfit: boolean;            // TP1 (50% Equilibrium) + TP2 (Opposing Liquidation Pool)
   tp1CloseRatio: number;              // e.g. 0.50 (close 50% at TP1)
   moveSlToBreakevenAtTp1: boolean;    // Move SL to Entry + 0.05% when TP1 hits
@@ -95,6 +111,7 @@ export interface StrategyConfig {
   createdAt: number;
   updatedAt: number;
   layerOrder: LayerId[];              // Drag-and-drop layer order
+  layer0_kronos?: Layer0Config;
   layer1: Layer1Config;
   layer2: Layer2Config;
   layer3: Layer3Config;
@@ -123,6 +140,7 @@ export interface AIEvaluationResult {
 }
 
 export interface PairLayerOverrides {
+  layer0_kronos?: boolean;
   layer1?: boolean;
   layer2?: boolean;
   layer3?: boolean;
@@ -130,15 +148,33 @@ export interface PairLayerOverrides {
   maxLeverage?: number;
   slMultiplier?: number;
   minConfidenceGate?: number;
-  preset?: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CUSTOM' | 'MANUAL';
+  assignedStrategyId?: string;
+  assignedStrategyName?: string;
+  assignedTier?: 'TIER_1_ALPHA' | 'TIER_1_CHAMPION' | 'TIER_2_INCUBATOR' | 'TIER_2_STABLE' | 'TIER_3_PROBATION';
+  tierAllocPct?: number;
+  sandboxTradesRemaining?: number;
+  sandboxWins?: number;
+  rotationHistory?: Array<{
+    timestamp: number;
+    fromStrategyId?: string;
+    toStrategyId?: string;
+    previousStrategyId?: string;
+    newStrategyId?: string;
+    reason: string;
+  }>;
+  preset?: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CREAMER_ORDERFLOW' | 'CUSTOM' | 'MANUAL';
+  executionProfile?: 'STANDARD_SWING';
   makerOffsetPct?: number;
   orderbookSpreadPct?: number;
+  enforcePostOnly?: boolean;
+  allowTakerFallback?: boolean;
   updatedAt?: number;
 }
 
 export interface PairAutoTuneResult {
   symbol: string;
   recommendedLayers: {
+    layer0_kronos?: boolean;
     layer1: boolean;
     layer2: boolean;
     layer3: boolean;
@@ -149,7 +185,7 @@ export interface PairAutoTuneResult {
   recommendedGate: number;
   confidence: number;
   rationale: string;
-  presetMatch: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CUSTOM';
+  presetMatch: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CREAMER_ORDERFLOW' | 'CUSTOM';
 }
 
 export interface StrategyAttribution {
@@ -157,6 +193,7 @@ export interface StrategyAttribution {
   strategyName: string;
   isPairOverride: boolean;
   layersActive: {
+    layer0_kronos?: boolean;
     layer1: boolean;
     layer2: boolean;
     layer3: boolean;

@@ -24,6 +24,24 @@ export interface AlphaBundleResponse {
   status: 'LICENSED' | 'UNLICENSED';
   licenseRequired?: boolean;
   timestamp: number;
+  policyVersion?: string;
+  policyHash?: string;
+  maxTtlMs?: number;
+  portfolioLimits?: {
+    maxLossUsdPerTrade: number;
+    maxGrossDeployedPct: number;
+    maxDirectionalMarginUsd: number;
+    maxConcurrentPositions: number;
+    maxPositionsSameDirection: number;
+    basketStaggerCooldownMs: number;
+    slippageBufferBps: number;
+  };
+  quarantineDirectives?: Record<string, {
+    symbol: string;
+    quarantinedUntil: number;
+    reason: string;
+    triggeredAt: number;
+  }>;
   macro: {
     regime: 'TRENDING_BULL' | 'TRENDING_BEAR' | 'RANGING_CHOP' | 'HIGH_VOLATILITY';
     riskMultiplier: number;
@@ -33,6 +51,10 @@ export interface AlphaBundleResponse {
     nearestNewsMinutes?: number | null;
     nearestNewsTitle?: string | null;
     summary?: string;
+    bannedSides?: ('LONG' | 'SHORT')[];
+    emergencyHardBanSide?: 'LONG' | 'SHORT' | null;
+    counterTrendHurdleSide?: 'LONG' | 'SHORT' | null;
+    counterTrendHurdleScore?: number;
   };
   strategy?: {
     activeStrategyId: string;
@@ -48,6 +70,7 @@ export interface AlphaBundleResponse {
     layer3: any;
     layer4: any;
     dynamicScoreFloor: number;
+    minMarginUsd?: number;
   };
   harvester?: {
     active: boolean;
@@ -90,6 +113,7 @@ export interface AlphaBundleResponse {
     accelerateBreakevenR?: number;
     makerOffsetPct?: number;
     orderbookSpreadPct?: number;
+    executionProfile?: 'STANDARD_SWING';
     regime?: {
       type: string;
       displayName: string;
@@ -111,6 +135,7 @@ export interface AlphaBundleResponse {
       activeVpocs: number[];
       dProcTrend?: string;
       lvns: number[];
+      consolidationBox?: any;
     };
   }>;
   learning: {
@@ -119,6 +144,25 @@ export interface AlphaBundleResponse {
     totalClosedTrades: number;
     shadowVetoAccuracyPct: number;
     actionRecommendations: string[];
+  };
+  breakingNews?: {
+    headlines: Array<{
+      id: string;
+      title: string;
+      source: string;
+      url?: string;
+      publishedAt: number;
+      impact: 'EXTREME' | 'HIGH' | 'MEDIUM' | 'LOW';
+      sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+      sentimentScore: number;
+      category: 'GEOPOLITICAL' | 'REGULATORY' | 'CENTRAL_BANK' | 'CRYPTO_NATIVE' | 'MACRO_DATA';
+      symbolsAffected?: string[];
+    }>;
+    aggregateSentimentScore: number;
+    highestImpactTier: string;
+    shockwaveAlert: boolean;
+    shockwaveReason?: string;
+    updatedAt: number;
   };
 }
 
@@ -145,6 +189,14 @@ export function getRetryInfo(): { consecutiveErrors: number; nextRetryMs: number
 
 export function getLastSyncTime(): number {
   return lastSyncTimestamp;
+}
+
+/** Returns latest breaking news and geopolitical catalysts streamed from Sim Lab Port 4000 */
+export function getLatestBreakingNews(): any {
+  if (lastSyncedBundle?.breakingNews) {
+    return lastSyncedBundle.breakingNews;
+  }
+  return null;
 }
 
 export function isSimPipelineActive(): boolean {
@@ -200,12 +252,13 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
       }
     }
 
-    // ── 1. Timestamp Freshness Guard ──────────────────────────────────────────
+    // ── 1. Timestamp Freshness Guard (maxTtlMs, default 45s) ───────────────────
     if (bundle.timestamp && typeof bundle.timestamp === 'number') {
       const ageMs = Math.abs(Date.now() - bundle.timestamp);
-      if (ageMs > 120_000) {
+      const maxAllowedAgeMs = bundle.maxTtlMs || 45_000;
+      if (ageMs > maxAllowedAgeMs) {
         logger.warn(
-          `⚠️ [SIM PIPELINE] Stale alpha bundle received (${(ageMs / 1000).toFixed(1)}s old > 120s limit). Ignoring payload.`
+          `⚠️ [SIM PIPELINE] Stale alpha bundle received (${(ageMs / 1000).toFixed(1)}s old > ${(maxAllowedAgeMs / 1000).toFixed(0)}s limit). Ignoring payload.`
         );
         return null;
       }
@@ -283,18 +336,16 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
         layer3: flags.syncIndicators ? bundle.strategy.layer3 : undefined,
         layer4: bundle.strategy.layer4,
         dynamicScoreFloor: bundle.strategy.dynamicScoreFloor,
+        minMarginUsd: Math.max(20, bundle.strategy.minMarginUsd || 20),
         overallWinRatePct: bundle.learning?.overallWinRatePct,
       });
     }
 
-    // Synchronize Standalone Engine directives according to active feature flags
+    // Directional policy: Rather than hard banning, counter-trend sides are evaluated
+    // dynamically by RiskGuard with an Asymmetric Confidence Hurdle (>=85% required + 0.5x sizing).
     const bannedSides: ('LONG' | 'SHORT')[] = [];
-    if (flags.syncDirectionalBans) {
-      if (bundle.macro?.marketBias === 'BEARISH') {
-        bannedSides.push('LONG');
-      } else if (bundle.macro?.marketBias === 'BULLISH') {
-        bannedSides.push('SHORT');
-      }
+    if (flags.syncDirectionalBans && bundle.macro?.emergencyHardBanSide) {
+      bannedSides.push(bundle.macro.emergencyHardBanSide);
     }
 
     const engineUpdates: any = {};

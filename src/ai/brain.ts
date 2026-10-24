@@ -130,6 +130,64 @@ export class LocalAIBrain {
       };
     }
 
+    // ── ByKaranteli Institutional Microstructure VETO Layers ────────────────
+    const bkDirectives = simDir?.bykaranteli?.executionDirectives;
+
+    // A2. ByKaranteli Auto-Detected Cascade Incident VETO
+    if (bkDirectives?.cascadeActive) {
+      const cascadeUsd = Math.round((bkDirectives.activeCascadeUsd || 0) / 1e6);
+      const reason = `🛑 Liquidation Cascade Incident Active ($${cascadeUsd}M flushed): High-velocity liquidation cascade underway. Entries paused for capital preservation.`;
+      riskGuard.triggerL4TrapCoolOff(signal.symbol, action, 'CASCADE_INCIDENT_BURST', reason, 15);
+      return {
+        confirmed: false,
+        confidenceScore: 15,
+        action: 'HOLD',
+        sentiment: 'NEUTRAL',
+        reasoning: `🛡️ AI Shield VETO: ${reason}`,
+        provider: 'bykaranteli_cascade_sentinel',
+        role,
+        riskFlags: ['CASCADE_INCIDENT_BURST'],
+        trapCategory: 'CASCADE_INCIDENT_BURST',
+      };
+    }
+
+    // A3. ByKaranteli VPIN Order Flow Toxicity VETO
+    if (bkDirectives?.isToxicFlow) {
+      const reason = `🛑 High VPIN Order Flow Toxicity (${bkDirectives.vpinToxicity.toFixed(4)}): Adverse selection warning. Smart money dumping into retail limit bids.`;
+      riskGuard.triggerL4TrapCoolOff(signal.symbol, action, 'VPIN_ORDER_FLOW_TOXICITY', reason, 15);
+      return {
+        confirmed: false,
+        confidenceScore: 20,
+        action: 'HOLD',
+        sentiment: 'NEUTRAL',
+        reasoning: `🛡️ AI Shield VETO: ${reason}`,
+        provider: 'bykaranteli_vpin_shield',
+        role,
+        riskFlags: ['VPIN_ORDER_FLOW_TOXICITY'],
+        trapCategory: 'VPIN_ORDER_FLOW_TOXICITY',
+      };
+    }
+
+    // A4. ByKaranteli Downward Flush Runaway VETO (Longs falling into stop pools)
+    if (action === 'LONG' && bkDirectives?.isLongMagnet && Math.abs(bkDirectives?.primaryMagnetIntensity || 0) >= 1.25) {
+      const magnetPrice = bkDirectives.primaryMagnetPrice || 0;
+      if (magnetPrice > 0 && signal.entryPrice > magnetPrice && (signal.entryPrice - magnetPrice) / signal.entryPrice <= 0.012) {
+        const reason = `🛑 Downward Liquidity Flush Magnet ($${magnetPrice.toFixed(2)}, ${bkDirectives.primaryMagnetIntensity}x intensity): Resting long stops pool drawing price downward. Long vetoed until sweep completes.`;
+        riskGuard.triggerL4TrapCoolOff(signal.symbol, 'LONG', 'DOWNWARD_FLUSH_RUNAWAY', reason, 15);
+        return {
+          confirmed: false,
+          confidenceScore: 25,
+          action: 'HOLD',
+          sentiment: 'BEARISH',
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'bykaranteli_liq_shield',
+          role,
+          riskFlags: ['DOWNWARD_FLUSH_RUNAWAY'],
+          trapCategory: 'DOWNWARD_FLUSH_RUNAWAY',
+        };
+      }
+    }
+
     // B. Sim Lab Macro News Freeze VETO
     if (typeof bundle?.macro?.nearestNewsMinutes === 'number' && bundle.macro.nearestNewsMinutes <= 30 && bundle.macro.nearestNewsMinutes >= -15) {
       const newsTitle = bundle.macro.nearestNewsTitle || 'High-Impact USD Release';
@@ -450,25 +508,50 @@ export class LocalAIBrain {
     if (!apiKey || apiKey.startsWith('your_')) {
       throw new Error('Missing or placeholder GEMINI_API_KEY');
     }
-    const model = (aiSettings.model || config.GEMINI_MODEL || 'gemini-flash-latest').replace(/^models\//, '').trim();
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    let model = (aiSettings.model || config.GEMINI_MODEL || 'gemini-4-argon').replace(/^models\//, '').trim();
+    if (model === 'gemini-4' || model === 'gemini 4' || model === 'gemini4') {
+      model = 'gemini-4-argon';
+    }
+    const projectId = (config as any).VERTEX_PROJECT_ID || process.env.VERTEX_PROJECT_ID || '782261089175';
+    const keyCandidates = Array.from(new Set([
+      apiKey,
+      config.GEMINI_API_KEY,
+      (config as any).GEMINI_API_KEY_FALLBACK,
+      process.env.GEMINI_API_KEY_FALLBACK,
+    ])).filter((k): k is string => Boolean(k && k.trim().length > 10 && !k.includes('••••')));
 
     const prompt = this.buildPrompt(signal, role, directives);
 
-    const response = await axios.post(
-      url,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-        },
-      },
-      { timeout: 15000 },
-    );
+    let response: any = null;
+    let lastErr: any = null;
+    for (const key of keyCandidates) {
+      const urls = [
+        `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/global/publishers/google/models/${model}:generateContent?key=${key}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`
+      ];
+      for (const url of urls) {
+        try {
+          response = await axios.post(
+            url,
+            {
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.2,
+              },
+            },
+            { timeout: 15000 },
+          );
+          if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
+        } catch (err: any) {
+          lastErr = err;
+        }
+      }
+      if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
+    }
 
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Empty response from Gemini API');
+    const text = response?.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw lastErr || new Error('Empty response from Gemini API');
 
     const parsed = JSON.parse(text);
     return {
@@ -613,30 +696,6 @@ export class LocalAIBrain {
     let score = signal.baseScore;
     const riskFlags: string[] = [];
 
-    // Evaluate Wick Health
-    if (signal.action === 'LONG') {
-      if (ind.upperWickPct > 45) {
-        score -= 20;
-        riskFlags.push(`HIGH_UPPER_WICK_REJECTION (${ind.upperWickPct.toFixed(1)}%)`);
-      } else if (ind.upperWickPct < 25) {
-        score += 5;
-      }
-      if (ind.rsi14 > 65) {
-        score -= 10;
-        riskFlags.push(`RSI_HEATED (${ind.rsi14.toFixed(1)})`);
-      }
-    } else if (signal.action === 'SHORT') {
-      if (ind.lowerWickPct > 45) {
-        score -= 20;
-        riskFlags.push(`HIGH_LOWER_WICK_REJECTION (${ind.lowerWickPct.toFixed(1)}%)`);
-      } else if (ind.lowerWickPct < 25) {
-        score += 5;
-      }
-      if (ind.rsi14 < 35) {
-        score -= 10;
-        riskFlags.push(`RSI_DEPRESSED (${ind.rsi14.toFixed(1)})`);
-      }
-    }
 
     const confirmed = score >= 70 && riskFlags.length === 0;
 
@@ -994,13 +1053,34 @@ export class LocalAIBrain {
     const minAllocUsd = ((minAllocPct / 100) * totalBudget).toFixed(2);
     const maxAllocUsd = ((maxAllocPct / 100) * totalBudget).toFixed(2);
 
+    // ── Live Streamed Breaking News & Geopolitical Feed ──
+    let breakingNewsSummary = 'No breaking news alerts';
+    try {
+      const { getLatestBreakingNews } = require('../pipeline/sim-consumer');
+      const news = getLatestBreakingNews();
+      if (news && news.headlines && news.headlines.length > 0) {
+        breakingNewsSummary = news.headlines.slice(0, 5).map((h: any) =>
+          `[${h.source} | ${h.category} | ${h.sentiment}] "${h.title}"`
+        ).join('\n• ');
+        if (news.shockwaveAlert) {
+          breakingNewsSummary = `⚠️ FLASH SHOCKWAVE ALERT: ${news.shockwaveReason}\n• ` + breakingNewsSummary;
+        }
+      }
+    } catch {}
+
     return `You are the dedicated Autonomous AI Copilot & Senior Quantitative Desk Officer for "${clientName}" (Desk ID: ${clientId}) on Decibel DEX (Aptos blockchain).
 
 MISSION & PERSONA:
 - Speak in fluent, professional, natural language like an experienced hedge-fund algorithmic trader.
 - Answer the user's questions directly, conversationally, and insightfully with EXACT LIVE NUMBERS from the telemetry below.
 - NEVER use placeholders like "[X.XX] USD" or "[A.AA] USD". You have the exact live mark prices and 24h metrics for all 28 assets below.
-- NEVER ask the user to share their asset allocation or balance — you have their authoritative balances right here.
+- NEVER give canned AI disclaimers such as "I don't have real-time access to news" or "As an AI model". You have live streamed breaking news feeds below and Google Search Grounding.
+- GEOPOLITICAL & MACRO INTELLIGENCE RULES:
+  * In the UAE and Gulf region, labor union strikes are unlawful under federal decree. Any query regarding "airport strikes", "drone incidents", or "airspace closures" refers to military/drone threats or regional conflict escalations.
+  * Dubai and the UAE represent the global headquarters and OTC capital for crypto (VARA, Binance, Bybit, institutional market makers).
+  * Crypto trades 24/7 as the global macro liquidity shock absorber: when weekend or overnight strikes hit, macro hedge funds use BTC/ETH perps to de-risk, causing sharp liquidation cascades.
+  * Crude oil surges spike inflation expectations and bond yields, which suppresses high-beta altcoins.
+  * When geopolitical shocks arise, proactively explain the transmission channel and recommend whether to engage a Volatility Cool-Off or tighten Layer 4 AI Shield gates.
 - Reference internal telemetry, on-chain balances, recent trade outcomes, and Sim Lab Alpha Bundle directives naturally.
 
 📊 LIVE INTERNAL DESK TELEMETRY & ON-CHAIN STATE:
@@ -1024,7 +1104,10 @@ MISSION & PERSONA:
 • Directional Bans: ${banned} (Any trade matching a banned side is strictly blocked by Layer 4 AI Shield)
 • Global Confidence Floor: ≥${scoreFloor}% (Dynamic Floor: ${dynamicScoreFloor}%)
 • Volatility Cooling: ${coolingActive ? `⚠️ ACTIVE (${coolingReason})` : 'Normal Operations'}
-• Upcoming Macro Releases: ${nearestNews || 'No immediate high-impact news'}${pairDirectivesSummary}${marketTableSummary}
+• Upcoming Macro Releases: ${nearestNews || 'No immediate high-impact news'}
+
+📰 LIVE STREAMED BREAKING NEWS & GEOPOLITICAL CATALYSTS:
+• ${breakingNewsSummary}${pairDirectivesSummary}${marketTableSummary}
 
 When the user asks questions about the market, specific tokens (like SUI or BTC), why no trades yet, or performance, synthesize a natural, insightful, quantitative response incorporating this live state. Always use real numbers from this prompt.`;
   }
@@ -1043,22 +1126,62 @@ When the user asks questions about the market, specific tokens (like SUI or BTC)
     ).trim();
     if (!apiKey) return '';
 
-    let targetModel = (context.activeAiModel || config.GEMINI_MODEL || savedAi.model || 'gemini-2.5-flash').trim();
+    let targetModel = (context.activeAiModel || config.GEMINI_MODEL || savedAi.model || 'gemini-4-argon').trim();
     targetModel = targetModel.replace(/^models\//, '').trim();
+    if (targetModel === 'gemini-4' || targetModel === 'gemini 4' || targetModel === 'gemini4') {
+      targetModel = 'gemini-4-argon';
+    }
+    const keyCandidates = Array.from(new Set([
+      apiKey,
+      config.GEMINI_API_KEY,
+      (config as any).GEMINI_API_KEY_FALLBACK,
+      process.env.GEMINI_API_KEY_FALLBACK,
+    ])).filter((k): k is string => Boolean(k && k.trim().length > 10 && !k.includes('••••')));
+
     const systemPrompt = this.buildCopilotSystemPrompt(context);
 
     const callEndpoint = async (mod: string) => {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mod)}:generateContent?key=${apiKey}`;
-      return await axios.post(
-        url,
-        {
-          contents: [
-            { role: 'user', parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }] },
-          ],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
-        },
-        { timeout: 10000 },
-      );
+      const projectId = (config as any).VERTEX_PROJECT_ID || process.env.VERTEX_PROJECT_ID || '782261089175';
+      let lastErr: any = null;
+      for (const k of keyCandidates) {
+        const urls = [
+          `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/global/publishers/google/models/${encodeURIComponent(mod)}:generateContent?key=${k}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mod)}:generateContent?key=${k}`
+        ];
+        for (const url of urls) {
+          // 1. Try with Google Search Grounding for real-time live web events
+          try {
+            return await axios.post(
+              url,
+              {
+                contents: [
+                  { role: 'user', parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }] },
+                ],
+                tools: [{ googleSearch: {} }],
+                generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
+              },
+              { timeout: 12000 },
+            );
+          } catch (toolErr: any) {
+            // 2. Fallback without tools if tools are not supported for this endpoint/model
+            try {
+              return await axios.post(
+                url,
+                {
+                  contents: [
+                    { role: 'user', parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }] },
+                  ],
+                  generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
+                },
+                { timeout: 10000 },
+              );
+            } catch (e: any) {
+              lastErr = e;
+            }
+          }
+        }
+      }
+      throw lastErr;
     };
 
     try {
@@ -1072,7 +1195,7 @@ When the user asks questions about the market, specific tokens (like SUI or BTC)
       if (err.response?.status === 429 || String(errMsg).includes('Quota') || String(errMsg).includes('quota')) {
         throw new Error(`Gemini 429 Quota Exceeded: ${errMsg}`);
       }
-      const fallbacks = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+      const fallbacks = ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest'];
       for (const fb of fallbacks) {
         if (fb === targetModel) continue;
         try {

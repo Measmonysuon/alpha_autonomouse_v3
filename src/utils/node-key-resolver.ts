@@ -18,14 +18,26 @@ export const BLACKLISTED_KEYS = new Set<string>([
   'AG-AMONRHVQRPNGCNNFLOYGB39DMFA4MB4FF',
 ]);
 
+/**
+ * Ensures proxy URLs targeting local addresses or non-TLS ports use http://
+ */
+export function sanitizeProxyUrl(rawUrl: string): string {
+  let u = (rawUrl || '').trim();
+  if (!u) return 'https://simlab.measmony.me/aptos-node/v1';
+  if (/^https:\/\/(?:127\.0\.0\.1|localhost|0\.0\.0\.0)(?::\d+)?/i.test(u) || /^https:\/\/[^/]+:(?:4000|4005)/i.test(u)) {
+    u = u.replace(/^https:/i, 'http:');
+  }
+  return u;
+}
+
 // In-memory gateway routing state
 let currentActiveApiKey: string = (config.DECIBEL_NODE_API_KEY || '').trim();
 let isProxyFallbackActive: boolean = false;
-let proxyEndpointUrl: string = (
+let proxyEndpointUrl: string = sanitizeProxyUrl(
   process.env.APTOS_FULLNODE_URL ||
   (config as any).APTOS_FULLNODE_URL ||
   'https://simlab.measmony.me/aptos-node/v1'
-).trim();
+);
 
 /**
  * Diagnostic status helper
@@ -183,7 +195,7 @@ export async function resolveNodeApiKey(options?: {
         const data = (await res.json()) as any;
         if (data.success) {
           if (data.proxyUrl && typeof data.proxyUrl === 'string') {
-            proxyEndpointUrl = data.proxyUrl.trim();
+            proxyEndpointUrl = sanitizeProxyUrl(data.proxyUrl);
             (config as any).APTOS_FULLNODE_URL = proxyEndpointUrl;
           }
 
@@ -292,7 +304,7 @@ export function getAptosConfig(network?: string, customApiKey?: string): AptosCo
   }
 
   // Mode 2: Dedicated Builder Proxy URL (Zero developer secrets needed on client)
-  const proxyUrl = proxyEndpointUrl || 'https://simlab.measmony.me/aptos-node/v1';
+  const proxyUrl = sanitizeProxyUrl(proxyEndpointUrl || 'https://simlab.measmony.me/aptos-node/v1');
   return new AptosConfig({
     network: net,
     fullnode: proxyUrl,

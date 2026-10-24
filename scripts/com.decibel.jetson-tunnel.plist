@@ -9,7 +9,11 @@
         <string>/usr/bin/ssh</string>
         <string>-N</string>
         <string>-L</string>
-        <string>3000:localhost:3000</string>
+        <string>3000:127.0.0.1:3000</string>
+        <string>-L</string>
+        <string>4000:127.0.0.1:4000</string>
+        <string>-L</string>
+        <string>5050:127.0.0.1:5050</string>
         <string>-o</string>
         <string>ServerAliveInterval=15</string>
         <string>-o</string>

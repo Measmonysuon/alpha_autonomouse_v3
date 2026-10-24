@@ -26,6 +26,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import axios from 'axios';
 import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
 import { createAptosClient } from './utils/node-key-resolver';
@@ -35,7 +36,7 @@ import { tradeExecutor } from './trades/executor';
 import { mcpClient } from './mcp/client';
 import { portfolioHarvester } from './engine/harvester';
 import { riskGuard } from './risk/guard';
-import { standaloneEngine, fetchPublicKlines } from './engine/standalone-engine';
+import { standaloneEngine, fetchPublicKlines, updateBaselinePrice } from './engine/standalone-engine';
 import { superchargeClient } from './simlab/supercharge-client';
 import { telegramNotifier } from './notify/telegram';
 import { localAIBrain } from './ai/brain';
@@ -50,6 +51,15 @@ import {
   updateStrategySyncConfig,
   setSimLabConnectionChecker,
   getAllPairOverrides,
+  getPairOverrides,
+  setPairLayerOverride,
+  resetPairOverride,
+  resetAllPairOverrides,
+  setBulkPairLayerOverride,
+  applyPairPreset,
+  setPairRiskOverrides,
+  clonePairOverrides,
+  autoTunePairWithAI,
   getSimPairDirectives,
 } from './strategy/manager';
 import { dbClient, DbTrade } from './db/database';
@@ -133,9 +143,66 @@ export const agentState: AgentState = {
   minConfidencePct: config.MIN_CONFIDENCE_PCT,
 };
 
+export function getSimLabConnectionStatus(): boolean {
+  let isConsumerActive = false;
+  try {
+    const { isSimPipelineActive } = require('./pipeline/sim-consumer');
+    isConsumerActive = Boolean(isSimPipelineActive());
+  } catch {}
+  return superchargeClient.isActive() || isConsumerActive;
+}
+
+export function getEffectiveMacroDirective(directives?: any): any {
+  const curDirectives = directives || standaloneEngine.getDirectives();
+  try {
+    const { getLastSyncedBundle } = require('./pipeline/sim-consumer');
+    const bundle = getLastSyncedBundle();
+    const bundleMacro = bundle?.macro;
+    const bundleStrat = bundle?.strategy;
+    const regime = bundleMacro?.regime || curDirectives.regime || 'ACTIVE';
+    const isChop = regime === 'RANGING_CHOP' || regime === 'HIGH_VOLATILITY' || regime === 'STAGFLATION_CHOP';
+    const macroBuffer = typeof bundleMacro?.macroBuffer === 'number'
+      ? bundleMacro.macroBuffer
+      : (isChop ? 5 : 0);
+    const macroBufferReason = (bundleMacro?.macroBufferReason && bundleMacro.macroBufferReason.trim())
+      || (bundleMacro?.coolingReason && bundleMacro.coolingReason.trim())
+      || (isChop ? 'Chop Protection (Sub-20 ADX)' : 'Clear Macro');
+    const macroScoreBonus = typeof bundleMacro?.macroScoreBonus === 'number' ? bundleMacro.macroScoreBonus : 0;
+    const scoreFloor = bundleStrat?.dynamicScoreFloor || bundleStrat?.minConfidenceGate || curDirectives.scoreFloor || 65;
+    return {
+      regime,
+      scoreFloor,
+      macroBuffer,
+      macroBufferReason,
+      macroScoreBonus,
+      summary: bundleMacro?.summary || curDirectives.notes || 'Sim Lab Alpha Synced',
+      btcBias: bundleMacro?.marketBias || (curDirectives.bannedSides?.includes('SHORT') ? 'BULLISH' : 'NEUTRAL'),
+      altPolicy: (bundleMacro as any)?.altPolicy || 'ALLOW_ALL',
+      bannedSides: bundleMacro?.bannedSides || curDirectives.bannedSides || [],
+      nearestNewsEvent: bundleMacro?.nearestNewsTitle ? {
+        title: bundleMacro.nearestNewsTitle,
+        minutesAway: bundleMacro.nearestNewsMinutes ?? 0,
+      } : null,
+    };
+  } catch {
+    return {
+      regime: curDirectives?.regime || 'ACTIVE',
+      scoreFloor: curDirectives?.scoreFloor || 65,
+      macroBuffer: 0,
+      macroBufferReason: 'Clear Macro',
+      macroScoreBonus: 0,
+      summary: curDirectives?.notes || 'Directives Active',
+      btcBias: curDirectives?.bannedSides?.includes('SHORT') ? 'BULLISH' : 'NEUTRAL',
+      altPolicy: 'ALLOW_ALL',
+      bannedSides: curDirectives?.bannedSides || [],
+      nearestNewsEvent: null,
+    };
+  }
+}
+
 // Initialize Sim Lab connection status checker for strategy manager
 setSimLabConnectionChecker(() => {
-  return superchargeClient.isActive();
+  return getSimLabConnectionStatus();
 });
 
 let scanTriggerFn: (() => void) | null = null;
@@ -227,6 +294,7 @@ const recentLogs: LogEntry[] = [];
 const sseClients = new Set<http.ServerResponse>();
 const startedAt = Date.now();
 let lastStateOnChainSync = 0;
+let lastPositionsSync = 0;
 let cachedStateEquity = 0;
 let cachedStateMargin = 0;
 let cachedStateGasApt = 0;
@@ -241,27 +309,30 @@ export function buildStreamStatePayload() {
   const curSigner = tradeExecutor.getSignerAddress() || getDerivedSignerAddress();
   const curSub = (config.DECIBEL_SUBACCOUNT_ADDRESS && !config.DECIBEL_SUBACCOUNT_ADDRESS.includes('your_')) ? config.DECIBEL_SUBACCOUNT_ADDRESS : '';
   const tickUptime = Math.floor((Date.now() - startedAt) / 1000);
-  const curIsSupercharged = superchargeClient.isActive();
+  const isSimLabConn = getSimLabConnectionStatus();
   const curDirectives = standaloneEngine.getDirectives();
+  const curMacroDirective = getEffectiveMacroDirective(curDirectives);
 
   return {
     status: tradeExecutor.getIsPaused() ? 'PAUSED' : 'running',
     isPaused: tradeExecutor.getIsPaused(),
     mode: config.AUTONOMOUS_MODE,
     clientName: config.CLIENT_NAME,
-    operatingMode: curIsSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
-    isSimLabSupercharged: curIsSupercharged,
+    operatingMode: isSimLabConn ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+    isSimLabSupercharged: isSimLabConn,
+    isSimLabConnected: isSimLabConn,
     simPipeline: {
-      connected: curIsSupercharged,
+      connected: isSimLabConn,
       isStale: false,
       currentRegime: curDirectives.regime,
       appliedConfidenceGate: curDirectives.scoreFloor,
       appliedHarvestThreshold: 65,
       serverUrl: superchargeClient.getServerUrl(),
-      mode: curIsSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+      mode: isSimLabConn ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
     },
     uptime: tickUptime,
     uptimeSeconds: tickUptime,
+    startedAt,
     subaccount: curSub,
     agentAddress: curSigner,
     gasFeeAddress: curSigner,
@@ -277,6 +348,7 @@ export function buildStreamStatePayload() {
     gasAptBalance: curApt,
     stats: curStats,
     directives: curDirectives,
+    macroDirective: curMacroDirective,
     pairs: watchPairs,
     currentPairs: watchPairs,
     watchPairs,
@@ -286,6 +358,8 @@ export function buildStreamStatePayload() {
     activeStrategy: getActiveStrategy(),
     strategyOrigin: getActiveStrategyOriginInfo(),
     strategySyncConfig: getStrategySyncConfig(),
+    pairOverrides: getAllPairOverrides(),
+    simPairDirectives: getSimPairDirectives(),
     shockwave: {
       activeCoolOffs: (() => {
         const map: Record<string, any> = {};
@@ -296,7 +370,7 @@ export function buildStreamStatePayload() {
             bannedSide: c.action,
             reason: c.reason,
             trapCategory: c.trapCategory,
-            expiresAt: Date.now() + (c.remainingMinutes * 60 * 1000),
+            expiresAt: c.expiresAt || (Date.now() + (c.remainingMinutes * 60 * 1000)),
           };
         }
         return map;
@@ -380,6 +454,7 @@ export async function fetchLiveBulkTickers(): Promise<void> {
       const item = tickerMap.get(bybitSym);
       if (item && item.lastPrice > 0) {
         const price = item.lastPrice;
+        updateBaselinePrice(sym, price);
         if (!agentState.markets[sym]) {
           agentState.markets[sym] = {
             symbol: sym,
@@ -521,7 +596,11 @@ export function startApiServer(): http.Server {
 
   // Register Copilot runtime handlers
   registerCopilotHandlers({
-    setPaused: (paused: boolean) => tradeExecutor.setPaused(paused),
+    setPaused: (paused: boolean) => {
+      tradeExecutor.setPaused(paused);
+      agentState.status = paused ? 'paused' : 'running';
+      broadcastState();
+    },
     triggerScan: async () => triggerImmediateScan(),
   });
 
@@ -832,7 +911,16 @@ export function startApiServer(): http.Server {
         decibelPrivateKey: delegateKey,
         decibelNetwork: body.network || body.decibelNetwork || 'mainnet',
         trading: {
-          budgetUsd: body.budgetUsd ? Number(body.budgetUsd) : config.BUDGET_USD,
+          budgetUsd: (() => {
+            const cachedBal = tradeExecutor.getCachedOnChainBalance();
+            const realEquity = cachedBal?.balanceUsd || 0;
+            const b = body.budgetUsd ? Number(body.budgetUsd) : config.BUDGET_USD;
+            if (realEquity > 0 && !isPaper && b > realEquity) {
+              logger.warn(`⚠️ [SETUP] Initial Budget Ceiling ($${b.toFixed(2)}) clamped to on-chain wallet balance ($${realEquity.toFixed(2)}).`);
+              return Number(realEquity.toFixed(2));
+            }
+            return b;
+          })(),
           paperTrading: isPaper,
         },
       };
@@ -1041,13 +1129,18 @@ export function startApiServer(): http.Server {
           lastStateOnChainSync = now;
           tradeExecutor.syncOnChainPositions().catch(() => {});
           tradeExecutor.fetchOnChainBalance().then((onChain) => {
-            cachedStateEquity = Math.max(0, onChain.balanceUsd || 0);
+            if (onChain.balanceUsd > 0) cachedStateEquity = Math.max(0, onChain.balanceUsd);
+            if (onChain.aptBalance > 0) cachedStateGasApt = onChain.aptBalance;
             cachedStateMargin = Math.max(0, cachedStateEquity - stats.budgetUsedUsd);
-            cachedStateGasApt = onChain.aptBalance || 0;
           }).catch(() => {});
         }
+        if (cachedStateEquity === 0 || cachedStateGasApt === 0) {
+          const cachedBal = tradeExecutor.getCachedOnChainBalance();
+          if (cachedBal.balanceUsd > 0 && cachedStateEquity === 0) cachedStateEquity = cachedBal.balanceUsd;
+          if (cachedBal.aptBalance > 0 && cachedStateGasApt === 0) cachedStateGasApt = cachedBal.aptBalance;
+        }
         onChainEquity = cachedStateEquity;
-        onChainMargin = cachedStateMargin;
+        onChainMargin = Math.max(0, cachedStateEquity - stats.budgetUsedUsd);
         gasAptBalance = cachedStateGasApt;
       } else {
         onChainEquity = 0;
@@ -1056,12 +1149,8 @@ export function startApiServer(): http.Server {
       }
 
       const signerAddress = tradeExecutor.getSignerAddress() || getDerivedSignerAddress();
-      let isSimConsumerActive = false;
-      try {
-        const { isSimPipelineActive } = require('./pipeline/sim-consumer');
-        isSimConsumerActive = Boolean(isSimPipelineActive());
-      } catch {}
-      const isSimLabConn = superchargeClient.isActive() || isSimConsumerActive;
+      const isSimLabConn = getSimLabConnectionStatus();
+      const macroDirective = getEffectiveMacroDirective(directives);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
@@ -1090,6 +1179,7 @@ export function startApiServer(): http.Server {
           agentAddress: signerAddress,
           gasFeeAddress: signerAddress,
           gasAptBalance,
+          network: config.NETWORK,
           paperTrading: config.PAPER_TRADING,
           budgetUsd: config.BUDGET_USD,
           accountEquityUsd: onChainEquity,
@@ -1098,6 +1188,7 @@ export function startApiServer(): http.Server {
           currentPairs: watchPairs,
           watchPairs,
           directives,
+          macroDirective,
           stats,
           markets: agentState.markets,
           activeStrategy: getActiveStrategy(),
@@ -1118,7 +1209,7 @@ export function startApiServer(): http.Server {
                   bannedSide: c.action,
                   reason: c.reason,
                   trapCategory: c.trapCategory,
-                  expiresAt: Date.now() + (c.remainingMinutes * 60 * 1000),
+                  expiresAt: c.expiresAt || (Date.now() + (c.remainingMinutes * 60 * 1000)),
                 };
               }
               return map;
@@ -1128,17 +1219,54 @@ export function startApiServer(): http.Server {
             pairVelocities: {},
           },
           portfolioHarvester: portfolioHarvester.evaluate(getLivePricesMap()),
-          positions: tradeExecutor.getOpenTrades(),
+          breakingNews: (() => {
+            try {
+              const { getLatestBreakingNews } = require('./pipeline/sim-consumer');
+              return getLatestBreakingNews();
+            } catch { return null; }
+          })(),
+          positions: (() => {
+            const raw = tradeExecutor.getOpenTrades();
+            let bundle: any = null;
+            try {
+              const { getLastSyncedBundle } = require('./pipeline/sim-consumer');
+              bundle = getLastSyncedBundle();
+            } catch (_) {}
+            return raw.map((t) => {
+              const sym = (t.symbol || '').toUpperCase().replace('-', '/');
+              const base = sym.split('/')[0];
+              const dir = bundle?.pairDirectives?.[sym] || bundle?.pairDirectives?.[base];
+              return {
+                ...t,
+                bykaranteli: dir?.bykaranteli || undefined,
+              };
+            });
+          })(),
           openPositions: tradeExecutor.getOpenTrades(),
+          uptime: Math.floor((Date.now() - startedAt) / 1000),
           uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+          startedAt,
         }),
       );
+      return;
+    }
+
+    // ── 5a. Breaking News & Geopolitical Catalysts Endpoint ──────────────────
+    if (pathname === '/api/news') {
+      let news: any = null;
+      try {
+        const { getLatestBreakingNews } = require('./pipeline/sim-consumer');
+        news = getLatestBreakingNews();
+      } catch {}
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, ...(news || { headlines: [], aggregateSentimentScore: 0, shockwaveAlert: false }) }));
       return;
     }
 
     // ── 5b. Learning & Counterfactual Shadow Trades Endpoint ─────────────────
     if (pathname === '/api/learning' || pathname === '/api/shadow-trades') {
       const directives = standaloneEngine.getDirectives();
+      const macroDirective = getEffectiveMacroDirective(directives);
       const shadowStats = tradeExecutor.getShadowStats();
       const shadowTrades = tradeExecutor.getShadowTrades();
 
@@ -1146,7 +1274,8 @@ export function startApiServer(): http.Server {
       res.end(
         JSON.stringify({
           success: true,
-          macroDirective: directives,
+          macroDirective,
+          directives,
           pairOverrides: getAllPairOverrides(),
           simPairDirectives: getSimPairDirectives(),
           shadowTrades: shadowTrades.slice(-30),
@@ -1352,9 +1481,30 @@ export function startApiServer(): http.Server {
 
     // ── 6. Open Positions & Controls ─────────────────────────────────────────
     if (pathname === '/api/positions') {
-      await tradeExecutor.syncOnChainPositions().catch(() => {});
+      const now = Date.now();
+      if (now - lastPositionsSync > 15000) {
+        lastPositionsSync = now;
+        tradeExecutor.syncOnChainPositions().catch(() => {});
+      }
+      const rawTrades = tradeExecutor.getOpenTrades();
+      let lastBundle: any = null;
+      try {
+        const { getLastSyncedBundle } = require('./pipeline/sim-consumer');
+        lastBundle = getLastSyncedBundle();
+      } catch (_) {}
+
+      const enrichedTrades = rawTrades.map((t) => {
+        const sym = (t.symbol || '').toUpperCase().replace('-', '/');
+        const base = sym.split('/')[0];
+        const dir = lastBundle?.pairDirectives?.[sym] || lastBundle?.pairDirectives?.[base];
+        return {
+          ...t,
+          bykaranteli: dir?.bykaranteli || undefined,
+        };
+      });
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, positions: tradeExecutor.getOpenTrades() }));
+      res.end(JSON.stringify({ success: true, positions: enrichedTrades }));
       return;
     }
 
@@ -1376,16 +1526,37 @@ export function startApiServer(): http.Server {
 
 // ── SQLite & On-Chain Background Sync Engine ──────────────────────────────
 function dbTradeToFrontendTrade(t: DbTrade): any {
-  const pnl = Number(t.realized_pnl || 0);
+  const fee = Number(t.fee_usd || 0);
+  const grossPnl = Number(t.realized_pnl || 0);
+  const netPnl = Number((grossPnl - fee).toFixed(4));
   let exitReason = t.exit_reason;
+  let status = (t.status || 'closed').toLowerCase();
+
+  // Authoritative Ledger Rectification: A closed trade with negative net PnL is NEVER a TP!
+  if (status !== 'open') {
+    if (netPnl < -0.0001) {
+      if (status === 'closed_tp') {
+        status = 'closed_sl';
+      }
+      if (!exitReason || exitReason.toUpperCase().includes('TP') || exitReason.toUpperCase().includes('HARVEST') || exitReason.toUpperCase().includes('TRAILING')) {
+        exitReason = 'ON_CHAIN_SL';
+      }
+    } else if (netPnl > 0.05 && status === 'closed_sl') {
+      status = 'closed_tp';
+      if (exitReason && exitReason.toUpperCase().includes('SL')) {
+        exitReason = 'ON_CHAIN_TP';
+      }
+    }
+  }
+
   if (!exitReason || exitReason === 'Reconciled directly from Aptos on-chain DEX state' || exitReason === 'ON_CHAIN_DEX_CLOSE' || exitReason === 'DEX_SETTLED' || exitReason.includes('DEX')) {
-    if (t.status === 'OPEN' || t.status === 'open') {
+    if (status === 'open') {
       exitReason = 'ACTIVE_POSITION';
-    } else if (pnl > 0.05) {
+    } else if (netPnl > 0.05) {
       exitReason = 'ON_CHAIN_TP';
-    } else if (pnl >= 0) {
+    } else if (netPnl >= 0) {
       exitReason = 'BREAKEVEN';
-    } else if (pnl < 0) {
+    } else if (netPnl < 0) {
       exitReason = 'ON_CHAIN_SL';
     } else {
       exitReason = 'DEX_SETTLED';
@@ -1424,18 +1595,18 @@ function dbTradeToFrontendTrade(t: DbTrade): any {
     allocatedUsd: t.allocated_usd,
     allocated_usd: t.allocated_usd,
     leverage: t.leverage,
-    realized_pnl_amount: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
-    pnlUsd: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
-    netPnlUsd: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
-    net_pnl: Number((Number(t.realized_pnl || 0) - Number(t.fee_usd || 0)).toFixed(4)),
-    grossPnlUsd: Number(Number(t.realized_pnl || 0).toFixed(4)),
-    gross_pnl: Number(Number(t.realized_pnl || 0).toFixed(4)),
+    realized_pnl_amount: netPnl,
+    pnlUsd: netPnl,
+    netPnlUsd: netPnl,
+    net_pnl: netPnl,
+    grossPnlUsd: Number(grossPnl.toFixed(4)),
+    gross_pnl: Number(grossPnl.toFixed(4)),
     pnlPct: t.realized_pnl_pct,
     realized_pnl_pct: t.realized_pnl_pct,
-    fee_amount: Number(Number(t.fee_usd || 0).toFixed(4)),
-    feeUsd: Number(Number(t.fee_usd || 0).toFixed(4)),
-    fee_usd: Number(Number(t.fee_usd || 0).toFixed(4)),
-    status: (t.status || 'closed').toLowerCase(),
+    fee_amount: Number(fee.toFixed(4)),
+    feeUsd: Number(fee.toFixed(4)),
+    fee_usd: Number(fee.toFixed(4)),
+    status,
     openedAt: t.opened_at,
     opened_at: t.opened_at,
     closedAt: t.closed_at,
@@ -1458,18 +1629,25 @@ function syncTradesToSqlite(trades: any[]): void {
   for (const t of trades) {
     if (!t.id) continue;
     try {
-      const pnl = t.pnlUsd !== undefined ? Number(t.pnlUsd) : (t.realized_pnl !== undefined ? Number(t.realized_pnl) : 0);
+      const gross = t.grossPnlUsd !== undefined ? Number(t.grossPnlUsd) : (t.realized_pnl !== undefined ? Number(t.realized_pnl) : 0);
+      const feeVal = t.feeUsd !== undefined ? Number(t.feeUsd) : (t.fee_amount !== undefined ? Number(t.fee_amount) : (t.fee_usd !== undefined ? Number(t.fee_usd) : 0));
+      const pnl = t.netPnlUsd !== undefined ? Number(t.netPnlUsd) : (t.pnlUsd !== undefined ? Number(t.pnlUsd) : (gross - feeVal));
       let tradeStatus = (t.status || 'OPEN').toUpperCase();
       if ((tradeStatus === 'CLOSED_SL' || tradeStatus === 'CLOSED') && pnl > 0.05) {
         tradeStatus = 'CLOSED_TP';
+      } else if (tradeStatus === 'CLOSED_TP' && pnl < -0.0001) {
+        tradeStatus = 'CLOSED_SL';
       }
       let exitReason = t.exitReason || t.exit_reason || t.notes;
+      if (tradeStatus !== 'OPEN' && pnl < -0.0001 && exitReason && (exitReason.toUpperCase().includes('TP') || exitReason.toUpperCase().includes('HARVEST') || exitReason.toUpperCase().includes('TRAILING'))) {
+        exitReason = 'ON_CHAIN_SL';
+      }
       if (!exitReason || exitReason === 'Reconciled directly from Aptos on-chain DEX state') {
         if (tradeStatus === 'OPEN') {
           exitReason = 'ACTIVE_POSITION';
         } else if (pnl > 0.05) {
           exitReason = 'TRAILING_TP';
-        } else if (pnl > 0) {
+        } else if (pnl >= 0) {
           exitReason = 'BREAKEVEN';
         } else if (pnl < 0) {
           exitReason = 'ON_CHAIN_SL';
@@ -1486,7 +1664,6 @@ function syncTradesToSqlite(trades: any[]): void {
         stratName = 'Turtle Soup & Liquidity Grab';
       }
 
-      const fee = t.feeUsd !== undefined ? Number(t.feeUsd) : (t.fee_amount !== undefined ? Number(t.fee_amount) : (t.fee_usd !== undefined ? Number(t.fee_usd) : 0));
       const grossPnl = t.grossPnlUsd !== undefined ? Number(t.grossPnlUsd) : (t.gross_pnl !== undefined ? Number(t.gross_pnl) : pnl);
 
       dbClient.upsertTrade({
@@ -1503,7 +1680,7 @@ function syncTradesToSqlite(trades: any[]): void {
         allocated_usd: Number(t.allocatedUsd || t.allocated_usd || 0),
         leverage: Number(t.leverage || 1),
         realized_pnl: grossPnl,
-        fee_usd: fee,
+        fee_usd: feeVal,
         realized_pnl_pct: t.pnlPct !== undefined ? Number(t.pnlPct) : (t.realized_pnl_pct !== undefined ? Number(t.realized_pnl_pct) : 0),
         status: tradeStatus,
         opened_at: Number(t.openedAt || t.opened_at || Date.now()),
@@ -1729,15 +1906,18 @@ function triggerBackgroundOnChainSync(): void {
       let reply = '';
       if (cmd === 'pause') {
         tradeExecutor.setPaused(true);
+        agentState.status = 'paused';
         reply = '⏸️ Autonomous bot trading PAUSED. No new market entries will be executed.';
       } else if (cmd === 'resume') {
         tradeExecutor.setPaused(false);
+        agentState.status = 'running';
         reply = '▶️ Autonomous bot trading RESUMED in FULL-AUTO mode.';
       } else if (cmd === 'scan') {
         reply = '🔍 Instant market scan triggered across active watch pairs.';
       } else {
         reply = `Command "${cmd}" received.`;
       }
+      broadcastState();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, reply, mode: config.AUTONOMOUS_MODE, isPaused: tradeExecutor.getIsPaused() }));
       return;
@@ -1896,6 +2076,16 @@ function triggerBackgroundOnChainSync(): void {
         }
 
         const body = await parseBody(req);
+        // Live capital guard: clamp requested budget ceiling to real on-chain equity if available
+        const cachedBal = tradeExecutor.getCachedOnChainBalance();
+        const realEquity = cachedBal?.balanceUsd || 0;
+        const isPaperTrading = config.PAPER_TRADING || (body.paperTrading !== undefined ? Boolean(body.paperTrading) : false);
+        const reqBudget = body.budgetUsd !== undefined ? Number(body.budgetUsd) : (body.trading?.budgetUsd !== undefined ? Number(body.trading.budgetUsd) : undefined);
+        if (reqBudget !== undefined && realEquity > 0 && !isPaperTrading && reqBudget > realEquity) {
+          logger.warn(`⚠️ [SETTINGS] Requested Budget Ceiling ($${reqBudget.toFixed(2)}) exceeds on-chain wallet balance ($${realEquity.toFixed(2)}). Clamped to on-chain balance.`);
+          body.budgetUsd = Number(realEquity.toFixed(2));
+          if (body.trading) body.trading.budgetUsd = Number(realEquity.toFixed(2));
+        }
         updateDynamicSettings(body);
         if (body.telegramBotToken !== undefined || body.telegramChatId !== undefined || body.telegram) {
           telegramNotifier.updateSettings(
@@ -1933,9 +2123,10 @@ function triggerBackgroundOnChainSync(): void {
     // ── 10a. AI Intelligence Dedicated Settings Endpoint ─────────────────────
     if (pathname === '/api/settings/ai' || pathname === '/api/ai/settings') {
       if (req.method === 'GET') {
-        const aiSettings = getAISettings();
+        const { getMaskedAISettings } = require('./ai/settings');
+        const masked = getMaskedAISettings();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(aiSettings));
+        res.end(JSON.stringify(masked));
         return;
       }
 
@@ -1985,12 +2176,11 @@ function triggerBackgroundOnChainSync(): void {
           { id: 'google/gemma-2-27b-it', name: 'google/gemma-2-27b-it', description: '💨 Google Gemma 2 27B' },
         ],
         gemini: [
-          { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', description: '⚡ Recommended · Fast, Smart & High-Throughput', recommended: true },
-          { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', description: '🧠 Deep Reasoning & Complex Market Analysis' },
-          { id: 'gemini-2.0-flash', name: 'gemini-2.0-flash', description: '⚡ Fast Multimodal & Real-time Reasoning' },
-          { id: 'gemini-2.0-flash-lite', name: 'gemini-2.0-flash-lite', description: '💨 Lowest Latency & High Rate Limit' },
-          { id: 'gemini-1.5-flash', name: 'gemini-1.5-flash', description: '⚡ High Speed Production Scaler' },
-          { id: 'gemini-1.5-pro', name: 'gemini-1.5-pro', description: '🔬 Deep Analysis & Extended Window' },
+          { id: 'gemini-4-argon', name: 'gemini-4-argon', description: '🚀 Gemini 4 Argon · Next-Gen Institutional Intelligence', recommended: true },
+          { id: 'gemini-3.8-flash', name: 'gemini-3.8-flash', description: '⚡ Gemini 3.8 Flash · High-Throughput Quantitative Reasoning' },
+          { id: 'gemini-3.7-flash', name: 'gemini-3.7-flash', description: '⚡ Gemini 3.7 Flash · Hybrid Reasoning & Low Latency' },
+          { id: 'gemini-flash-lite-latest', name: 'gemini-flash-lite-latest', description: '💨 Lowest Latency & High Rate Limit (Active)' },
+          { id: 'gemini-3.6-flash', name: 'gemini-3.6-flash', description: '⚡ Gemini 3.6 Flash · Fast Multimodal' },
         ],
         openai: [
           { id: 'gpt-4o-mini', name: 'gpt-4o-mini', description: '⚡ Recommended · Fast & Cost Efficient', recommended: true },
@@ -2247,24 +2437,50 @@ function triggerBackgroundOnChainSync(): void {
           return;
         }
 
+        let targetModel = (model || '').trim().replace(/^models\//, '');
+        if (targetModel === 'gemini-4' || targetModel === 'gemini 4' || targetModel === 'gemini4') {
+          targetModel = 'gemini-4-argon';
+        }
+        if (!targetModel) targetModel = 'gemini-4-argon';
+
         try {
-          const testUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-          const pingRes = await axios.post(
-            testUrl,
-            {
-              contents: [{ role: 'user', parts: [{ text: 'Respond with: "OK: Autonomous AI Active"' }] }],
-              generationConfig: { maxOutputTokens: 25, temperature: 0.1 },
-            },
-            { timeout: 8000 }
-          );
+          const projectId = (config as any).VERTEX_PROJECT_ID || process.env.VERTEX_PROJECT_ID || '782261089175';
+          const testUrls = [
+            `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/global/publishers/google/models/${targetModel}:generateContent?key=${key}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${key}`
+          ];
+          let pingRes: any = null;
+          let lastErr: any = null;
+          let matchedPlatform = 'Google AI';
+          for (const testUrl of testUrls) {
+            try {
+              pingRes = await axios.post(
+                testUrl,
+                {
+                  contents: [{ role: 'user', parts: [{ text: 'Respond with: "OK: Autonomous AI Active"' }] }],
+                  generationConfig: { maxOutputTokens: 25, temperature: 0.1 },
+                },
+                { timeout: 8000 }
+              );
+              matchedPlatform = testUrl.includes('aiplatform') ? 'Vertex AI' : 'Google AI Studio';
+              if (pingRes?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
+            } catch (e: any) {
+              lastErr = e;
+            }
+          }
+          if (!pingRes?.data) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: lastErr?.response ? JSON.stringify(lastErr.response.data) : (lastErr?.message || 'Connection failed') }));
+            return;
+          }
           const latencyMs = Date.now() - startTime;
           const replyText = pingRes.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'OK';
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: true,
             latencyMs,
-            message: `Connected to ${model} successfully (${latencyMs}ms). Probe reply: "${replyText}"`,
-            model,
+            message: `Connected to ${targetModel} via ${matchedPlatform} (${latencyMs}ms). Probe: "${replyText}"`,
+            model: targetModel,
             provider: 'gemini',
           }));
           return;
@@ -2843,10 +3059,230 @@ function triggerBackgroundOnChainSync(): void {
       }
     }
 
-    // Stub for pair override endpoints so dashboard calls succeed gracefully
-    if (pathname.startsWith('/api/strategy/pair-')) {
+    // ── Pair Strategy Overrides Endpoints ────────────────────────────────────
+    if (pathname === '/api/strategy/pair-overrides' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
+      res.end(JSON.stringify({ success: true, pairOverrides: getAllPairOverrides() }));
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-override' && req.method === 'POST') {
+      try {
+        const body = await parseBody<{ symbol: string; layer: 'layer0_kronos' | 'layer1' | 'layer2' | 'layer3' | 'layer4'; enabled: boolean }>(req);
+        if (!body?.symbol || !body?.layer || typeof body?.enabled !== 'boolean') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid parameters: symbol, layer, and enabled required' }));
+          return;
+        }
+        const updated = setPairLayerOverride(body.symbol, body.layer, body.enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, symbol: body.symbol, overrides: updated }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-override/reset-all' && req.method === 'POST') {
+      const reset = resetAllPairOverrides();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, reset, message: 'All pair strategy overrides reset to Global Strategy defaults' }));
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-override/bulk-layer' && req.method === 'POST') {
+      try {
+        const body = await parseBody<{ layer: 'layer0_kronos' | 'layer1' | 'layer2' | 'layer3' | 'layer4'; enabled: boolean }>(req);
+        if (!body?.layer || typeof body?.enabled !== 'boolean') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid parameters: layer and enabled required' }));
+          return;
+        }
+        const updated = setBulkPairLayerOverride(body.layer, body.enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, layer: body.layer, enabled: body.enabled, overrides: updated }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if ((pathname.startsWith('/api/strategy/pair-override/') || pathname === '/api/strategy/pair-override/reset') && (req.method === 'DELETE' || req.method === 'POST')) {
+      try {
+        if (pathname === '/api/strategy/pair-override/reset' && req.method === 'POST') {
+          const body = await parseBody<{ symbol: string }>(req);
+          if (!body?.symbol) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Symbol required' }));
+            return;
+          }
+          const reset = resetPairOverride(body.symbol);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, reset }));
+          return;
+        }
+        const symbol = decodeURIComponent(pathname.replace('/api/strategy/pair-override/', ''));
+        const reset = resetPairOverride(symbol);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, symbol, reset }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-preset' && req.method === 'POST') {
+      try {
+        const body = await parseBody<{ symbol: string; preset: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CREAMER_ORDERFLOW' }>(req);
+        if (!body?.symbol || !body?.preset) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'symbol and preset required' }));
+          return;
+        }
+        const overrides = applyPairPreset(body.symbol, body.preset);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, symbol: body.symbol, overrides }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-risk' && req.method === 'POST') {
+      try {
+        const body = await parseBody<{ symbol: string; maxLeverage?: number; slMultiplier?: number; minConfidenceGate?: number }>(req);
+        if (!body?.symbol) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'symbol is required' }));
+          return;
+        }
+        const overrides = setPairRiskOverrides(body.symbol, body.maxLeverage, body.slMultiplier, body.minConfidenceGate);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, symbol: body.symbol, overrides }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-clone' && req.method === 'POST') {
+      try {
+        const body = await parseBody<{ sourceSymbol: string; targetSymbols: string[] }>(req);
+        if (!body?.sourceSymbol || !Array.isArray(body?.targetSymbols) || body.targetSymbols.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'sourceSymbol and non-empty targetSymbols array are required' }));
+          return;
+        }
+        const cloned = clonePairOverrides(body.sourceSymbol, body.targetSymbols);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, sourceSymbol: body.sourceSymbol, clonedCount: Object.keys(cloned).length, overrides: cloned }));
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/strategy/pair-auto-tune' && req.method === 'POST') {
+      try {
+        const body = await parseBody<{ symbol: string }>(req);
+        if (!body?.symbol) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'symbol is required' }));
+          return;
+        }
+        const tuned = await autoTunePairWithAI(body.symbol);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...tuned }));
+      } catch (err: any) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+      return;
+    }
+
+    // ── Kronos Foundation Trajectory Forecast ────────────────────────────────
+    if (pathname.startsWith('/api/kronos/forecast') && req.method === 'GET') {
+      try {
+        const symbol = (parsedUrl.searchParams.get('symbol') || 'BTC/USD').replace('-', '/').toUpperCase();
+        const predLen = Math.max(1, Math.min(30, parseInt(parsedUrl.searchParams.get('pred_len') || '5', 10)));
+
+        // 1. Try to fetch live forecast from Sim Lab or Kronos bridge if accessible
+        const simBase = (superchargeClient.getServerUrl() || 'http://127.0.0.1:4000').replace(/\/+$/, '');
+        const candidateUrls = Array.from(new Set([
+          `${simBase}/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
+          `http://127.0.0.1:4000/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
+          `http://192.168.100.21:4000/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
+          `http://127.0.0.1:8005/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
+        ]));
+
+        let fetchedData: any = null;
+        for (const curl of candidateUrls) {
+          try {
+            const resp = await axios.get(curl, { timeout: 2500 });
+            if (resp.data && (resp.data.success || resp.data.forecast)) {
+              fetchedData = resp.data;
+              break;
+            }
+          } catch {}
+        }
+
+        // Helper to extract or fetch local 15m klines for context feeding
+        const norm = symbol.toUpperCase();
+        let feedingKlines: any[] = [];
+        const localCS = agentState.markets?.[norm]?.candlestick?.klines15m ||
+                        agentState.markets?.[symbol]?.candlestick?.klines15m ||
+                        agentState.markets?.[norm.replace(/[-_/]/g, '')]?.candlestick?.klines15m;
+        if (Array.isArray(localCS) && localCS.length >= 5) {
+          feedingKlines = localCS;
+        } else {
+          try {
+            feedingKlines = await fetchPublicKlines(symbol, '15m', 80);
+          } catch {}
+        }
+
+        if (fetchedData) {
+          if (!Array.isArray(fetchedData.klines) || fetchedData.klines.length === 0) {
+            fetchedData.klines = feedingKlines;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(fetchedData));
+          return;
+        }
+
+        // 2. Fallback to cached simPairDirectives for this symbol
+        const pairDirs = getSimPairDirectives();
+        const dir = pairDirs[norm] || pairDirs[symbol] || null;
+        const kf = dir?.kronosForecast || dir?.layer0_kronos || null;
+
+        if (kf) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            symbol,
+            predLen,
+            forecast: kf,
+            klines: feedingKlines
+          }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          error: 'No Kronos forecast available for ' + symbol,
+          forecast: null,
+          klines: feedingKlines
+        }));
+      } catch (err: any) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
       return;
     }
 
@@ -2962,8 +3398,22 @@ function triggerBackgroundOnChainSync(): void {
         headers['Pragma'] = 'no-cache';
         headers['Expires'] = '0';
       }
+
+      const acceptEncoding = (req.headers['accept-encoding'] as string) || '';
+      if (acceptEncoding.includes('gzip') && (ext === '.html' || ext === '.js' || ext === '.css' || ext === '.json' || ext === '.svg')) {
+        const rawContent = fs.readFileSync(filePath);
+        const gzipped = zlib.gzipSync(rawContent);
+        headers['Content-Encoding'] = 'gzip';
+        headers['Content-Length'] = String(gzipped.length);
+        res.writeHead(200, headers);
+        res.end(gzipped);
+        return;
+      }
+
+      const rawContent = fs.readFileSync(filePath);
+      headers['Content-Length'] = String(rawContent.length);
       res.writeHead(200, headers);
-      fs.createReadStream(filePath).pipe(res);
+      res.end(rawContent);
       return;
     }
 

@@ -238,7 +238,13 @@ export class PortfolioHarvester {
    */
   public evaluate(livePrices: Record<string, number> = {}): PortfolioHarvesterState {
     if (livePrices && Object.keys(livePrices).length > 0) {
-      this.lastLivePrices = { ...this.lastLivePrices, ...livePrices };
+      for (const [k, v] of Object.entries(livePrices)) {
+        if (v && v > 0) {
+          this.lastLivePrices[k] = v;
+          if (k.includes('-')) this.lastLivePrices[k.replace('-', '/')] = v;
+          if (k.includes('/')) this.lastLivePrices[k.replace('/', '-')] = v;
+        }
+      }
     }
     const openTrades = tradeExecutor.getOpenTrades();
     let totalNetPnlUsd = 0;
@@ -246,7 +252,18 @@ export class PortfolioHarvester {
     const positionsList: PositionHarvesterInfo[] = [];
 
     for (const trade of openTrades) {
-      const currentPrice = (livePrices && livePrices[trade.symbol]) || this.lastLivePrices[trade.symbol] || trade.entryPrice;
+      const sym = trade.symbol;
+      const symSlash = sym.replace('-', '/');
+      const symDash = sym.replace('/', '-');
+      const currentPrice = (livePrices && (livePrices[sym] || livePrices[symSlash] || livePrices[symDash]))
+        || this.lastLivePrices[sym]
+        || this.lastLivePrices[symSlash]
+        || this.lastLivePrices[symDash]
+        || (trade.currentPrice && trade.currentPrice > 0 ? trade.currentPrice : 0);
+
+      if (!currentPrice || currentPrice <= 0) {
+        continue;
+      }
       const isLong = trade.action === 'LONG';
       const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
       const pnlPct = trade.entryPrice > 0 ? (priceDiff / trade.entryPrice) * 100 * trade.leverage : 0;
@@ -301,9 +318,13 @@ export class PortfolioHarvester {
         logger.info(`🌾 [TRAILING / BREAKEVEN HIT] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched soft ratchet ($${trade.stopLoss})! Securing profit/breakeven exit...`);
         const symKey = trade.symbol.replace('-', '/').toUpperCase();
         tradeExecutor.markExecutionInFlight(symKey);
-        trade.status = 'closed_tp';
+        const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
+        const estPnlUsd = (trade.allocatedUsd * ((priceDiff / trade.entryPrice) * trade.leverage));
+        const isActuallyProfitable = estPnlUsd > 0.05;
+        const isBreakeven = estPnlUsd >= 0;
+        trade.status = (isActuallyProfitable || isBreakeven) ? 'closed_tp' : 'closed_sl';
         trade.exitPrice = currentPrice;
-        trade.exitReason = 'TRAILING_TP';
+        trade.exitReason = isActuallyProfitable ? 'TRAILING_TP' : (isBreakeven ? 'BREAKEVEN' : 'STOP_LOSS');
         trade.closedAt = Date.now();
         tradeExecutor.saveTrades();
         if (!trade.isPaper) {
@@ -318,23 +339,27 @@ export class PortfolioHarvester {
       }
 
       // INITIAL SOFT STOP LOSS HIT TRIGGER (pre-breakeven):
-      // If live market price touches or breaches the soft stop loss, execute defensive market close:
-      const isInitialSlHit = isLong
+      // If live market price touches or breaches the structural stop loss, execute defensive market close.
+      const tradeAgeMs = Date.now() - (trade.openedAt || 0);
+      const isPastSlGrace = tradeAgeMs >= 5_000;
+
+      const isInitialSlHit = isPastSlGrace && (isLong
         ? (trade.stopLoss > 0 && currentPrice > 0 && currentPrice <= trade.stopLoss)
-        : (trade.stopLoss > 0 && currentPrice > 0 && currentPrice >= trade.stopLoss);
+        : (trade.stopLoss > 0 && currentPrice > 0 && currentPrice >= trade.stopLoss));
 
       if (isInitialSlHit) {
-        logger.info(`🛑 [SOFT SL HIT] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched soft stop loss ($${trade.stopLoss})! Executing defensive market close...`);
+        const isProfitableRatchet = pnlUsd > 0.04;
+        logger.info(`🛑 [${isProfitableRatchet ? 'STRUCTURAL RATCHET EXIT' : 'SOFT SL HIT'}] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched stop ($${trade.stopLoss})! PnL: $${pnlUsd.toFixed(2)}`);
         const symKey = trade.symbol.replace('-', '/').toUpperCase();
         tradeExecutor.markExecutionInFlight(symKey);
-        trade.status = 'closed_sl';
+        trade.status = isProfitableRatchet ? 'closed_tp' : 'closed_sl';
         trade.exitPrice = currentPrice;
-        trade.exitReason = 'SOFT_STOP_LOSS';
+        trade.exitReason = isProfitableRatchet ? 'STRUCTURAL_RATCHET_TP' : 'SOFT_STOP_LOSS';
         trade.closedAt = Date.now();
         tradeExecutor.saveTrades();
         if (!trade.isPaper) {
           mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during soft SL exit: ${err.message}`);
+            logger.warn(`Could not close on-chain position for ${trade.symbol} during SL/ratchet exit: ${err.message}`);
           }).finally(() => {
             setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
           });
@@ -342,6 +367,7 @@ export class PortfolioHarvester {
         tradeExecutor.notifyTradeClosed(trade);
         continue;
       }
+
 
       // Dynamic Trailing SL: Accelerate to breakeven only when price achieves confirmed statistical breakaway
       // beyond the entry order-flow retest zone (calibrated dynamically by Sim Lab ATR multiple, e.g. 2.0x-2.5x ATR, and target R)
@@ -360,17 +386,69 @@ export class PortfolioHarvester {
         if (isLong && trade.stopLoss < breakevenFloor - 0.0001 && breakevenFloor < currentPrice) {
           trade.stopLoss = breakevenFloor;
           trade.softRatchetPrice = breakevenFloor;
+          trade.breakevenMoved = true;
           breakevenLocked = true;
           tradeExecutor.saveTrades();
           logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} LONG soft stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
         } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > breakevenFloor + 0.0001) && breakevenFloor > currentPrice) {
           trade.stopLoss = breakevenFloor;
           trade.softRatchetPrice = breakevenFloor;
+          trade.breakevenMoved = true;
           breakevenLocked = true;
           tradeExecutor.saveTrades();
           logger.info(`🛡️ [DYNAMIC SL RATCHET] ${trade.symbol} SHORT soft stop loss locked at breakeven ($${trade.stopLoss}) [${riskRMultiple.toFixed(2)}R vs target ${targetR}R / +${pnlPct.toFixed(2)}%] (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
         } else if (isLong ? trade.stopLoss >= breakevenFloor - 0.0001 : trade.stopLoss <= breakevenFloor + 0.0001) {
+          trade.breakevenMoved = true;
           breakevenLocked = true;
+        }
+      }
+
+      // ── Windfall Stretcher: Dynamic Volatility Cone Expansion ────────────────
+      // Only stretch TP on confirmed runaway runners that have already banked TP1 or achieved >= 8% leveraged profit.
+      // Strict Guards:
+      //  1. Never stretch on Dual TP trades (must respect fast exit targets).
+      //  2. Clamp stretched TP to within a realistic ceiling (max 3.5% from entry price) to avoid squishing chart candles and fighting with reconciliation.
+      const isScalpOrFixed = trade.isDualTp;
+      if (!isScalpOrFixed && pnlPct >= 8.0 && (trade.tp1Hit || riskRMultiple >= 1.5) && pairDir) {
+        const coneP95 = pairDir.dynamicProtection?.coneP95Resistance || (pairDir as any).kronosForecast?.dynamicProtection?.coneP95Resistance;
+        const coneP05 = pairDir.dynamicProtection?.coneP05Support || (pairDir as any).kronosForecast?.dynamicProtection?.coneP05Support;
+        const maxRealisticLongTp = Number((trade.entryPrice * 1.035).toFixed(4));
+        const minRealisticShortTp = Number((trade.entryPrice * 0.965).toFixed(4));
+
+        if (isLong && coneP95 && coneP95 > trade.takeProfit * 1.005) {
+          const oldTp = trade.takeProfit;
+          const candidateTp = Math.min(Number(coneP95.toFixed(4)), maxRealisticLongTp);
+          if (candidateTp > trade.takeProfit * 1.002) {
+            trade.takeProfit = candidateTp;
+            trade.dynamicTakeProfit = candidateTp;
+            tradeExecutor.saveTrades();
+            logger.info(
+              `🌊 [WINDFALL STRETCHER] Volatility Cone expanded for ${trade.symbol} LONG! ` +
+              `Stretched Take-Profit from $${oldTp} to $${candidateTp}.`
+            );
+            if (!trade.isPaper) {
+              const levVal = Math.max(1, trade.leverage || 1);
+              const staticHardSl = trade.hardStopLoss || Number((trade.entryPrice * (1 - 0.15 / levVal)).toFixed(4));
+              mcpClient.setTpSl({ symbol: trade.symbol, tpTrigger: candidateTp, slTrigger: staticHardSl }).catch(() => {});
+            }
+          }
+        } else if (!isLong && coneP05 && coneP05 < trade.takeProfit * 0.995 && coneP05 > 0) {
+          const oldTp = trade.takeProfit;
+          const candidateTp = Math.max(Number(coneP05.toFixed(4)), minRealisticShortTp);
+          if (candidateTp < trade.takeProfit * 0.998) {
+            trade.takeProfit = candidateTp;
+            trade.dynamicTakeProfit = candidateTp;
+            tradeExecutor.saveTrades();
+            logger.info(
+              `🌊 [WINDFALL STRETCHER] Volatility Cone expanded for ${trade.symbol} SHORT! ` +
+              `Stretched Take-Profit from $${oldTp} to $${candidateTp}.`
+            );
+            if (!trade.isPaper) {
+              const levVal = Math.max(1, trade.leverage || 1);
+              const staticHardSl = trade.hardStopLoss || Number((trade.entryPrice * (1 + 0.15 / levVal)).toFixed(4));
+              mcpClient.setTpSl({ symbol: trade.symbol, tpTrigger: candidateTp, slTrigger: staticHardSl }).catch(() => {});
+            }
+          }
         }
       }
 
@@ -419,14 +497,25 @@ export class PortfolioHarvester {
           logger.info(`🌾 [PROFIT HARVEST: FULL CLOSE] ${trade.symbol} banked at +${pnlPct.toFixed(2)}% (+$${pnlUsd.toFixed(2)} USD). Mode: ${this.config.syncMode}`);
           tradeExecutor.notifyTradeClosed(trade);
         } else {
-          // PARTIAL_FIRST / Trailing tight profit lock: ratchet stop loss to lock in 80% of gains
-          // INVARIANT GUARD: Stop Loss can NEVER be on top of or past live market price!
-          const maxLongSl = Number((currentPrice * 0.997).toFixed(4));
-          const minShortSl = Number((currentPrice * 1.003).toFixed(4));
+          // PARTIAL_FIRST / Trailing profit lock: dynamically driven by Sim Lab pair directives and market regime
+          // Regime-aware retracement buffer ensures trades have breathing room for natural market pullbacks
+          const pairDir = getSimPairDirective(trade.symbol);
+          const simRegime = trade.regime || (pairDir as any)?.regime?.type;
+          const isHighVol = simRegime === 'HIGH_VOLATILITY';
+          const isChop = simRegime === 'RANGING_CHOP';
+          const slMult = (pairDir && typeof pairDir.slMultiplier === 'number') ? pairDir.slMultiplier : 1.0;
+
+          // Adaptive Profit Lock Ratio (leaving 40% - 50% room for trend retracement)
+          const profitLockRatio = isHighVol ? 0.50 : isChop ? 0.60 : 0.55;
+          // Adaptive Safe Buffer: Widened in High Vol / proportional to pair SL multiplier
+          const slBufferPct = (isHighVol ? 0.012 : isChop ? 0.006 : 0.008) * slMult;
+
+          const maxLongSl = Number((currentPrice * (1 - slBufferPct)).toFixed(4));
+          const minShortSl = Number((currentPrice * (1 + slBufferPct)).toFixed(4));
 
           const rawLockedFloor = isLong
-            ? trade.entryPrice + (currentPrice - trade.entryPrice) * 0.8
-            : trade.entryPrice - (trade.entryPrice - currentPrice) * 0.8;
+            ? trade.entryPrice + (currentPrice - trade.entryPrice) * profitLockRatio
+            : trade.entryPrice - (trade.entryPrice - currentPrice) * profitLockRatio;
 
           const lockedProfitFloor = Number((isLong
             ? Math.min(maxLongSl, rawLockedFloor)
@@ -437,13 +526,13 @@ export class PortfolioHarvester {
             trade.softRatchetPrice = lockedProfitFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
-            logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} LONG soft trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
+            logger.info(`🌾 [PROFIT HARVEST: ADAPTIVE TRAIL] ${trade.symbol} LONG soft trailing stop ratcheted to lock ${(profitLockRatio * 100).toFixed(0)}% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% | Buffer: ${(slBufferPct * 100).toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
           } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > lockedProfitFloor + 0.0001) && lockedProfitFloor > currentPrice) {
             trade.stopLoss = lockedProfitFloor;
             trade.softRatchetPrice = lockedProfitFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
-            logger.info(`🌾 [PROFIT HARVEST: TIGHT TRAIL] ${trade.symbol} SHORT soft trailing stop ratcheted to lock 80% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
+            logger.info(`🌾 [PROFIT HARVEST: ADAPTIVE TRAIL] ${trade.symbol} SHORT soft trailing stop ratcheted to lock ${(profitLockRatio * 100).toFixed(0)}% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% | Buffer: ${(slBufferPct * 100).toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
           }
         }
       }
@@ -487,6 +576,28 @@ export class PortfolioHarvester {
       if (macroBanned && macroBanned !== 'NONE' && (trade.action === macroBanned || macroBanned === 'BOTH')) {
         score += weights.simLabBannedSidePenalty;
         factors.push(`⚠️ Macro Banned Side (${trade.action}): Counter-trend headwind from Sim Lab (+${weights.simLabBannedSidePenalty}pts)`);
+      }
+
+      // ── Kronos Foundation Adverse Trajectory Defense ─────────────────────────
+      const kf = (pairDir as any)?.kronosForecast;
+      if (kf) {
+        if (isLong && kf.knifeRiskScore >= 0.70) {
+          score += 35;
+          factors.push(`🔪 Kronos Knife Trajectory: Neural down-tail probability ${(kf.knifeRiskScore * 100).toFixed(0)}% (+35pts safe harvest)`);
+        } else if (!isLong && kf.meltUpRiskScore && kf.meltUpRiskScore >= 0.70) {
+          score += 35;
+          factors.push(`🚀 Kronos Squeeze Trajectory: Squeeze impulse velocity ${(kf.meltUpRiskScore * 100).toFixed(0)}% (+35pts safe harvest)`);
+        } else if (pnlPct > 0.8 && ((isLong && kf.predictedDirection === 'BULLISH') || (!isLong && kf.predictedDirection === 'BEARISH'))) {
+          score = Math.max(10, score - 10);
+          factors.push(`🛡️ Kronos Trend Aligned (${kf.predictedDirection}): Protecting runner (-10pts)`);
+        }
+
+        // Bar 5 (75m / 1.25h): Accelerated Entropy Exit if market dissolves into random walk chop
+        const holdHoursEarly = trade.openedAt ? (Date.now() - trade.openedAt) / (1000 * 60 * 60) : (trade.barsHeld ? trade.barsHeld * 0.25 : 0);
+        if (holdHoursEarly >= 1.25 && kf.entropyScore >= 0.65 && Math.abs(pnlPct) < 0.25) {
+          score += 25;
+          factors.push(`🌪️ Kronos Bar 5 Entropy Exit: Random walk chop detected (${(kf.entropyScore * 100).toFixed(0)}%) with flat ROI (${pnlPct.toFixed(2)}%). Freeing margin (+25pts)`);
+        }
       }
 
       // ── 1-Hour Higher-Timeframe Trend Alignment Shield ───────────────────────
@@ -559,22 +670,43 @@ export class PortfolioHarvester {
       }
 
       // ── Stagnation SL Ratchet (Tightens SL closer on prolonged adverse chop after 2.5h) ─────
-      if (holdHours >= 2.5 && pnlPct < 0 && score >= 75 && !breakevenLocked && trade.stopLoss && currentPrice > 0) {
-        const initialStopDistance = Math.abs(trade.entryPrice - trade.stopLoss);
-        if (initialStopDistance > 0) {
-          const tightenedStopPrice = isLong
-            ? trade.entryPrice - (initialStopDistance * 0.6) // reduce risk window by 40%
-            : trade.entryPrice + (initialStopDistance * 0.6);
+      // ONE-TIME EXECUTION GUARD: Must NEVER compound recursively across evaluation loops!
+      const stagnationHoldHours = (this.config as any).stagnationHoursThreshold || 2.5;
+      if (!trade.stagnationRatchetApplied && holdHours >= stagnationHoldHours && pnlPct < 0 && score >= 75 && !breakevenLocked && currentPrice > 0) {
+        // Anchor to fixed Hard SL or original risk distance — NEVER mutable trade.stopLoss!
+        const fixedHardSl = trade.hardStopLoss || (isLong ? trade.entryPrice * 0.95 : trade.entryPrice * 1.05);
+        const originalRiskDistance = Math.abs(trade.entryPrice - fixedHardSl);
+        if (originalRiskDistance > 0) {
+          const pairDir = getSimPairDirective(trade.symbol);
+          const slMult = (pairDir && typeof pairDir.slMultiplier === 'number') ? pairDir.slMultiplier : 1.0;
+          // Retracement room guard: stop loss must NEVER be closer than 1.2% - 1.5% from current price
+          const minSafeDistance = Math.max(
+            (trade.atr || 0) * 1.5,
+            currentPrice * (0.012 * slMult)
+          );
+
+          // Reduce original risk window by 40% (leaves 60% of original distance)
+          const rawTightenedPrice = isLong
+            ? trade.entryPrice - (originalRiskDistance * 0.6)
+            : trade.entryPrice + (originalRiskDistance * 0.6);
+
+          // Clamp to ensure breathing room is strictly preserved
+          const clampedTightenedPrice = isLong
+            ? Math.min(rawTightenedPrice, currentPrice - minSafeDistance)
+            : Math.max(rawTightenedPrice, currentPrice + minSafeDistance);
 
           const isTighter = isLong
-            ? (tightenedStopPrice > trade.stopLoss && tightenedStopPrice < currentPrice)
-            : (tightenedStopPrice < trade.stopLoss && tightenedStopPrice > currentPrice);
+            ? (clampedTightenedPrice > (trade.stopLoss || 0) && clampedTightenedPrice < currentPrice)
+            : (clampedTightenedPrice < (trade.stopLoss || Infinity) && clampedTightenedPrice > currentPrice);
 
           if (isTighter) {
-            trade.stopLoss = Number(tightenedStopPrice.toFixed(4));
-            trade.softRatchetPrice = Number(tightenedStopPrice.toFixed(4));
-            factors.push(`⏱️ Stagnation SL Tightened: Risk window reduced by 40% after ${holdHours.toFixed(1)}h chop`);
-            logger.info(`⏱️ [STAGNATION RATCHET] ${trade.symbol} soft stop loss tightened to $${trade.stopLoss} after ${holdHours.toFixed(1)}h stagnation (Soft SL on-system, On-Chain Hard SL remains intact).`);
+            const finalSl = Number(clampedTightenedPrice.toFixed(4));
+            trade.stopLoss = finalSl;
+            trade.softRatchetPrice = finalSl;
+            trade.stagnationRatchetApplied = true;
+            tradeExecutor.saveTrades();
+            factors.push(`⏱️ Stagnation SL Tightened: Risk window reduced by 40% after ${holdHours.toFixed(1)}h chop (preserved ${(minSafeDistance / currentPrice * 100).toFixed(2)}% retracement room)`);
+            logger.info(`⏱️ [STAGNATION RATCHET] ${trade.symbol} soft stop loss safely tightened to $${trade.stopLoss} after ${holdHours.toFixed(1)}h stagnation (One-Time applied, Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss}).`);
           }
         }
       }
@@ -588,8 +720,30 @@ export class PortfolioHarvester {
         recommendation = 'RUNNER';
       }
 
-      // ── Defensive Bleed, Stagnation & Structure Break Cutting (Saves capital before max SL hit) ──
+      // ByKaranteli Liquidity Magnet Proximity Hold: If trade is in profit and within 0.45% of the primary liquidation magnet, let it run to collect full flush!
+      const bkDirectives = (pairDir as any)?.bykaranteli?.executionDirectives;
+      if (recommendation === 'HARVEST' && pnlUsd > 0 && bkDirectives?.primaryMagnetPrice) {
+        const magPrice = bkDirectives.primaryMagnetPrice;
+        const currentP = currentPrice || trade.entryPrice;
+        const distToMagnetPct = Math.abs((magPrice - currentP) / currentP) * 100;
+        const isApproachingMagnet = (trade.action === 'SHORT' && magPrice < currentP) || (trade.action === 'LONG' && magPrice > currentP);
+        if (isApproachingMagnet && distToMagnetPct <= 0.45) {
+          recommendation = 'HOLD';
+          factors.push(`🧲 LIQUIDITY MAGNET RUNNER: Position is only ${distToMagnetPct.toFixed(2)}% from primary liquidation magnet ($${magPrice}). Letting trade run to capture full flush!`);
+        }
+      }
+
       const isManual = Boolean(trade.notes?.includes('Manual') || trade.strategyName?.includes('Manual'));
+
+      // ── Stagnation Profit Capture: Bank profit before adverse chop reversal ──
+      // If position has been held for >= 45m with positive profit and elevated vulnerability, harvest!
+      const isStagnantProfit = !isManual && holdHours >= 0.75 && pnlUsd >= 0.35 && score >= 58;
+      if (isStagnantProfit && recommendation !== 'HARVEST') {
+        recommendation = 'HARVEST';
+        factors.push(`💰 STAGNATION PROFIT HARVEST: Held ${holdHours.toFixed(1)}h with +$${pnlUsd.toFixed(2)} gain. Securing profit before range chop reversal.`);
+      }
+
+      // ── Defensive Bleed, Stagnation & Structure Break Cutting (Saves capital before max SL hit) ──
       const hasOnChainArmor = Boolean((trade.hardStopLoss && trade.hardStopLoss > 0) || isManual || trade.strategyName?.includes('On-Chain'));
       
       // Structure Break Invalidation under Sim Lab Directive:

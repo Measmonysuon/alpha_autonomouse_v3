@@ -13,9 +13,14 @@
  */
 
 import { Account, Ed25519PrivateKey, Network } from '@aptos-labs/ts-sdk';
-import { resolveNodeApiKey, createAptosClient, getNodeRoutingState } from '../src/utils/node-key-resolver';
+import fs from 'fs';
+import path from 'path';
 import * as dotenv from 'dotenv';
 dotenv.config();
+
+const basePath = fs.existsSync(path.join(__dirname, '../src')) ? '../src' : '../dist';
+const { resolveNodeApiKey, createAptosClient, getNodeRoutingState } = require(`${basePath}/utils/node-key-resolver`);
+const { mcpClient } = require(`${basePath}/mcp/client`);
 
 const SIMLAB_TOKEN = process.env.SIMLAB_KEY || process.env.SIMLAB_CONNECTION_TOKEN || '';
 const DELEGATE_KEY = process.env.DECIBEL_DELEGATE_KEY || '';
@@ -44,8 +49,8 @@ async function main() {
   try {
     const bundleRes = await fetch('https://simlab.measmony.me/api/pipeline/alpha-bundle?clientId=alpha_client_v2', {
       headers: {
-        Authorization: `Bearer key_live_449ef0127b2d7a5e`,
-        'x-api-key': 'key_live_449ef0127b2d7a5e',
+        Authorization: SIMLAB_TOKEN ? `Bearer ${SIMLAB_TOKEN}` : '',
+        'x-api-key': SIMLAB_TOKEN || process.env.CLIENT_API_KEY || '',
       },
     });
     const bundleData = (await bundleRes.json()) as any;

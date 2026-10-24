@@ -93,6 +93,390 @@ export interface MarketDetail {
   lotSize: number;
   sizeDecimals: number;
   priceDecimals: number;
+  maxLeverage?: number;
+  rawTickSize?: number;
+  rawLotSize?: number;
+  rawMinSize?: number;
+}
+
+export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
+  'BTC/USD': {
+    name: 'BTC/USD',
+    address: '0x5e0e16f34adfb4b316f8d532d68acbfa206826feaaa418d3938046bdc2044861',
+    tickSize: 100000,
+    minSize: 2000,
+    lotSize: 1000,
+    sizeDecimals: 8,
+    priceDecimals: 6,
+  },
+  'ETH/USD': {
+    name: 'ETH/USD',
+    address: '0x96c3c2e77041264d082d03365e9c346fbc6be9c9428a401be8e70dcb60dc60c6',
+    tickSize: 100000,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 8,
+    priceDecimals: 6,
+  },
+  'SOL/USD': {
+    name: 'SOL/USD',
+    address: '0xdf3f9b3241aaf20c47e99eac29f3ff2f736e40644c856e0db612a22e62b847f3',
+    tickSize: 10000,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+  },
+  'SUI/USD': {
+    name: 'SUI/USD',
+    address: '0xe7da11926e61dbd227170d1271f73bfaf9f5aab7605fac1ae62541dd3810ae76',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'APT/USD': {
+    name: 'APT/USD',
+    address: '0xda8615922bac85a53811e845ce39110713be6d80366f4477d5427002ac0162e3',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'BNB/USD': {
+    name: 'BNB/USD',
+    address: '0xa0b805baf5e69adbb717e3daefe71f5ebaae708dd480fbb964ad324f9c5e6490',
+    tickSize: 10000,
+    minSize: 20000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+  },
+  'XRP/USD': {
+    name: 'XRP/USD',
+    address: '0xd3223402bb7b156fad9a645a8c114a5e08eda8e492a38e42db1b0df1d3ba1058',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'DOGE/USD': {
+    name: 'DOGE/USD',
+    address: '0xd62d10d1ef0cbe2103b5bd479691ac38222a85140fcbe7c2dc66ed23bdef58ae',
+    tickSize: 10,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+  },
+  'AVAX/USD': {
+    name: 'AVAX/USD',
+    address: '0x696289fb9fe35b78a7803fcd67e47f8e941d192b119196af62d89a3245f7e378',
+    tickSize: 1000,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 6,
+    priceDecimals: 6,
+  },
+  'NEAR/USD': {
+    name: 'NEAR/USD',
+    address: '0xc29172db08345aceadb2306320c3239a212d55fdb6c728109a0de62864c4a02f',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'LINK/USD': {
+    name: 'LINK/USD',
+    address: '0xcf99921aced56e32ddc907b9b16bf13601ac247e0090adc4cc728b6fa9e770cf',
+    tickSize: 1000,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 6,
+    priceDecimals: 6,
+  },
+  'ADA/USD': {
+    name: 'ADA/USD',
+    address: '0x386bfa4f18abc8ca926b7ade89ad5aaad34cf9a0a8bd828b7059f17b252f8607',
+    tickSize: 10,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+  },
+  'DOT/USD': {
+    name: 'DOT/USD',
+    address: '0x2d8be07621a1f0a1ea3ef396c276329bb6d8a43f87b8d8be07f2b1d7d066eeec',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'LTC/USD': {
+    name: 'LTC/USD',
+    address: '0x7e02e1c3a7eb6d953ce02b0c4ea484dc38ad26a3f9cfb404dbbe937b4b1a43a2',
+    tickSize: 1000,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 6,
+    priceDecimals: 6,
+  },
+  'BCH/USD': {
+    name: 'BCH/USD',
+    address: '0x4990d091fc057790b9b47e2ee2a4c1737bebaab0a72ad0a4bb6d790d95267129',
+    tickSize: 10000,
+    minSize: 20000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+  },
+  'UNI/USD': {
+    name: 'UNI/USD',
+    address: '0xb2319084803aa71a62451368b693ca2871f3014a0f443b2cf725227318ec852c',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'AAVE/USD': {
+    name: 'AAVE/USD',
+    address: '0x94821a0c326fbfe8a4b67e76550fa4bc11985c5451e9b251d5c21fbeea333a36',
+    tickSize: 10000,
+    minSize: 20000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+  },
+  'TAO/USD': {
+    name: 'TAO/USD',
+    address: '0x0d3fc394d6e9e4f00aa3b8277a83d78c3b7dc53eb495ea5016e1df76db08c6bf',
+    tickSize: 10000,
+    minSize: 20000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'SEI/USD': {
+    name: 'SEI/USD',
+    address: '0x99539327db5b8fba6b139db0808ebcae7d2350ef6567ceb8a24555b0a34b2f4c',
+    tickSize: 10,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+  },
+  'TIA/USD': {
+    name: 'TIA/USD',
+    address: '0x9115f013444b08709cae142daec98e3b1ba3f009fbb82cb2015faae00ec8061c',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'INJ/USD': {
+    name: 'INJ/USD',
+    address: '0xa7df57fbf046522fc5a87be2e30773d328406f85e495fe6fba89b9d31154c1bb',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'RENDER/USD': {
+    name: 'RENDER/USD',
+    address: '0x95971a0beffafabeb6774cba02b4bb9b52a70cb355606d203f191b5853245cbb',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+  },
+  'FET/USD': {
+    name: 'FET/USD',
+    address: '0x9d4a3fa626b911c75057b5610738a416bcaebaa8bc4cb62657e28b26e0b7cb8b',
+    tickSize: 10,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+  },
+  'ENA/USD': {
+    name: 'ENA/USD',
+    address: '0x2e8f170f3f2ebcba08f86ab0d16df5baea7b420f0ee3dc20bf10e42d729a65cc',
+    tickSize: 10,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+  },
+  'HYPE/USD': {
+    name: 'HYPE/USD',
+    address: '0x0c6b3fa01e6ee89b04fe3960d8d6377ebbe6caa8e47d87c2120dae1492044df2',
+    tickSize: 1000,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 6,
+    priceDecimals: 6,
+  },
+  'ZRO/USD': {
+    name: 'ZRO/USD',
+    address: '0xe191d266c868d52b71e0f51d87ce04bddd1238aacf8236e3967735da22074b97',
+    tickSize: 100,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'PEPE/USD': {
+    name: 'PEPE/USD',
+    address: '0x53df5e9759c25ba9d16bfa09955e8841da52dc2fbbcf0bfdb32e0e5ebfba930d',
+    tickSize: 1,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 3,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'SHIB/USD': {
+    name: 'SHIB/USD',
+    address: '0x7e2db1b75dfa3d5eec3a42ebba649e794fb3c5eb2ef75e9b740520bc9e47228f',
+    tickSize: 1,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 3,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'TRX/USD': {
+    name: 'TRX/USD',
+    address: '0xe8b16194b75213292454fcff0b890e2f3289e40904d2edcd1b2e491464540c73',
+    tickSize: 10,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+  },
+  'ZEC/USD': {
+    name: 'ZEC/USD',
+    address: '0xaef108ea0590464effd25054e2e1b66b6ea8be088c479da63518983e4728282b',
+    tickSize: 10000,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+  },
+};
+
+/**
+ * Quantize price and size to strictly respect on-chain Decibel perp contract rules:
+ * - price % tickSize === 0 (Move abort: EPRICE_NOT_RESPECTING_TICKER_SIZE 0x6)
+ * - size % lotSize === 0 (Move abort: ESIZE_NOT_RESPECTING_LOT_SIZE 0x5)
+ * - size >= minSize
+ */
+export function parseChainTickSize(m: any, priceDecimals: number, fallbackTick?: number): number {
+  const raw = m?.rawTickSize ?? m?.raw_tick_size;
+  if (raw && Number(raw) >= 1) return Math.round(Number(raw));
+  if (typeof m?.tickSize === 'number' && m.tickSize >= 1) return Math.round(m.tickSize);
+  if (typeof m?.tick_size === 'number' && m.tick_size >= 1) return Math.round(m.tick_size);
+  const human = Number(m?.tickSize ?? m?.tick_size);
+  if (human > 0 && human < 1) {
+    return Math.max(1, Math.round(human * Math.pow(10, priceDecimals)));
+  }
+  return Math.max(1, Math.round(fallbackTick || 100));
+}
+
+export function parseChainLotSize(m: any, sizeDecimals: number, fallbackLot?: number): number {
+  const raw = m?.rawLotSize ?? m?.raw_lot_size;
+  if (raw && Number(raw) >= 1) return Math.round(Number(raw));
+  if (typeof m?.lotSize === 'number' && m.lotSize >= 1) return Math.round(m.lotSize);
+  if (typeof m?.lot_size === 'number' && m.lot_size >= 1) return Math.round(m.lot_size);
+  const human = Number(m?.lotSize ?? m?.lot_size);
+  if (human > 0 && human < 1) {
+    return Math.max(1, Math.round(human * Math.pow(10, sizeDecimals)));
+  }
+  return Math.max(1, Math.round(fallbackLot || 10000));
+}
+
+export function parseChainMinSize(m: any, sizeDecimals: number, fallbackMin?: number, lotSize: number = 10000): number {
+  const raw = m?.rawMinSize ?? m?.raw_min_size;
+  if (raw && Number(raw) >= 1) return Math.round(Number(raw));
+  if (typeof m?.minSize === 'number' && m.minSize >= 1) return Math.round(m.minSize);
+  if (typeof m?.min_size === 'number' && m.min_size >= 1) return Math.round(m.min_size);
+  const human = Number(m?.minSize ?? m?.min_size);
+  if (human > 0 && human < 1) {
+    return Math.max(lotSize, Math.round(human * Math.pow(10, sizeDecimals)));
+  }
+  return Math.max(lotSize, Math.round(fallbackMin || 100000));
+}
+
+export function quantizeOrderParameters(
+  market: MarketDetail,
+  rawPrice: number,
+  rawSizeBase: number,
+  isBuy: boolean,
+): { chainPrice: number; chainSize: number; effectiveBaseSize: number } {
+  const normSym = market.name.replace('-', '/').toUpperCase();
+  const known = AUTHORITATIVE_DECIBEL_MARKETS[normSym];
+  const priceDecimals = market.priceDecimals || known?.priceDecimals || 6;
+  const sizeDecimals = market.sizeDecimals || known?.sizeDecimals || 5;
+  const tickSize = parseChainTickSize(market, priceDecimals, known?.tickSize);
+  const lotSize = parseChainLotSize(market, sizeDecimals, known?.lotSize);
+  const minSize = parseChainMinSize(market, sizeDecimals, known?.minSize, lotSize);
+
+  let chainPrice: number;
+  if (rawPrice > 0) {
+    const rawChainUnits = rawPrice * Math.pow(10, priceDecimals);
+    chainPrice = Math.round(rawChainUnits / tickSize) * tickSize;
+    const remPrice = chainPrice % tickSize;
+    if (remPrice !== 0) {
+      chainPrice = isBuy
+        ? chainPrice - remPrice
+        : chainPrice + (tickSize - remPrice);
+    }
+  } else {
+    chainPrice = isBuy ? 999999999999 : 1;
+    chainPrice = Math.floor(chainPrice / tickSize) * tickSize;
+  }
+
+  // Size calculation
+  const rawSizeUnits = Math.round(rawSizeBase * Math.pow(10, sizeDecimals));
+  let chainSize = Math.round(rawSizeUnits / lotSize) * lotSize;
+  if (chainSize < minSize) {
+    chainSize = minSize;
+  }
+  const remSize = chainSize % lotSize;
+  if (remSize !== 0) {
+    chainSize = Math.floor(chainSize / lotSize) * lotSize;
+  }
+  if (chainSize < minSize) {
+    chainSize = Math.ceil(minSize / lotSize) * lotSize;
+  }
+
+  // Pre-flight assertion guards to strictly prevent gas drawdown from on-chain Move aborts
+  if (chainPrice % tickSize !== 0) {
+    throw new Error(
+      `[PRE-FLIGHT GUARD] chainPrice (${chainPrice}) does not respect tickSize (${tickSize}) for ${market.name}. Submission aborted to save gas.`
+    );
+  }
+  if (chainSize % lotSize !== 0) {
+    throw new Error(
+      `[PRE-FLIGHT GUARD] chainSize (${chainSize}) does not respect lotSize (${lotSize}) for ${market.name}. Submission aborted to save gas.`
+    );
+  }
+
+  const effectiveBaseSize = chainSize / Math.pow(10, sizeDecimals);
+  return { chainPrice, chainSize, effectiveBaseSize };
 }
 
 // ─── MCP Result helpers ────────────────────────────────────────────────────────
@@ -447,17 +831,11 @@ export class DecibelMCPClient {
     const clean = marketAddr.toLowerCase();
     if (this.marketMap.has(clean)) return this.marketMap.get(clean)!;
 
-    const KNOWN_MARKETS: Record<string, string> = {
-      '0x386bfa4f18abc8ca926b7ade89ad5aaad34cf9a0a8bd828b7059f17b252f8607': 'ADA/USD',
-      '0xdf3f9b3241aaf20c47e99eac29f3ff2f736e40644c856e0db612a22e62b847f3': 'SOL/USD',
-      '0xda8615922bac85a53811e845ce39110713be6d80366f4477d5427002ac0162e3': 'APT/USD',
-      '0xc29172db08345aceadb2306320c3239a212d55fdb6c728109a0de62864c4a02f': 'NEAR/USD',
-      '0x12f45ea2e6c5ee398dbd6c3fb8a4d46cfb7f7112005934524419ad24f603c734': 'BTC/USD',
-      '0xfa6273ebf10b77e8a9ec9e11504cfd6b8ccbbba20bc6a98342416b113038676a': 'ETH/USD',
-    };
-    if (KNOWN_MARKETS[clean]) {
-      this.marketMap.set(clean, KNOWN_MARKETS[clean]);
-      return KNOWN_MARKETS[clean];
+    for (const [sym, detail] of Object.entries(AUTHORITATIVE_DECIBEL_MARKETS)) {
+      if (detail.address && detail.address.toLowerCase() === clean) {
+        this.marketMap.set(clean, detail.name || sym);
+        return detail.name || sym;
+      }
     }
 
     if (this.marketDetails.size === 0) {
@@ -473,22 +851,40 @@ export class DecibelMCPClient {
   }
 
   private loadMarketsFromCache(): void {
+    // 1. Seed with hardcoded authoritative constants as base
+    for (const [key, detail] of Object.entries(AUTHORITATIVE_DECIBEL_MARKETS)) {
+      this.marketDetails.set(key.toUpperCase(), { ...detail });
+      this.marketMap.set(detail.address.toLowerCase(), detail.name || key);
+    }
+
     try {
       const cachePath = path.resolve(process.cwd(), 'data', 'decibel-markets.json');
       if (fs.existsSync(cachePath)) {
         const cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
         for (const [key, m] of Object.entries(cached as Record<string, any>)) {
           if (m?.address) {
+            const symNorm = (m.name || key).replace('-', '/').toUpperCase();
+            const fallback = AUTHORITATIVE_DECIBEL_MARKETS[symNorm];
+            const priceDecimals = Number(m.priceDecimals ?? m.price_decimals ?? fallback?.priceDecimals ?? 6);
+            const sizeDecimals = Number(m.sizeDecimals ?? m.size_decimals ?? fallback?.sizeDecimals ?? 5);
+            const lotSize = parseChainLotSize(m, sizeDecimals, fallback?.lotSize);
+            const tickSize = parseChainTickSize(m, priceDecimals, fallback?.tickSize);
+            const minSize = parseChainMinSize(m, sizeDecimals, fallback?.minSize, lotSize);
+
             const detail: MarketDetail = {
               name: m.name || key,
               address: m.address,
-              tickSize: Number(m.tickSize ?? 100),
-              minSize: Number(m.minSize ?? 100000),
-              lotSize: Number(m.lotSize ?? 10000),
-              sizeDecimals: Number(m.sizeDecimals ?? 5),
-              priceDecimals: Number(m.priceDecimals ?? 6),
+              tickSize,
+              minSize,
+              lotSize,
+              sizeDecimals,
+              priceDecimals,
+              maxLeverage: Number(m.maxLeverage ?? m.max_leverage ?? fallback?.maxLeverage ?? 10),
+              rawTickSize: tickSize,
+              rawLotSize: lotSize,
+              rawMinSize: minSize,
             };
-            this.marketDetails.set(key.toUpperCase(), detail);
+            this.marketDetails.set(symNorm, detail);
             this.marketMap.set(m.address.toLowerCase(), m.name || key);
           }
         }
@@ -499,12 +895,12 @@ export class DecibelMCPClient {
   }
 
   async getMarketDetail(symbol: string): Promise<MarketDetail | undefined> {
-    const symUpper = symbol.toUpperCase();
+    const symNorm = symbol.replace('-', '/').toUpperCase();
     if (this.marketDetails.size === 0) {
       this.loadMarketsFromCache();
     }
-    if (this.marketDetails.has(symUpper)) {
-      return this.marketDetails.get(symUpper);
+    if (this.marketDetails.has(symNorm)) {
+      return this.marketDetails.get(symNorm);
     }
     if (this.connected) {
       try {
@@ -512,16 +908,28 @@ export class DecibelMCPClient {
         const list: any[] = Array.isArray(res) ? res : (res?.markets || []);
         for (const m of list) {
           if (m?.name && m?.address) {
+            const mNorm = m.name.replace('-', '/').toUpperCase();
+            const fallback = AUTHORITATIVE_DECIBEL_MARKETS[mNorm];
+            const priceDecimals = Number(m.priceDecimals ?? m.price_decimals ?? fallback?.priceDecimals ?? 6);
+            const sizeDecimals = Number(m.sizeDecimals ?? m.size_decimals ?? fallback?.sizeDecimals ?? 5);
+            const lotSize = parseChainLotSize(m, sizeDecimals, fallback?.lotSize);
+            const tickSize = parseChainTickSize(m, priceDecimals, fallback?.tickSize);
+            const minSize = parseChainMinSize(m, sizeDecimals, fallback?.minSize, lotSize);
+
             const detail: MarketDetail = {
               name: m.name,
               address: m.address,
-              tickSize: Number(m.tickSize ?? 100),
-              minSize: Number(m.minSize ?? 100000),
-              lotSize: Number(m.lotSize ?? 10000),
-              sizeDecimals: Number(m.sizeDecimals ?? 5),
-              priceDecimals: Number(m.priceDecimals ?? 6),
+              tickSize,
+              minSize,
+              lotSize,
+              sizeDecimals,
+              priceDecimals,
+              maxLeverage: Number(m.maxLeverage ?? m.max_leverage ?? fallback?.maxLeverage ?? 10),
+              rawTickSize: tickSize,
+              rawLotSize: lotSize,
+              rawMinSize: minSize,
             };
-            this.marketDetails.set(m.name.toUpperCase(), detail);
+            this.marketDetails.set(mNorm, detail);
             this.marketMap.set(m.address.toLowerCase(), m.name);
           }
         }
@@ -529,7 +937,18 @@ export class DecibelMCPClient {
         logger.debug(`Could not refresh market details from MCP: ${err.message}`);
       }
     }
-    return this.marketDetails.get(symUpper);
+
+    if (this.marketDetails.has(symNorm)) {
+      return this.marketDetails.get(symNorm);
+    }
+
+    if (AUTHORITATIVE_DECIBEL_MARKETS[symNorm]) {
+      const auth = { ...AUTHORITATIVE_DECIBEL_MARKETS[symNorm] };
+      this.marketDetails.set(symNorm, auth);
+      return auth;
+    }
+
+    return undefined;
   }
 
   // ── Orders ───────────────────────────────────────────────────────────────────
@@ -564,30 +983,19 @@ export class DecibelMCPClient {
           }
 
           const isBuy = params.side === 'buy';
-          const offset = params.makerOffsetPct ?? 0.0003;
+          const offset = params.makerOffsetPct ?? 0.0018;
           let limitPrice = markPrice > 0
             ? (useMaker
                 ? (isBuy ? markPrice * (1 - offset) : markPrice * (1 + offset))
                 : (isBuy ? markPrice * 1.02 : markPrice * 0.98))
             : 0;
 
-          let chainPrice = limitPrice > 0
-            ? Math.round((limitPrice * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize
-            : (isBuy ? 999999999999 : 1);
-
-          let chainSize = Math.round(params.size * Math.pow(10, market.sizeDecimals));
-          // Decibel on-chain contract strictly enforces ESIZE_NOT_RESPECTING_LOT_SIZE
-          if (market.lotSize && market.lotSize > 0) {
-            chainSize = Math.round(chainSize / market.lotSize) * market.lotSize;
-          }
-          if (market.minSize && chainSize < market.minSize) {
-            chainSize = market.minSize;
-          }
-          if (chainSize <= 0) {
-            chainSize = market.minSize || market.lotSize || 1;
-          }
-
-          const effectiveSize = chainSize / Math.pow(10, market.sizeDecimals);
+          const { chainPrice, chainSize, effectiveBaseSize: effectiveSize } = quantizeOrderParameters(
+            market,
+            limitPrice,
+            params.size,
+            isBuy,
+          );
           const tif = useMaker ? 1 : 2; // TimeInForce: 1 = PostOnly (Maker), 2 = ImmediateOrCancel (IOC)
 
           logger.info(`⚡ Executing on-chain order via Aptos SDK: ${params.symbol} ${params.side.toUpperCase()} size=${chainSize} (${effectiveSize} units) price=${chainPrice} TIF=${tif === 1 ? 'POST_ONLY_MAKER' : 'IOC_TAKER'}`);
@@ -707,72 +1115,83 @@ export class DecibelMCPClient {
 
     // Try direct on-chain execution first
     if (this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
-      try {
-        const market = await this.getMarketDetail(params.symbol);
-        if (market) {
-          const toChainPrice = (price?: number) => {
-            if (!price || price <= 0) return undefined;
-            return Math.round((price * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize;
-          };
-          const toChainSize = (size?: number) => {
-            if (!size || size <= 0) return undefined;
-            let sz = Math.round(size * Math.pow(10, market.sizeDecimals));
-            if (market.lotSize && market.lotSize > 0) {
-              sz = Math.round(sz / market.lotSize) * market.lotSize;
+      for (let sdkAttempt = 1; sdkAttempt <= 3; sdkAttempt++) {
+        try {
+          const market = await this.getMarketDetail(params.symbol);
+          if (market) {
+            const toChainPrice = (price?: number) => {
+              if (!price || price <= 0) return undefined;
+              return Math.round((price * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize;
+            };
+            const toChainSize = (size?: number) => {
+              if (!size || size <= 0) return undefined;
+              let sz = Math.round(size * Math.pow(10, market.sizeDecimals));
+              if (market.lotSize && market.lotSize > 0) {
+                sz = Math.round(sz / market.lotSize) * market.lotSize;
+              }
+              return sz;
+            };
+
+            const roundedTpTrigger = toChainPrice(params.tpTrigger);
+            const roundedTpLimit = toChainPrice(params.tpTrigger);
+            const roundedSlTrigger = toChainPrice(params.slTrigger);
+            const roundedSlLimit = toChainPrice(params.slTrigger);
+            const chainTpSize = toChainSize(params.tpSize);
+            const chainSlSize = toChainSize(params.slSize);
+
+            const tx = await this.aptos.transaction.build.simple({
+              sender: this.aptosAccount.accountAddress,
+              data: {
+                function: '0x50ead22afd6ffd9769e3b3d6e0e64a2a350d68e8b102c4e72e33d0b8cfdfdb06::dex_accounts_entry::place_tp_sl_order_for_position',
+                typeArguments: [],
+                functionArguments: [
+                  config.DECIBEL_SUBACCOUNT_ADDRESS,
+                  market.address,
+                  roundedTpTrigger,
+                  roundedTpLimit,
+                  chainTpSize,
+                  roundedSlTrigger,
+                  roundedSlLimit,
+                  chainSlSize,
+                  undefined,
+                  undefined,
+                ],
+              },
+            });
+
+            const senderAuth = this.aptos.transaction.sign({
+              signer: this.aptosAccount,
+              transaction: tx,
+            });
+
+            const committed = await this.aptos.transaction.submit.simple({
+              transaction: tx,
+              senderAuthenticator: senderAuth,
+            });
+
+            const executed = await this.aptos.waitForTransaction({
+              transactionHash: committed.hash,
+            });
+
+            if (!executed.success) {
+              throw new Error(`On-chain TP/SL failed: ${executed.vm_status}`);
             }
-            return sz;
-          };
 
-          const roundedTpTrigger = toChainPrice(params.tpTrigger);
-          const roundedTpLimit = toChainPrice(params.tpTrigger);
-          const roundedSlTrigger = toChainPrice(params.slTrigger);
-          const roundedSlLimit = toChainPrice(params.slTrigger);
-          const chainTpSize = toChainSize(params.tpSize);
-          const chainSlSize = toChainSize(params.slSize);
-
-          const tx = await this.aptos.transaction.build.simple({
-            sender: this.aptosAccount.accountAddress,
-            data: {
-              function: '0x50ead22afd6ffd9769e3b3d6e0e64a2a350d68e8b102c4e72e33d0b8cfdfdb06::dex_accounts_entry::place_tp_sl_order_for_position',
-              typeArguments: [],
-              functionArguments: [
-                config.DECIBEL_SUBACCOUNT_ADDRESS,
-                market.address,
-                roundedTpTrigger,
-                roundedTpLimit,
-                chainTpSize,
-                roundedSlTrigger,
-                roundedSlLimit,
-                chainSlSize,
-                undefined,
-                undefined,
-              ],
-            },
-          });
-
-          const senderAuth = this.aptos.transaction.sign({
-            signer: this.aptosAccount,
-            transaction: tx,
-          });
-
-          const committed = await this.aptos.transaction.submit.simple({
-            transaction: tx,
-            senderAuthenticator: senderAuth,
-          });
-
-          const executed = await this.aptos.waitForTransaction({
-            transactionHash: committed.hash,
-          });
-
-          if (!executed.success) {
-            throw new Error(`On-chain TP/SL failed: ${executed.vm_status}`);
+            logger.info(`✅ On-chain TP/SL set! Tx: ${committed.hash} (gas: ${executed.gas_used})`);
+            return { success: true, txHash: committed.hash };
           }
-
-          logger.info(`✅ On-chain TP/SL set! Tx: ${committed.hash} (gas: ${executed.gas_used})`);
-          return { success: true, txHash: committed.hash };
+        } catch (err: any) {
+          const isNoPos = err.message?.includes('ENO_POSITION_FOR_TP_SL') || err.message?.includes('0xc');
+          if (isNoPos && sdkAttempt < 3) {
+            logger.warn(`⏳ [ON-CHAIN TP/SL] Position settlement pending on Decibel DEX (attempt ${sdkAttempt}/3: ENO_POSITION_FOR_TP_SL). Retrying in 1.8s...`);
+            await new Promise((r) => setTimeout(r, 1800));
+            continue;
+          }
+          logger.warn(`Direct Aptos SDK setTpSl failed (attempt ${sdkAttempt}/3): ${err.message}. ${sdkAttempt === 3 ? 'Falling back to MCP tool...' : ''}`);
+          if (sdkAttempt < 3) {
+            await new Promise((r) => setTimeout(r, 1200));
+          }
         }
-      } catch (err: any) {
-        logger.warn(`Direct Aptos SDK setTpSl failed: ${err.message}. Falling back to MCP tool...`);
       }
     }
 
@@ -864,18 +1283,36 @@ export class DecibelMCPClient {
 
   async getOrders(symbol?: string): Promise<any[]> {
     const toolName = this.hasTool('get_orders') ? 'get_orders' : 'orders';
-    const toolArgs: any = { venue: 'decibel' };
-    if (config.DECIBEL_SUBACCOUNT_ADDRESS) {
-      toolArgs.subaccount = config.DECIBEL_SUBACCOUNT_ADDRESS;
-    }
-    if (symbol) {
-      toolArgs.market = symbol;
-      toolArgs.symbol = symbol;
-    }
     try {
-      const res = await this.call<any>(toolName, toolArgs, 7500);
-      const items = res?.orders?.items || (Array.isArray(res) ? res : (res?.orders || []));
-      return Array.isArray(items) ? items : [];
+      // decibel-mcp get_orders tool takes no parameters ({})
+      const res = await this.call<any>(toolName, {}, 7500);
+      const rawItems = res?.orders?.items || (Array.isArray(res) ? res : (res?.orders || []));
+      const items = Array.isArray(rawItems) ? rawItems : [];
+
+      const normalized = items.map((o: any) => {
+        const resolvedSym = this.getSymbolForMarket(o.market);
+        const sym = resolvedSym || o.symbol || o.market;
+        return {
+          ...o,
+          symbol: sym,
+          marketAddress: o.market,
+          clientOrderId: o.client_order_id || o.clientOrderId,
+          orderId: o.order_id || o.orderId,
+          price: typeof o.price === 'number' ? o.price : parseFloat(o.price || '0'),
+          size: typeof o.orig_size === 'number' ? o.orig_size : parseFloat(o.orig_size || o.size || '0'),
+          remainingSize: typeof o.remaining_size === 'number' ? o.remaining_size : parseFloat(o.remaining_size || '0'),
+          isBuy: Boolean(o.is_buy),
+        };
+      });
+
+      if (!symbol) return normalized;
+
+      const symKey = symbol.replace('-', '/').toUpperCase();
+      const baseCoin = symKey.split('/')[0];
+      return normalized.filter((o: any) => {
+        const oSym = (o.symbol || '').replace('-', '/').toUpperCase();
+        return oSym === symKey || oSym.includes(baseCoin);
+      });
     } catch (err: any) {
       logger.debug(`MCP get_orders notice for ${symbol || 'all'}: ${err.message}`);
       return [];
@@ -927,7 +1364,33 @@ export class DecibelMCPClient {
   async cancelAllOrders(symbol?: string): Promise<unknown> {
     logger.info(`🚫 Cancelling all open orders ${symbol ? `for ${symbol}` : ''}`);
 
-    // 1. Direct on-chain bulk cancel via Aptos SDK (instant, deterministic)
+    // 1. Retrieve individual open orders and cancel each via direct on-chain cancel_client_order_to_subaccount
+    let sweptCount = 0;
+    try {
+      const orders = await this.getOrders(symbol);
+      if (orders.length > 0) {
+        logger.info(`🧹 Found ${orders.length} resting order(s) on Decibel DEX to sweep${symbol ? ` for ${symbol}` : ''}...`);
+        for (const ord of orders) {
+          const ordSym = ord.symbol || symbol;
+          const cid = ord.clientOrderId || ord.client_order_id;
+          if (ordSym && cid) {
+            await this.cancelClientOrder(ordSym, cid).catch((e: any) => {
+              logger.debug(`Failed to cancel specific order ${cid}: ${e.message}`);
+            });
+            sweptCount++;
+          }
+        }
+      }
+    } catch (sweepErr: any) {
+      logger.debug(`Individual order sweep notice: ${sweepErr.message}`);
+    }
+
+    // If resting individual orders were already cleanly swept, avoid firing failing bulk cancel transaction
+    if (sweptCount > 0) {
+      return { success: true, count: sweptCount };
+    }
+
+    // 2. Direct on-chain bulk cancel via Aptos SDK (for orders placed via place_bulk_orders)
     if (this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS && symbol) {
       try {
         const market = await this.getMarketDetail(symbol);
@@ -961,17 +1424,12 @@ export class DecibelMCPClient {
           }
         }
       } catch (err: any) {
-        logger.warn(`Direct Aptos SDK cancel_bulk_order failed: ${err.message}. Falling back to MCP tool...`);
+        logger.debug(`Direct Aptos SDK cancel_bulk_order notice: ${err.message}`);
       }
     }
 
-    // 2. Fallback to MCP tool with appropriate timeout & subaccount parameter
-    return this.call('cancel_all_orders', {
-      venue: 'decibel',
-      subaccount: config.DECIBEL_SUBACCOUNT_ADDRESS,
-      market: symbol,
-      ...(symbol ? { symbol } : {}),
-    }, 12000);
+    // 3. Fallback to MCP tool with appropriate timeout & subaccount parameter
+    return this.call('cancel_all_orders', {}, 12000).catch(() => ({}));
   }
 
   async closePosition(symbol: string, partialRatio = 1.0): Promise<unknown> {
@@ -987,8 +1445,9 @@ export class DecibelMCPClient {
       }
       try {
         const positions = await this.getPositions();
-        const pos = positions.find((p) => p.symbol.toUpperCase() === symbol.toUpperCase());
-        const market = await this.getMarketDetail(symbol);
+        const normSym = (s: string) => (s || '').replace(/[-/]/g, '').toUpperCase();
+        const pos = positions.find((p) => normSym(p.symbol) === normSym(symbol));
+        const market = await this.getMarketDetail(pos?.symbol || symbol);
         if (pos && market) {
           const isBuy = pos.action === 'SHORT';
           let markPrice = pos.entryPrice || 0;
@@ -1003,15 +1462,13 @@ export class DecibelMCPClient {
             ? (isBuy ? markPrice * 1.05 : markPrice * 0.95)
             : 0;
 
-          const chainPrice = limitPrice > 0
-            ? Math.round((limitPrice * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize
-            : (isBuy ? 999999999999 : 1);
-
           const targetUnits = isPartial ? pos.sizeBase * partialRatio : pos.sizeBase;
-          let chainSize = Math.round(targetUnits * Math.pow(10, market.sizeDecimals));
-          if (market.lotSize && market.lotSize > 0) {
-            chainSize = Math.round(chainSize / market.lotSize) * market.lotSize;
-          }
+          const { chainPrice, chainSize } = quantizeOrderParameters(
+            market,
+            limitPrice,
+            targetUnits,
+            isBuy,
+          );
           const clientOrderId = `close-${Date.now()}`;
 
           logger.info(`⚡ Executing on-chain close via Aptos SDK: ${symbol} isBuy=${isBuy} size=${chainSize}${isPartial ? ` (${Math.round(partialRatio * 100)}% partial)` : ''}`);
@@ -1081,7 +1538,7 @@ export class DecibelMCPClient {
       if (config.DECIBEL_SUBACCOUNT_ADDRESS) {
         toolArgs.subaccount = config.DECIBEL_SUBACCOUNT_ADDRESS;
       }
-      const res = await this.call<any>(toolName, toolArgs);
+      const res = await this.call<any>(toolName, toolArgs, 15000);
       const rawTrades = Array.isArray(res) ? res : (res?.trades || []);
 
       if (this.marketMap.size === 0) {

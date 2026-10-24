@@ -16,10 +16,10 @@ class SimConnectionManager {
   private readonly PROBE_INTERVAL_MS = 180_000; // Probe primary every 3 minutes when on fallback
 
   constructor() {
-    const defaultTelemPrimary = config.SIM_TELEMETRY_URL || 'http://192.168.100.21:4000/api/pipeline/telemetry';
+    const defaultTelemPrimary = config.SIM_TELEMETRY_URL || 'https://simlab.measmony.me/api/pipeline/telemetry';
     const defaultTelemFallback = config.SIM_TELEMETRY_FALLBACK_URL || 'https://simlab.measmony.me/api/pipeline/telemetry';
 
-    const defaultPipePrimary = config.SIM_PIPELINE_URL || 'http://192.168.100.21:4000/api/pipeline/alpha-bundle';
+    const defaultPipePrimary = config.SIM_PIPELINE_URL || 'https://simlab.measmony.me/api/pipeline/alpha-bundle';
     const defaultPipeFallback = config.SIM_PIPELINE_FALLBACK_URL || 'https://simlab.measmony.me/api/pipeline/alpha-bundle';
 
     this.telemetryState = {
@@ -62,57 +62,33 @@ class SimConnectionManager {
    */
   public async postTelemetry(payload: any, headers: Record<string, string>): Promise<{ success: boolean; urlUsed: string }> {
     const state = this.telemetryState;
+    const candidates = Array.from(new Set([
+      state.activeUrl,
+      state.primaryUrl,
+      config.SIM_TELEMETRY_URL,
+      'http://127.0.0.1:4000/api/pipeline/telemetry',
+      'http://192.168.100.21:4000/api/pipeline/telemetry',
+      state.fallbackUrl,
+    ].filter(Boolean) as string[]));
 
-    // Background check: If on fallback, check if primary local LAN is reachable again
-    if (state.usingFallback && Date.now() - state.lastProbeTime > this.PROBE_INTERVAL_MS) {
-      state.lastProbeTime = Date.now();
-      const primaryHealthy = await this.probeHealth(state.primaryUrl);
-      if (primaryHealthy) {
-        logger.info(`🔄 [AUTO-FAILOVER] Primary local endpoint restored: ${state.primaryUrl}. Switching back from public fallback.`);
-        state.activeUrl = state.primaryUrl;
-        state.usingFallback = false;
-      }
-    }
-
-    // Attempt 1: Try current active URL
-    const targetUrl = state.activeUrl;
-    try {
-      const res = await axios.post(targetUrl, payload, {
-        headers,
-        timeout: state.usingFallback ? 8000 : 3500, // Faster timeout on local LAN to avoid delaying execution
-      });
-
-      if (res.status >= 200 && res.status < 300) {
-        return { success: true, urlUsed: targetUrl };
-      }
-    } catch (err: any) {
-      // If we were on primary and fallback is configured, trigger instant failover!
-      if (!state.usingFallback && state.fallbackUrl && state.fallbackUrl !== state.primaryUrl) {
-        logger.warn(`⚠️ [AUTO-FAILOVER] Primary local telemetry (${targetUrl}) unreachable (${err.message}). Failing over to public Cloudflare: ${state.fallbackUrl}`);
-        try {
-          const fallbackRes = await axios.post(state.fallbackUrl, payload, {
-            headers,
-            timeout: 8000,
-          });
-
-          if (fallbackRes.status >= 200 && fallbackRes.status < 300) {
-            state.activeUrl = state.fallbackUrl;
-            state.usingFallback = true;
-            state.lastProbeTime = Date.now();
-            logger.info(`✅ [AUTO-FAILOVER] Telemetry successfully routed through public Cloudflare: ${state.fallbackUrl}`);
-            return { success: true, urlUsed: state.fallbackUrl };
-          }
-        } catch (fbErr: any) {
-          logger.error(`❌ [AUTO-FAILOVER] Both local and public telemetry endpoints failed. Local: ${err.message}, Public: ${fbErr.message}`);
-          return { success: false, urlUsed: targetUrl };
+    for (const url of candidates) {
+      try {
+        const res = await axios.post(url, payload, {
+          headers,
+          timeout: url.includes('measmony.me') ? 6000 : 3500,
+        });
+        if (res.status >= 200 && res.status < 300) {
+          state.activeUrl = url;
+          state.usingFallback = url.includes('measmony.me');
+          return { success: true, urlUsed: url };
         }
+      } catch (err: any) {
+        // try next candidate
       }
-
-      logger.warn(`⚠️ [TELEMETRY] Push to ${targetUrl} failed: ${err.message}`);
-      return { success: false, urlUsed: targetUrl };
     }
 
-    return { success: false, urlUsed: targetUrl };
+    logger.warn(`⚠️ [TELEMETRY] Push failed across all endpoints (${candidates.join(', ')})`);
+    return { success: false, urlUsed: state.activeUrl };
   }
 
   /**

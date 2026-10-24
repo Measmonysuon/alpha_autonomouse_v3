@@ -21,7 +21,7 @@ const rawSubaccount = envOrFallback('DECIBEL_SUBACCOUNT_ADDRESS') || '';
 const rawNodeApiKey = envOrFallback('DECIBEL_NODE_API_KEY', 'DECIBEL_API_KEY') || '';
 const rawOwnerAddress = envOrFallback('DECIBEL_APTOS_OWNER_ADDRESS', 'DECIBEL_OWNER_ADDRESS', 'APTOS_WALLET_ADDRESS') || '';
 
-export const DEFAULT_28_PAIRS = 'BTC/USD,ETH/USD,SOL/USD,APT/USD,SUI/USD,XRP/USD,DOGE/USD,BNB/USD,LINK/USD,AVAX/USD,NEAR/USD,ADA/USD,TRX/USD,DOT/USD,HYPE/USD,PEPE/USD,SHIB/USD,LTC/USD,BCH/USD,UNI/USD,FET/USD,TAO/USD,RENDER/USD,ARB/USD,OP/USD,INJ/USD,SEI/USD,TIA/USD';
+export const DEFAULT_28_PAIRS = 'BTC/USD,ETH/USD,SOL/USD,APT/USD,SUI/USD,XRP/USD,DOGE/USD,BNB/USD,LINK/USD,AVAX/USD,NEAR/USD,ADA/USD,TRX/USD,DOT/USD,HYPE/USD,PEPE/USD,SHIB/USD,LTC/USD,BCH/USD,UNI/USD,FET/USD,TAO/USD,RENDER/USD,ARB/USD,OP/USD,INJ/USD,SEI/USD,TIA/USD,ZEC/USD';
 
 // ─── Validation Schema ────────────────────────────────────────────────────────
 const configSchema = z.object({
@@ -39,6 +39,7 @@ const configSchema = z.object({
 
   // ── Client AI Brain Selection (Pick ONE or none for local math fallback) ────
   GEMINI_API_KEY: z.string().optional().default(() => envOrFallback('GEMINI_API_KEY') || ''),
+  GEMINI_API_KEY_FALLBACK: z.string().optional().default(() => envOrFallback('GEMINI_API_KEY_FALLBACK') || ''),
   GEMINI_MODEL: z.string().optional().default(() => envOrFallback('GEMINI_MODEL') || 'gemini-2.5-flash'),
   ANTHROPIC_API_KEY: z.string().optional().default(() => envOrFallback('ANTHROPIC_API_KEY') || ''),
   ANTHROPIC_BASE_URL: z.string().default(() => envOrFallback('ANTHROPIC_BASE_URL') || 'https://api.anthropic.com/v1'),
@@ -72,10 +73,10 @@ const configSchema = z.object({
   MIN_CONFIDENCE_PCT: z.coerce.number().default(75),
   MIN_CONFIDENCE_PCT_BREAKOUT: z.coerce.number().default(80),
   MAX_POSITION_ALLOC_PCT: z.coerce.number().default(35),
-  SIM_PIPELINE_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_URL') || 'http://192.168.100.21:4000/api/pipeline/alpha-bundle'),
+  SIM_PIPELINE_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_URL') || 'https://simlab.measmony.me/api/pipeline/alpha-bundle'),
   SIM_PIPELINE_FALLBACK_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_FALLBACK_URL') || 'https://simlab.measmony.me/api/pipeline/alpha-bundle'),
   SIM_PIPELINE_POLL_MS: z.coerce.number().default(() => Number(envOrFallback('SIM_PIPELINE_POLL_MS') || 15000)),
-  SIM_TELEMETRY_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_URL') || 'http://192.168.100.21:4000/api/pipeline/telemetry'),
+  SIM_TELEMETRY_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_URL') || 'https://simlab.measmony.me/api/pipeline/telemetry'),
   SIM_TELEMETRY_FALLBACK_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_FALLBACK_URL') || 'https://simlab.measmony.me/api/pipeline/telemetry'),
   SIM_TELEMETRY_INTERVAL_MS: z.coerce.number().default(() => Number(envOrFallback('SIM_TELEMETRY_INTERVAL_MS') || 30000)),
   SIM_PIPELINE_ENABLED: z

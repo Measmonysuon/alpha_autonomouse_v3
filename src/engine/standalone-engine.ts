@@ -46,6 +46,7 @@ export interface TechnicalIndicators {
   upperWickPct: number;
   lowerWickPct: number;
   bodyPct: number;
+  candleColor?: 'GREEN' | 'RED' | 'DOJI';
   isTopWickRejection: boolean;
   isBottomWickRejection: boolean;
   isPullbackBounce: boolean;
@@ -86,6 +87,8 @@ export interface StandaloneSignal {
   orderType?: 'MARKET' | 'POST_ONLY_LIMIT';
   limitPrice?: number;
   postOnly?: boolean;
+  executionProfile?: 'STANDARD_SWING';
+  microTargetProfitUsd?: number;
   timestamp: number;
 }
 
@@ -268,16 +271,19 @@ export function calculateWickMetrics(open: number, high: number, low: number, cl
   upperWickPct: number;
   lowerWickPct: number;
   bodyPct: number;
+  candleColor: 'GREEN' | 'RED' | 'DOJI';
   isTopWickRejection: boolean;
   isBottomWickRejection: boolean;
   pattern: string;
 } {
   const range = high - low;
+  const candleColor: 'GREEN' | 'RED' | 'DOJI' = close > open ? 'GREEN' : close < open ? 'RED' : 'DOJI';
   if (range <= 0) {
     return {
       upperWickPct: 0,
       lowerWickPct: 0,
       bodyPct: 100,
+      candleColor: 'DOJI',
       isTopWickRejection: false,
       isBottomWickRejection: false,
       pattern: 'NEUTRAL',
@@ -309,9 +315,137 @@ export function calculateWickMetrics(open: number, high: number, low: number, cl
     upperWickPct,
     lowerWickPct,
     bodyPct,
+    candleColor,
     isTopWickRejection: upperWickPct >= 40,
     isBottomWickRejection: lowerWickPct >= 40,
     pattern,
+  };
+}
+
+export type PullbackConfirmationVerdict =
+  | 'CONFIRMED_GREEN_REVERSAL'
+  | 'CONFIRMED_ABSORPTION_WICK'
+  | 'UNCONFIRMED_FALLING_KNIFE'
+  | 'UNCONFIRMED_PUMP_EXHAUSTION'
+  | 'UPPER_WICK_REJECTION_TRAP'
+  | 'LOWER_WICK_REJECTION_TRAP'
+  | 'NEUTRAL_CONFIRMED';
+
+export interface PullbackConfirmationResult {
+  isConfirmed: boolean;
+  verdict: PullbackConfirmationVerdict;
+  reason: string;
+  capScore?: number;
+}
+
+export function evaluatePullbackConfirmation(
+  action: 'LONG' | 'SHORT' | 'HOLD' | 'WAIT',
+  ind?: TechnicalIndicators | null,
+  options?: { isReboundActive?: boolean; dynamicWickThreshold?: number }
+): PullbackConfirmationResult {
+  if (!ind || action === 'HOLD' || action === 'WAIT') {
+    return {
+      isConfirmed: true,
+      verdict: 'NEUTRAL_CONFIRMED',
+      reason: 'No directional signal to validate',
+    };
+  }
+
+  const isRebound = Boolean(options?.isReboundActive);
+  const wickThreshold = options?.dynamicWickThreshold ?? 25;
+
+  if (action === 'LONG') {
+    if (!isRebound && (ind.isTopWickRejection || ind.upperWickPct >= 40)) {
+      return {
+        isConfirmed: false,
+        verdict: 'UPPER_WICK_REJECTION_TRAP',
+        capScore: 45,
+        reason: `Upper rejection wick (${ind.upperWickPct.toFixed(1)}% >= 40%) indicates heavy overhead seller defense. Buying into rejection is strictly vetoed.`,
+      };
+    }
+
+    const isRedCandle = ind.candleColor === 'RED';
+    const hasBuyerAbsorption = ind.lowerWickPct >= wickThreshold;
+
+    if (isRedCandle && !hasBuyerAbsorption) {
+      if (isRebound && ind.lowerWickPct >= (wickThreshold * 0.7)) {
+        return {
+          isConfirmed: true,
+          verdict: 'CONFIRMED_ABSORPTION_WICK',
+          reason: `AI Rebound absorption confirmed: lower wick ${ind.lowerWickPct.toFixed(1)}% defended liquidity level.`,
+        };
+      }
+      return {
+        isConfirmed: false,
+        verdict: 'UNCONFIRMED_FALLING_KNIFE',
+        capScore: 45,
+        reason: `Pullback in progress on active red candle without buyer absorption (lower wick ${ind.lowerWickPct.toFixed(1)}% < ${wickThreshold.toFixed(1)}%). Waiting for candle to close green or print absorption wick before entry.`,
+      };
+    }
+
+    if (hasBuyerAbsorption) {
+      return {
+        isConfirmed: true,
+        verdict: 'CONFIRMED_ABSORPTION_WICK',
+        reason: `Buyer absorption confirmed: lower wick ${ind.lowerWickPct.toFixed(1)}% defended key support/POC.`,
+      };
+    }
+
+    return {
+      isConfirmed: true,
+      verdict: 'CONFIRMED_GREEN_REVERSAL',
+      reason: `Bullish reversal confirmed: green candle printing with buyers defending structure.`,
+    };
+  }
+
+  if (action === 'SHORT') {
+    if (!isRebound && (ind.isBottomWickRejection || ind.lowerWickPct >= 40)) {
+      return {
+        isConfirmed: false,
+        verdict: 'LOWER_WICK_REJECTION_TRAP',
+        capScore: 45,
+        reason: `Lower rejection wick (${ind.lowerWickPct.toFixed(1)}% >= 40%) indicates aggressive buyer absorption. Shorting into support bounce is strictly vetoed.`,
+      };
+    }
+
+    const isGreenCandle = ind.candleColor === 'GREEN';
+    const hasSellerAbsorption = ind.upperWickPct >= wickThreshold;
+
+    if (isGreenCandle && !hasSellerAbsorption) {
+      if (isRebound && ind.upperWickPct >= (wickThreshold * 0.7)) {
+        return {
+          isConfirmed: true,
+          verdict: 'CONFIRMED_ABSORPTION_WICK',
+          reason: `AI Reversal seller absorption confirmed: upper wick ${ind.upperWickPct.toFixed(1)}% defended resistance level.`,
+        };
+      }
+      return {
+        isConfirmed: false,
+        verdict: 'UNCONFIRMED_PUMP_EXHAUSTION',
+        capScore: 45,
+        reason: `Pullback rally in progress on active green candle without seller absorption (upper wick ${ind.upperWickPct.toFixed(1)}% < ${wickThreshold.toFixed(1)}%). Waiting for candle to close red or print rejection wick before shorting.`,
+      };
+    }
+
+    if (hasSellerAbsorption) {
+      return {
+        isConfirmed: true,
+        verdict: 'CONFIRMED_ABSORPTION_WICK',
+        reason: `Seller absorption confirmed: upper wick ${ind.upperWickPct.toFixed(1)}% rejected overhead resistance.`,
+      };
+    }
+
+    return {
+      isConfirmed: true,
+      verdict: 'CONFIRMED_GREEN_REVERSAL',
+      reason: `Bearish continuation confirmed: red candle printing with sellers in control.`,
+    };
+  }
+
+  return {
+    isConfirmed: true,
+    verdict: 'NEUTRAL_CONFIRMED',
+    reason: 'Standard structure confirmed',
   };
 }
 
@@ -405,8 +539,8 @@ export function calculateDynamicLeverage(params: {
 const BASELINE_PRICES: Record<string, number> = {
   'APTUSD': 0.77,
   'BTCUSD': 84850,
-  'ETHUSD': 2735,
-  'SOLUSD': 116.2,
+  'ETHUSD': 2501,
+  'SOLUSD': 109.4,
   'SUIUSD': 0.998,
   'AVAXUSD': 11.27,
   'NEARUSD': 4.31,
@@ -433,33 +567,41 @@ const BASELINE_PRICES: Record<string, number> = {
   'TIAUSD': 3.10,
 };
 
+export function updateBaselinePrice(symbol: string, price: number): void {
+  if (price > 0) {
+    const norm = symbol.toUpperCase().replace(/[-_/]/g, '').replace('USDT', 'USD');
+    BASELINE_PRICES[norm] = price;
+  }
+}
+
+const realKlinesCache = new Map<string, { bars: KlineBar[]; fetchedAt: number }>();
+
 function generateFallbackKlines(symbol: string, interval = '15m', limit = 60): KlineBar[] {
   const norm = symbol.toUpperCase().replace(/[-_/]/g, '').replace('USDT', 'USD');
+  const cleanBase = norm.replace(/USD[T]?$/, '');
+  const cacheKey = `${cleanBase}_${interval}`;
+  const cached = realKlinesCache.get(cacheKey);
+  if (cached && cached.bars.length >= 10) {
+    return cached.bars;
+  }
+
   const base = BASELINE_PRICES[norm] || 10.0;
   const now = Date.now();
   const barMs = interval === '1h' ? 60 * 60 * 1000 : interval === '5m' ? 5 * 60 * 1000 : 15 * 60 * 1000;
   const bars: KlineBar[] = [];
 
-  let current = base * 0.985;
+  // Flat neutral bars without artificial sine-wave spikes or fake momentum
   for (let i = limit; i > 0; i--) {
     const openTime = now - i * barMs;
-    const changePct = (Math.sin(i * 0.45) * 0.008) + ((Math.random() - 0.48) * 0.006);
-    const open = current;
-    const close = Math.max(0.0001, open * (1 + changePct));
-    const high = Math.max(open, close) * (1 + Math.random() * 0.0035);
-    const low = Math.min(open, close) * (1 - Math.random() * 0.0035);
-    const volume = (base > 500 ? 50 : 25000) * (0.8 + Math.random() * 0.5);
-
     bars.push({
       openTime,
-      open,
-      high,
-      low,
-      close,
-      volume,
+      open: base,
+      high: base * 1.0005,
+      low: base * 0.9995,
+      close: base,
+      volume: 1000,
       closeTime: openTime + barMs,
     });
-    current = close;
   }
   return bars;
 }
@@ -467,77 +609,23 @@ function generateFallbackKlines(symbol: string, interval = '15m', limit = 60): K
 export async function fetchPublicKlines(symbol: string, interval = '15m', limit = 60): Promise<KlineBar[]> {
   const norm = symbol.toUpperCase().replace(/[-_/]/g, '');
   const cleanBase = norm.replace(/USD[T]?$/, '');
+  const binanceSym = `${cleanBase}USDT`;
   const bybitSym = `${cleanBase}USDT`;
   const okxSym = `${cleanBase}-USDT`;
-  const bybitInterval = interval === '15m' ? '15' : interval === '5m' ? '5' : interval === '1h' ? '60' : '15';
+  const bybitInterval = interval === '1h' ? '60' : interval === '5m' ? '5' : interval === '15m' ? '15' : '15';
+  const okxInterval = interval === '1h' ? '1H' : interval === '5m' ? '5m' : interval === '15m' ? '15m' : '15m';
   const intervalMs = interval === '1h' ? 60 * 60 * 1000 : interval === '5m' ? 5 * 60 * 1000 : 15 * 60 * 1000;
-  const maxAllowedAge = intervalMs * 2.5;
+  const cacheKey = `${cleanBase}_${interval}`;
 
-  // 1. Primary: Bybit Public API
+  // 1. Primary: Binance Public API (ultra-fast, highly accurate)
   try {
-    const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${bybitSym}&interval=${bybitInterval}&limit=${limit}`;
+    const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${interval}&limit=${limit}`;
     const res = await axios.get(url, {
-      timeout: 6000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (TradingBot/2.0; AutonomousDesk)' },
-    });
-    const list = res.data?.result?.list;
-    if (Array.isArray(list) && list.length > 0) {
-      const sorted = [...list].reverse();
-      const bars = sorted.map((k: any) => ({
-        openTime: Number(k[0]),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        closeTime: Number(k[0]) + intervalMs,
-      }));
-      const lastBarAge = Date.now() - bars[bars.length - 1].openTime;
-      if (lastBarAge < maxAllowedAge) return bars;
-      logger.warn(`[${symbol}] Bybit ${interval} klines stale (age: ${Math.round(lastBarAge/60000)}m). Trying OKX...`);
-    }
-  } catch (err: any) {
-    logger.warn(`[${symbol}] Bybit ${interval} klines failed: ${err.message}. Trying OKX...`);
-  }
-
-  // 2. Fallback: OKX Public API
-  try {
-    const okxInterval = interval === '15m' ? '15m' : interval === '5m' ? '5m' : interval === '1h' ? '1H' : '15m';
-    const url = `https://www.okx.com/api/v5/market/candles?instId=${okxSym}&bar=${okxInterval}&limit=${limit}`;
-    const res = await axios.get(url, {
-      timeout: 6000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (TradingBot/2.0; AutonomousDesk)' },
-    });
-    const list = res.data?.data;
-    if (Array.isArray(list) && list.length > 0) {
-      const sorted = [...list].reverse();
-      const bars = sorted.map((k: any) => ({
-        openTime: Number(k[0]),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        closeTime: Number(k[0]) + intervalMs,
-      }));
-      const lastBarAge = Date.now() - bars[bars.length - 1].openTime;
-      if (lastBarAge < maxAllowedAge) return bars;
-      logger.warn(`[${symbol}] OKX ${interval} klines stale. Trying Binance...`);
-    }
-  } catch (err: any) {
-    logger.warn(`[${symbol}] OKX ${interval} klines failed: ${err.message}. Trying Binance...`);
-  }
-
-  // 3. Fallback: Binance Public API
-  try {
-    const baseNorm = norm.endsWith('USD') ? norm + 'T' : norm;
-    const url = `https://api.binance.com/api/v3/klines?symbol=${baseNorm}&interval=${interval}&limit=${limit}`;
-    const res = await axios.get(url, {
-      timeout: 5000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (TradingBot/2.0; AutonomousDesk)' },
+      timeout: 7500,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
     });
     if (Array.isArray(res.data) && res.data.length > 0) {
-      const bars = res.data.map((k: any) => ({
+      const bars: KlineBar[] = res.data.map((k: any) => ({
         openTime: Number(k[0]),
         open: parseFloat(k[1]),
         high: parseFloat(k[2]),
@@ -546,11 +634,97 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
         volume: parseFloat(k[5]),
         closeTime: Number(k[6]),
       }));
-      const lastBarAge = Date.now() - bars[bars.length - 1].openTime;
-      if (lastBarAge < maxAllowedAge) return bars;
+      if (bars.length >= 10) {
+        realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
+        return bars;
+      }
     }
   } catch (err: any) {
-    logger.warn(`[${symbol}] Binance ${interval} klines failed: ${err.message}. Using fallback synthesis.`);
+    logger.debug(`[${symbol}] Binance ${interval} klines error: ${err.message}. Trying Bybit...`);
+  }
+
+  // 2. Secondary: Bybit Linear Public API
+  try {
+    const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${bybitSym}&interval=${bybitInterval}&limit=${limit}`;
+    const res = await axios.get(url, {
+      timeout: 7500,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
+    });
+    const list = res.data?.result?.list;
+    if (Array.isArray(list) && list.length > 0) {
+      const sorted = [...list].reverse();
+      const bars: KlineBar[] = sorted.map((k: any) => ({
+        openTime: Number(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5]),
+        closeTime: Number(k[0]) + intervalMs,
+      }));
+      if (bars.length >= 10) {
+        realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
+        return bars;
+      }
+    }
+  } catch (err: any) {
+    logger.debug(`[${symbol}] Bybit ${interval} klines error: ${err.message}. Trying OKX...`);
+  }
+
+  // 3. Tertiary: OKX Public API
+  try {
+    const url = `https://www.okx.com/api/v5/market/candles?instId=${okxSym}&bar=${okxInterval}&limit=${limit}`;
+    const res = await axios.get(url, {
+      timeout: 7500,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
+    });
+    const list = res.data?.data;
+    if (Array.isArray(list) && list.length > 0) {
+      const sorted = [...list].reverse();
+      const bars: KlineBar[] = sorted.map((k: any) => ({
+        openTime: Number(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5]),
+        closeTime: Number(k[0]) + intervalMs,
+      }));
+      if (bars.length >= 10) {
+        realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
+        return bars;
+      }
+    }
+  } catch (err: any) {
+    logger.debug(`[${symbol}] OKX ${interval} klines error: ${err.message}. Trying Sim Lab...`);
+  }
+
+  // 4. Quaternary: Query Sim Lab Central Brain (Port 4000)
+  try {
+    const simUrl = `http://192.168.100.21:4000/api/klines?symbol=${symbol.replace(/USD[T]?$/, '/USD')}&interval=${interval === '1h' ? '1h' : '15m'}&limit=${limit}`;
+    const res = await axios.get(simUrl, { timeout: 3500 });
+    const list = res.data?.klines;
+    if (Array.isArray(list) && list.length > 0) {
+      const bars: KlineBar[] = list.map((k: any) => ({
+        openTime: Number(k.openTime || k.t),
+        open: Number(k.open || k.o),
+        high: Number(k.high || k.h),
+        low: Number(k.low || k.l),
+        close: Number(k.close || k.c),
+        volume: Number(k.volume || k.v || 100),
+        closeTime: Number(k.closeTime || ((k.openTime || k.t) + intervalMs)),
+      }));
+      if (bars.length >= 10) {
+        realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
+        return bars;
+      }
+    }
+  } catch {}
+
+  // 5. Return cached real klines if available
+  const existing = realKlinesCache.get(cacheKey);
+  if (existing && existing.bars.length >= 10) {
+    return existing.bars;
   }
 
   return generateFallbackKlines(symbol, interval, limit);
@@ -658,9 +832,9 @@ export class StandaloneTradingEngine {
       const last1h = closes1h[closes1h.length - 1];
       const ema25_1h = ema25_1hSeries[ema25_1hSeries.length - 1];
       const ema50_1h = ema50_1hSeries[ema50_1hSeries.length - 1];
-      if (last1h > ema25_1h && ema25_1h >= ema50_1h) {
+      if (last1h > ema25_1h && (ema25_1h >= ema50_1h || last1h > closes1h[closes1h.length - 2])) {
         trend1h = 'BULLISH';
-      } else if (last1h < ema25_1h && ema25_1h <= ema50_1h) {
+      } else if (last1h < ema25_1h && (ema25_1h <= ema50_1h || last1h < closes1h[closes1h.length - 2])) {
         trend1h = 'BEARISH';
       }
     } else {
@@ -735,6 +909,7 @@ export class StandaloneTradingEngine {
       upperWickPct: wick.upperWickPct,
       lowerWickPct: wick.lowerWickPct,
       bodyPct: wick.bodyPct,
+      candleColor: wick.candleColor,
       isTopWickRejection: wick.isTopWickRejection,
       isBottomWickRejection: wick.isBottomWickRejection,
       isPullbackBounce,
@@ -765,6 +940,7 @@ export class StandaloneTradingEngine {
       orderBookSpread?: number;
       cvdTrend?: 'BUY' | 'SELL' | 'NEUTRAL';
       predictedFundingRate?: number;
+      change24h?: number;
     },
   ): StandaloneSignal {
     const timestamp = Date.now();
@@ -856,7 +1032,9 @@ export class StandaloneTradingEngine {
     // ── 2. LAYER 2: Liquidity & Order Flow ─────────────────────────────────────
     let coinglassScore = 0;
     const firstPrice = klines[0].open;
-    const change24h = firstPrice > 0 ? ((currentPrice - firstPrice) / firstPrice) * 100 : 0;
+    const change24h = (typeof extraMetrics?.change24h === 'number')
+      ? extraMetrics.change24h
+      : (firstPrice > 0 ? ((currentPrice - firstPrice) / firstPrice) * 100 : 0);
 
     if (activeStrategy.layer2.enabled) {
       if (change24h > 3) { bullScore += 2; reasons.push(`📈 L2 24h Momentum: +${change24h.toFixed(1)}%`); }
@@ -915,6 +1093,10 @@ export class StandaloneTradingEngine {
       }
     }
 
+    // Fetch live Sim Lab Pair Directives (including active Rebound Opportunity)
+    const allSimDirs = getSimPairDirectives();
+    const simPairDir = allSimDirs[symbol] || allSimDirs[symbol?.toUpperCase()] || allSimDirs[symbol?.replace('/', '-')];
+
     // ── Direction Determination ───────────────────────────────────────────────
     let trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
     let action: 'LONG' | 'SHORT' | 'HOLD' = 'HOLD';
@@ -945,8 +1127,26 @@ export class StandaloneTradingEngine {
     let slDist = Math.max(entry * 0.0045, atr * 1.2 * slMultiplier);
     let sl = action === 'LONG' ? entry - slDist : entry + slDist;
 
-    // Anchor SL to pullback dynamic EMA or structural swing wick
-    if (action === 'LONG') {
+    if (simPairDir?.reboundOpportunity?.isReboundActive) {
+      // AI Rebound Sniper SL: Snug stop anchored right below/above sweep wick with dynamic ATR buffer
+      const ro = simPairDir.reboundOpportunity;
+      const dynamicBuffer = atr * 0.25;
+      if (action === 'LONG' && ro.reboundSide === 'LONG') {
+        const candidateSl = ro.structuralAnchor - dynamicBuffer;
+        if (candidateSl < entry && (entry - candidateSl) >= atr * 0.3) {
+          sl = Number(candidateSl.toFixed(4));
+          slDist = entry - sl;
+          reasons.push(`🎯 AI REBOUND SL: Snug stop placed below sweep wick low ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} ATR buffer`);
+        }
+      } else if (action === 'SHORT' && ro.reboundSide === 'SHORT') {
+        const candidateSl = ro.structuralAnchor + dynamicBuffer;
+        if (candidateSl > entry && (candidateSl - entry) >= atr * 0.3) {
+          sl = Number(candidateSl.toFixed(4));
+          slDist = sl - entry;
+          reasons.push(`🎯 AI REBOUND SL: Snug stop placed above sweep wick high ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} ATR buffer`);
+        }
+      }
+    } else if (action === 'LONG') {
       if (ind.isPullbackBounce && ind.ema21 > 0 && ind.ema21 < entry) {
         const sniperSl = Math.min(ind.ema21 * 0.997, ind.swingLow > 0 ? ind.swingLow * 0.998 : ind.ema21 * 0.997);
         if (entry - sniperSl >= slDist * 0.3 && entry - sniperSl <= slDist * 1.8) {
@@ -986,31 +1186,68 @@ export class StandaloneTradingEngine {
       }
     }
 
-    const targetMinRR = activeStrategy.layer5?.minRiskRewardRatio ?? 2.0;
-    let tpDist = slDist * targetMinRR;
-    const tp = action === 'LONG' ? entry + tpDist : entry - tpDist;
-    const rrRatio = Number((tpDist / (slDist || 1)).toFixed(2));
-
-    // Dual Take-Profit Geometry
-    let takeProfit1: number | undefined;
-    let takeProfit2: number | undefined;
-    let isDualTp = false;
-
-    if (activeStrategy.layer5?.dualTakeProfit && action !== 'HOLD') {
-      isDualTp = true;
-      const eqPrice = ind.smc?.premiumDiscount?.equilibrium;
-      if (action === 'LONG') {
-        takeProfit1 = eqPrice && eqPrice > entry ? eqPrice : entry + slDist * 1.5;
-        let dynamicRR = Math.max(2.5, targetMinRR);
-        if (ind.adx14 >= 28 && ind.rvol >= 1.2) dynamicRR = Math.max(dynamicRR, 3.5);
-        takeProfit2 = Math.max(tp, entry + slDist * dynamicRR);
-      } else {
-        takeProfit1 = eqPrice && eqPrice < entry ? eqPrice : entry - slDist * 1.5;
-        let dynamicRR = Math.max(2.5, targetMinRR);
-        if (ind.adx14 >= 28 && ind.rvol >= 1.2) dynamicRR = Math.max(dynamicRR, 3.5);
-        takeProfit2 = Math.min(tp, entry - slDist * dynamicRR);
+    // ── ByKaranteli Liquidity Wall Soft SL Shielding ─────────────────────────
+    const bkDirectives = simPairDir?.bykaranteli?.executionDirectives;
+    const bkSuggestedSl = bkDirectives?.suggestedSlPrice;
+    if (bkSuggestedSl && bkSuggestedSl > 0 && action !== 'HOLD') {
+      if (action === 'SHORT' && bkSuggestedSl > entry && bkSuggestedSl <= entry + (slDist * 1.35)) {
+        sl = bkSuggestedSl;
+        slDist = sl - entry;
+        reasons.push(`🛡️ LIQUIDITY WALL SL: Soft SL shielded behind overhead squeeze wall ($${sl.toFixed(2)})`);
+      } else if (action === 'LONG' && bkSuggestedSl < entry && bkSuggestedSl >= entry - (slDist * 1.35)) {
+        sl = bkSuggestedSl;
+        slDist = entry - sl;
+        reasons.push(`🛡️ LIQUIDITY WALL SL: Soft SL shielded below downside flush wall ($${sl.toFixed(2)})`);
       }
     }
+
+    let takeProfit1: number;
+    let takeProfit2: number;
+    let tp: number;
+    let isDualTp = true;
+    let rrRatio: number;
+
+    // Sim Lab Dynamic R:R & Take-Profit Scaling Calibration
+    const dynamicRRFromSimLab = (activeStrategy.layer5 as any)?.dynamicTakeProfit1R ?? activeStrategy.layer5?.minRiskRewardRatio;
+    const targetMinRR = dynamicRRFromSimLab ?? 1.45;
+
+    // Check if Sim Lab pairDirectives provides an opposing VPOC or Key Level target
+    const opposingVpocPrice = simPairDir?.dynamicTpTarget?.opposingVpocPrice || 
+      (action === 'LONG' ? simPairDir?.keyLevels?.vah : simPairDir?.keyLevels?.val);
+
+    let tp1Dist = slDist * targetMinRR;
+    if (opposingVpocPrice && opposingVpocPrice > 0 && action !== 'HOLD') {
+      const vpocDist = Math.abs(opposingVpocPrice - entry);
+      const isOpposingDirection = (action === 'LONG' && opposingVpocPrice > entry) || (action === 'SHORT' && opposingVpocPrice < entry);
+      if (isOpposingDirection && vpocDist >= slDist * 1.1 && vpocDist <= slDist * 2.2) {
+        tp1Dist = vpocDist;
+      }
+    }
+
+    // ── ByKaranteli Liquidity Magnet TP1 Snapping ────────────────────────────
+    const bkSuggestedTp = bkDirectives?.suggestedTp1Price;
+    if (bkSuggestedTp && bkSuggestedTp > 0 && action !== 'HOLD') {
+      const magnetDist = Math.abs(bkSuggestedTp - entry);
+      const isCorrectDirection = (action === 'LONG' && bkSuggestedTp > entry) || (action === 'SHORT' && bkSuggestedTp < entry);
+      if (isCorrectDirection && magnetDist >= slDist * 1.05 && magnetDist <= slDist * 2.5) {
+        tp1Dist = magnetDist;
+        reasons.push(`🧲 LIQUIDITY MAGNET TP1: Snapped to high-intensity cluster ($${bkSuggestedTp.toFixed(2)}, ${bkDirectives?.primaryMagnetIntensity || 1.0}x gravity)`);
+      }
+    }
+
+    const tp1 = action === 'LONG' ? entry + tp1Dist : entry - tp1Dist;
+    takeProfit1 = Number(tp1.toFixed(4));
+
+    // Extended Runner (TP2) for macro breakout continuation
+    let runnerRR = Math.max(2.5, targetMinRR * 1.8);
+    if (ind.adx14 >= 28 && ind.rvol >= 1.2) runnerRR = Math.max(runnerRR, 3.5);
+    const tp2 = action === 'LONG' ? entry + (slDist * runnerRR) : entry - (slDist * runnerRR);
+    takeProfit2 = Number(tp2.toFixed(4));
+
+    // Primary takeProfit armed on-chain is TP1 to ensure guaranteed execution on first swing!
+    tp = takeProfit1;
+    isDualTp = true;
+    rrRatio = Number((tp1Dist / (slDist || 1)).toFixed(2));
 
     // ── Multi-Pillar Confidence Calculation ───────────────────────────────────
     let confidence = 45;
@@ -1056,6 +1293,11 @@ export class StandaloneTradingEngine {
       } else if (ind.rvol >= 1.0) {
         pillar3 += 5;
       }
+      // ByKaranteli Live Whale Tape Confluence (+$1M prints aligned with direction)
+      if (bkDirectives?.whaleNetBias24h === action) {
+        pillar3 += 8;
+        reasons.push(`🐋 WHALE CONFLUENCE: Live $1M+ whale tape confirms aggressive ${action} dominance (${bkDirectives.whalePrintsCount} prints)`);
+      }
 
       // Tier 1: 72% Technical Cap (Requires SMC Institutional Footprint to cross 80%)
       const rawTechnical = pillar1 + pillar2 + pillar3;
@@ -1067,12 +1309,18 @@ export class StandaloneTradingEngine {
         (action === 'LONG' && ind.trend1h === 'BEARISH') ||
         (action === 'SHORT' && ind.trend1h === 'BULLISH')
       ) {
-        technicalScore = Math.min(technicalScore, 60);
-        reasons.push(`🛑 MTF HARD GATE: 15m ${action} contradicts 1h ${ind.trend1h} macro trend. Capped at 60%.`);
+        if (simPairDir?.reboundOpportunity?.isReboundActive) {
+          reasons.push(`⚡ REBOUND MTF EXEMPTION: 1h macro trend lag waived for AI-confirmed ${simPairDir.reboundOpportunity.reboundType}.`);
+        } else {
+          technicalScore = Math.min(technicalScore, 60);
+          reasons.push(`🛑 MTF HARD GATE: 15m ${action} contradicts 1h ${ind.trend1h} macro trend. Capped at 60%.`);
+        }
       }
 
       // Gate 2: Overextension / Chased Breakout
-      if (ind.pullbackStatus === 'CHASED_BREAKOUT' && action === 'LONG') {
+      if (simPairDir?.reboundOpportunity?.isReboundActive) {
+        reasons.push(`⚡ REBOUND MOMENTUM EXEMPTION: Fast impulse is confirmed initial expansion of ${simPairDir.reboundOpportunity.reboundType} — exempt from chased breakout penalty.`);
+      } else if (ind.pullbackStatus === 'CHASED_BREAKOUT' && action === 'LONG') {
         technicalScore = Math.min(technicalScore, 55);
         reasons.push(`🛑 CHASED BREAKOUT GATE: Price rallied +${ind.distToEma25Pct}% away from value. Capped at 55%.`);
       } else if (ind.pullbackStatus === 'CHASED_BREAKDOWN' && action === 'SHORT') {
@@ -1096,13 +1344,22 @@ export class StandaloneTradingEngine {
       }
 
       // Gate 5: StochRSI Exhaustion
-      if (activeStrategy.layer1.stochRsiFilter) {
+      if (activeStrategy.layer1.stochRsiFilter && !simPairDir?.reboundOpportunity?.isReboundActive) {
         if (action === 'SHORT' && (ind.stochRsi14 < 20 || ind.rsi14 < 32)) {
           technicalScore = Math.min(technicalScore, 55);
           reasons.push(`🛑 OVERSOLD EXHAUSTION GATE: StochRSI (${ind.stochRsi14}) / RSI (${ind.rsi14.toFixed(1)}) oversold. Capped at 55%.`);
         } else if (action === 'LONG' && (ind.stochRsi14 > 80 || ind.rsi14 > 68)) {
           technicalScore = Math.min(technicalScore, 55);
           reasons.push(`🛑 OVERBOUGHT EXHAUSTION GATE: StochRSI (${ind.stochRsi14}) / RSI (${ind.rsi14.toFixed(1)}) overbought. Capped at 55%.`);
+        }
+      }
+
+      // AI Institutional Rebound Conviction Boost from Sim Lab
+      if (simPairDir?.reboundOpportunity?.isReboundActive) {
+        const ro = simPairDir.reboundOpportunity;
+        if ((action === 'LONG' && ro.reboundSide === 'LONG') || (action === 'SHORT' && ro.reboundSide === 'SHORT')) {
+          technicalScore = Math.max(technicalScore, 68);
+          reasons.push(`🚀 AI REBOUND CONVICTION: Sim Lab verified ${ro.summary}`);
         }
       }
 
@@ -1113,8 +1370,6 @@ export class StandaloneTradingEngine {
       }
 
       // ── Gate 7: Institutional 4-Regime & Volume Profile (Sim Lab Port 4000) ──
-      const allSimDirs = getSimPairDirectives();
-      const simPairDir = allSimDirs[symbol] || allSimDirs[symbol?.toUpperCase()];
       if (simPairDir) {
         // 7a. Compression Squeeze — hard cap at 65% until breakout
         if (simPairDir.regime?.type === 'REGIME_COMPRESSION_SQUEEZE' && simPairDir.regime?.isBbSqueeze) {
@@ -1148,6 +1403,42 @@ export class StandaloneTradingEngine {
         } else if (kl?.dProcTrend === 'STEPPING_DOWN' && action === 'SHORT') {
           technicalScore = Math.min(72, technicalScore + 4);
           reasons.push(`📉 D-POC MIGRATION [Sim Lab]: Developing POC stepping down — bearish value migration (+4%).`);
+        }
+
+        // 7e. Box POC Retest & Anti-Chase Breakout Veto [Sim Lab Directive]
+        const box = kl?.consolidationBox;
+        const isBoxEnabled = activeStrategy.layer1?.boxConsolidationRetest !== false &&
+                             activeStrategy.layer3?.boxConsolidationRetest !== false;
+        if (box && box.isBoxActive && isBoxEnabled) {
+          const tfLabel = `${(box.boxTimeframe || '15m').toUpperCase()} Box`;
+          if (box.status === 'WAITING_FOR_POC_RETEST') {
+            technicalScore = Math.min(technicalScore, 55);
+            reasons.push(`🛑 BOX ANTI-CHASE VETO [Sim Lab Directive]: ${tfLabel} impulse active without POC retest. Waiting for pullback to POC ($${Number(box.boxPoc).toFixed(2)}). Confidence capped at 55%.`);
+          } else if (box.status === 'AT_POC_RETEST' && box.breakoutSide === action) {
+            const hasRejectionWick = action === 'LONG' ? (ind.lowerWickPct >= 25) : (ind.upperWickPct >= 25);
+            const hasReversalColor = action === 'LONG' ? (ind.candleColor === 'GREEN') : (ind.candleColor === 'RED');
+            const isConfirmedBounce = hasRejectionWick || hasReversalColor;
+            if (isConfirmedBounce) {
+              technicalScore = Math.min(72, technicalScore + 15);
+              reasons.push(`🎯 BOX POC RETEST [Sim Lab Directive]: Clean ${tfLabel} POC pullback retest ($${Number(box.boxPoc).toFixed(2)}, dist: ${Number(box.distToPocPct || 0).toFixed(2)}%) with ${hasRejectionWick ? `${action === 'LONG' ? ind.lowerWickPct : ind.upperWickPct}% wick` : 'reversal candle'} (+15%).`);
+            } else {
+              technicalScore = Math.min(technicalScore, 48);
+              reasons.push(`⚠️ BOX POC RETEST: Price at Box POC ($${Number(box.boxPoc).toFixed(2)}) but lacks reversal/absorption confirmation (candle ${ind.candleColor}, wick ${action === 'LONG' ? ind.lowerWickPct : ind.upperWickPct}%). Capped at 48%.`);
+            }
+          }
+        }
+
+        // 7f. Future Dynamic Sim Lab Indicators & TA Confluence Passthrough
+        if ((simPairDir as any).extraTaConfluences?.length) {
+          const extras = (simPairDir as any).extraTaConfluences;
+          for (const extra of extras) {
+            if (typeof extra.scoreBonus === 'number') {
+              technicalScore = Math.max(0, Math.min(72, technicalScore + extra.scoreBonus));
+            }
+            if (extra.reason) {
+              reasons.push(`⚡ ${extra.name || 'NEW TA'} [Sim Lab Directive]: ${extra.reason}`);
+            }
+          }
         }
       }
 
@@ -1248,6 +1539,20 @@ export class StandaloneTradingEngine {
       }
 
       confidence = Math.max(0, Math.min(100, technicalScore + smcBonus));
+
+      // ── Universal Non-Bypassable Candle Retest & Reversal Gate ───────────────
+      // Non-bypassable core baseline: irrespective of strategy layer toggles or pair overrides,
+      // never execute a Long order into an unconfirmed expanding red candle (falling knife) or buy an upper wick trap.
+      const candleConfirm = evaluatePullbackConfirmation(action, ind, {
+        isReboundActive: Boolean(simPairDir?.reboundOpportunity?.isReboundActive),
+        dynamicWickThreshold: simPairDir?.reboundOpportunity?.dynamicWickThreshold,
+      });
+      if (!candleConfirm.isConfirmed) {
+        const prevAction = action;
+        action = 'HOLD';
+        confidence = Math.min(confidence, candleConfirm.capScore ?? 45);
+        reasons.push(`🛑 UNIVERSAL CANDLE CONFIRMATION GATE: ${candleConfirm.reason} (${prevAction} aborted -> HOLD).`);
+      }
     }
 
     // ── 4. LAYER 5: Dynamic Leverage & Execution Trigger Check ─────────────────
@@ -1323,27 +1628,24 @@ export class StandaloneTradingEngine {
     let orderType: 'MARKET' | 'POST_ONLY_LIMIT' = 'MARKET';
     let postOnly = false;
 
-    // Dynamic Per-Pair Maker Offset from Sim Lab Directive
+    // Dynamic Per-Pair Maker Offset from Sim Lab Directive and Active Regime
+    // Calibrated for Top-Of-Book Maker placement (high fill probability without crossing the spread)
+    const isChop = this.directives.regime === 'RANGING_CHOP';
+    const isHighVol = this.directives.regime === 'HIGH_VOLATILITY';
     const dynamicOffset = typeof pairOverrides?.makerOffsetPct === 'number'
       ? pairOverrides.makerOffsetPct
-      : 0.0003;
+      : (isChop ? 0.0006 : isHighVol ? 0.0010 : 0.0008);
 
     if (isTriggered && action === 'LONG') {
-      const nearest = ind.smc?.fvg?.nearestFVG;
-      const fvgTop = (nearest && nearest.type === 'BULLISH_FVG') ? nearest.top : undefined;
-      const emaSupport = (ind.ema9 && ind.ema9 < entry) ? ind.ema9 : entry * 0.9995;
-      const tightMakerCap = entry * (1 - dynamicOffset); // Dynamically calibrated below entry to prevent crossing ask
-      const candidateLimit = fvgTop ? Math.min(entry, fvgTop) : emaSupport;
-      limitPrice = Number(Math.min(tightMakerCap, candidateLimit).toFixed(4));
+      // Top-of-book maker pricing: sits right behind the best ask (e.g. 6-8 bps)
+      // Guarantees #1 queue position on the bid side for rapid fills with 0% maker fees
+      limitPrice = Number((entry * (1 - dynamicOffset)).toFixed(4));
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     } else if (isTriggered && action === 'SHORT') {
-      const nearest = ind.smc?.fvg?.nearestFVG;
-      const fvgBottom = (nearest && nearest.type === 'BEARISH_FVG') ? nearest.bottom : undefined;
-      const emaResistance = (ind.ema9 && ind.ema9 > entry) ? ind.ema9 : entry * 1.0005;
-      const tightMakerFloor = entry * (1 + dynamicOffset); // Dynamically calibrated above entry to prevent crossing bid
-      const candidateLimit = fvgBottom ? Math.max(entry, fvgBottom) : emaResistance;
-      limitPrice = Number(Math.max(tightMakerFloor, candidateLimit).toFixed(4));
+      // Top-of-book maker pricing: sits right behind the best bid (e.g. 6-8 bps)
+      // Guarantees #1 queue position on the ask side for rapid fills with 0% maker fees
+      limitPrice = Number((entry * (1 + dynamicOffset)).toFixed(4));
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     }
@@ -1362,6 +1664,7 @@ export class StandaloneTradingEngine {
       limitPrice,
       orderType,
       postOnly,
+      executionProfile: 'STANDARD_SWING',
       stopLoss: sl,
       takeProfit: tp,
       takeProfit1,
@@ -1373,8 +1676,13 @@ export class StandaloneTradingEngine {
       baseScore: confidence,
       indicators: ind,
       reasons,
-      strategyName: isCustomPair ? `${activeStrategy.name} (${symbol})` : activeStrategy.name,
-      strategyTags: [activeStrategy.id, ...(isCustomPair ? ['pair-override'] : [])],
+      strategyName: simPairDir?.reboundOpportunity?.isReboundActive
+        ? (simPairDir.reboundOpportunity.reboundSide === 'LONG' ? 'AI Institutional V-Rebound' : 'AI Blow-Off Top Reversal')
+        : (isCustomPair ? `${activeStrategy.name} (${symbol})` : activeStrategy.name),
+      strategyTags: [
+        ...(simPairDir?.reboundOpportunity?.isReboundActive ? ['AI-Brain', 'Rebound', simPairDir.reboundOpportunity.sweepType || 'Reversal'] : [activeStrategy.id]),
+        ...(isCustomPair ? ['pair-override'] : [])
+      ],
       entryRationale: reasons.slice(0, 3).join(' · '),
       strategyAttribution: {
         strategyId: activeStrategy.id,

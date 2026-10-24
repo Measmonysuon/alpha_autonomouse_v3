@@ -23,9 +23,10 @@ import { logger } from '../utils/logger';
 import { StandaloneSignal, standaloneEngine } from '../engine/standalone-engine';
 import { AIBrainEvaluation } from '../ai/brain';
 import { riskGuard, RiskValidationResult } from '../risk/guard';
-import { mcpClient } from '../mcp/client';
+import { mcpClient, quantizeOrderParameters } from '../mcp/client';
 import { telegramNotifier } from '../notify/telegram';
 import type { StrategyAttribution } from '../strategy/types';
+import { getSimPairDirective } from '../strategy/manager';
 import { dbClient } from '../db/database';
 
 export interface TradeLifecycleEvent {
@@ -47,6 +48,7 @@ export interface TradeRecord {
   takeProfit: number;
   takeProfit1?: number;
   takeProfit2?: number;
+  dynamicTakeProfit?: number;
   isDualTp?: boolean;
   stopLoss: number;
   sizeUsd: number;
@@ -54,6 +56,8 @@ export interface TradeRecord {
   leverage: number;
   allocatedUsd: number;
   confidence: number;
+  executionProfile?: 'STANDARD_SWING';
+  microTargetProfitUsd?: number;
   orderId?: string;
   txHash?: string;
   status: 'open' | 'closed_tp' | 'closed_sl' | 'closed_manual';
@@ -93,6 +97,9 @@ export interface TradeRecord {
   unrealizedPnlPct?: number;
   isMaker?: boolean;
   routing?: string;
+  onChainTpSlSecured?: boolean;
+  stagnationRatchetApplied?: boolean;
+  ratchetLevel?: number;
 }
 
 export interface ShadowTrade {
@@ -157,11 +164,11 @@ export class TradeExecutor {
   /**
    * Ensure leverage is configured on Decibel DEX subaccount for the market before trading
    */
-  public async ensureLeverageConfigured(symbol: string, targetLeverage: number): Promise<void> {
+  public async ensureLeverageConfigured(symbol: string, targetLeverage: number): Promise<number> {
     const symKey = symbol.replace('-', '/').toUpperCase();
     const desired = Math.max(1, Math.min(100, Math.round(targetLeverage)));
     if (this.configuredLeverages.get(symKey) === desired) {
-      return;
+      return desired;
     }
 
     try {
@@ -169,8 +176,26 @@ export class TradeExecutor {
       await mcpClient.setLeverage(symKey, desired, 'cross');
       this.configuredLeverages.set(symKey, desired);
       logger.info(`✅ [EXECUTOR] On-chain leverage successfully set to ${desired}x for ${symKey}`);
+      return desired;
     } catch (err: any) {
+      const msg = String(err?.message || '');
+      const match = msg.match(/exceeds maximum (\d+)x/i);
+      if (match && match[1]) {
+        const maxLev = parseInt(match[1], 10);
+        if (maxLev > 0 && maxLev < desired) {
+          try {
+            logger.warn(`⚠️ [EXECUTOR] Leverage ${desired}x exceeds maximum ${maxLev}x for ${symKey}. Clamping to ${maxLev}x...`);
+            await mcpClient.setLeverage(symKey, maxLev, 'cross');
+            this.configuredLeverages.set(symKey, maxLev);
+            logger.info(`✅ [EXECUTOR] On-chain leverage successfully clamped and set to ${maxLev}x for ${symKey}`);
+            return maxLev;
+          } catch (clampErr: any) {
+            logger.warn(`⚠️ [EXECUTOR] Failed to set clamped leverage for ${symKey}: ${clampErr.message}`);
+          }
+        }
+      }
       logger.warn(`⚠️ [EXECUTOR] Failed to set leverage for ${symKey}: ${err.message}. Proceeding with trade.`);
+      return desired;
     }
   }
 
@@ -183,6 +208,16 @@ export class TradeExecutor {
   }
 
   public notifyTradeClosed(trade: TradeRecord): void {
+    const isStopHit = trade.status === 'closed_sl' || (trade.pnlUsd !== undefined && trade.pnlUsd <= -0.30) || (trade.exitReason && trade.exitReason.includes('SL'));
+    if (isStopHit) {
+      const reason = `Stop hit (PnL: $${trade.pnlUsd?.toFixed(2) ?? 'N/A'}, Exit: ${trade.exitReason || trade.status}). 45m post-stop fleet quarantine active.`;
+      riskGuard.triggerL4TrapCoolOff(trade.symbol, trade.action, 'STOP_LOSS_REVERSAL', reason, 45);
+      try {
+        const { pushInstantVeto } = require('../pipeline/telemetry-feeder');
+        pushInstantVeto(trade.symbol, trade.action, 'STOP_LOSS_REVERSAL', reason, 45).catch(() => {});
+      } catch {}
+    }
+
     for (const fn of this.onTradeClosedListeners) {
       try {
         fn(trade);
@@ -321,16 +356,25 @@ export class TradeExecutor {
         this.tradesCache = this.tradesCache.filter(t => sqliteIdSet.has(t.id));
         const cacheMap = new Map(this.tradesCache.map(t => [t.id, t]));
         for (const st of sqliteTrades) {
-          const rawStatus = (st.status || 'closed').toLowerCase();
-          const status: 'open' | 'closed_tp' | 'closed_sl' | 'closed_manual' =
-            rawStatus.includes('open') ? 'open' :
-              rawStatus.includes('tp') ? 'closed_tp' :
-                rawStatus.includes('sl') ? 'closed_sl' : 'closed_manual';
-
           const grossPnl = Number(st.realized_pnl || 0);
           const feeUsd = Number(st.fee_usd || 0);
           // Authoritative on-chain Net Realized PnL = Gross PnL minus on-chain protocol fees
           const netPnl = grossPnl - feeUsd;
+
+          const rawStatus = (st.status || 'closed').toLowerCase();
+          let status: 'open' | 'closed_tp' | 'closed_sl' | 'closed_manual' =
+            rawStatus.includes('open') ? 'open' :
+              rawStatus.includes('tp') ? 'closed_tp' :
+                rawStatus.includes('sl') ? 'closed_sl' : 'closed_manual';
+
+          // Authoritative Ledger Rectification: Never allow a trade with net loss to remain 'closed_tp'
+          if (status === 'closed_tp' && netPnl < -0.0001) {
+            status = 'closed_sl';
+          }
+          let rectifiedExitReason = st.exit_reason;
+          if (status !== 'open' && netPnl < -0.0001 && rectifiedExitReason && (rectifiedExitReason.toUpperCase().includes('TP') || rectifiedExitReason.toUpperCase().includes('HARVEST') || rectifiedExitReason.toUpperCase().includes('TRAILING'))) {
+            rectifiedExitReason = 'ON_CHAIN_SL';
+          }
           const existing = cacheMap.get(st.id);
 
           if (!existing) {
@@ -361,8 +405,8 @@ export class TradeExecutor {
               feeUsd: feeUsd,
               pnlPct: st.realized_pnl_pct !== null && st.realized_pnl_pct !== undefined ? Number(st.realized_pnl_pct) : undefined,
               strategyName: st.strategy_name ?? 'Decibel Autonomous Trade',
-              exitReason: st.exit_reason ?? undefined,
-              notes: st.exit_reason ?? undefined,
+              exitReason: rectifiedExitReason ?? undefined,
+              notes: rectifiedExitReason ?? undefined,
               // Authoritative manual flag from DB — 1 = human-placed trade
               isManual: st.is_manual === 1,
             };
@@ -374,6 +418,9 @@ export class TradeExecutor {
             existing.grossPnlUsd = grossPnl;
             existing.feeUsd = feeUsd;
             existing.status = status;
+            if (status !== 'open' && netPnl < -0.0001 && existing.exitReason && (existing.exitReason.toUpperCase().includes('TP') || existing.exitReason.toUpperCase().includes('HARVEST') || existing.exitReason.toUpperCase().includes('TRAILING'))) {
+              existing.exitReason = 'ON_CHAIN_SL';
+            }
             existing.sizeBase = st.size || existing.sizeBase;
             existing.entryPrice = st.entry_price || existing.entryPrice;
             // Always refresh the manual flag from DB in case it was updated
@@ -670,9 +717,21 @@ export class TradeExecutor {
             if (!existing.breakevenMoved) {
               const maxSoft = isLong ? existing.entryPrice * 0.997 : (existing.hardStopLoss || hardSl) * 0.998;
               const minSoft = isLong ? (existing.hardStopLoss || hardSl) * 1.002 : existing.entryPrice * 1.003;
-              existing.stopLoss = isLong
-                ? Number(Math.max(minSoft, Math.min(maxSoft, existing.stopLoss || initialSoftSl)).toFixed(4))
-                : Number(Math.min(maxSoft, Math.max(minSoft, existing.stopLoss || initialSoftSl)).toFixed(4));
+              if (isLong) {
+                if (minSoft < maxSoft) {
+                  existing.stopLoss = Number(Math.max(minSoft, Math.min(maxSoft, existing.stopLoss || initialSoftSl)).toFixed(4));
+                } else {
+                  const target = existing.stopLoss || initialSoftSl;
+                  existing.stopLoss = Number(Math.max(hardSl, Math.min(existing.entryPrice * 0.999, target)).toFixed(4));
+                }
+              } else {
+                if (minSoft < maxSoft) {
+                  existing.stopLoss = Number(Math.min(maxSoft, Math.max(minSoft, existing.stopLoss || initialSoftSl)).toFixed(4));
+                } else {
+                  const target = existing.stopLoss || initialSoftSl;
+                  existing.stopLoss = Number(Math.min(hardSl, Math.max(existing.entryPrice * 1.001, target)).toFixed(4));
+                }
+              }
               existing.softRatchetPrice = existing.stopLoss;
             } else {
               // Ratchet can ONLY improve in favor of trade (up for Long, down for Short), never backward
@@ -697,15 +756,34 @@ export class TradeExecutor {
           modified = true;
         }
 
+        // Detect on-chain partial execution (TP1 matched by DEX):
+        if (existing && existing.sizeBase && pos.sizeBase && pos.sizeBase < existing.sizeBase * 0.85 && !(existing as any).tp1Harvested) {
+          (existing as any).tp1Harvested = true;
+          const lockedProfitSl = isLong ? pos.entryPrice + (softSlDist * 0.35) : pos.entryPrice - (softSlDist * 0.35);
+          existing.stopLoss = Number(lockedProfitSl.toFixed(4));
+          existing.hardStopLoss = Number(lockedProfitSl.toFixed(4));
+          if (existing.takeProfit2 && existing.takeProfit2 > 0) {
+            existing.takeProfit = existing.takeProfit2;
+          }
+          modified = true;
+          logger.info(`🎉 [ON-CHAIN TP1 FILLED] Partial scale banked on ${existing.symbol}! Ratcheted runner SL to locked profit: $${existing.stopLoss}`);
+        }
+
         // Auto-arm on-chain hard SL & dynamic hard TP if position is open without an active stop or TP order
-        const targetTp = (existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || activeTp);
-        const needsOnChainSl = (!pos.stopLoss || pos.stopLoss <= 0) && hardSl > 0;
-        const needsOnChainTp = (!pos.takeProfit || pos.takeProfit <= 0 || (targetTp > 0 && Math.abs(pos.takeProfit - targetTp) / targetTp > 0.005)) && targetTp > 0;
+        const targetTp = (existing?.takeProfit1 && existing.takeProfit1 > 0)
+          ? existing.takeProfit1
+          : ((existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || activeTp));
+
+        // Fix gas drawdown: Decibel DEX get_positions does not return trigger order triggers on the position struct.
+        // Check if on-chain TP/SL has already been armed for this trade, avoiding the 15-second infinite broadcast loop.
+        const isAlreadyArmed = existing?.onChainTpSlSecured === true;
+        const needsOnChainSl = !isAlreadyArmed && hardSl > 0;
+        const needsOnChainTp = !isAlreadyArmed && targetTp > 0;
 
         if ((needsOnChainSl || needsOnChainTp) && isClientConfigured() && !config.PAPER_TRADING) {
           const now = Date.now();
           const lastArm = this.autoArmCooldownMap.get(pos.symbol) || 0;
-          if (now - lastArm >= 15_000) {
+          if (now - lastArm >= 60_000) {
             this.autoArmCooldownMap.set(pos.symbol, now);
             logger.info(`🛡️🎯 [CONCRETE ARMOR] Auto-arming on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
             mcpClient.setTpSl({
@@ -713,6 +791,10 @@ export class TradeExecutor {
               tpTrigger: targetTp > 0 ? targetTp : undefined,
               slTrigger: hardSl,
             }).then(() => {
+              if (existing) {
+                existing.onChainTpSlSecured = true;
+                this.saveTrades();
+              }
               logger.info(`🛡️🎯 [CONCRETE ARMOR] Successfully secured hard on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
             }).catch((err: any) => {
               logger.warn(`Failed auto-arming TP/SL for ${pos.symbol}: ${err.message}`);
@@ -948,8 +1030,12 @@ export class TradeExecutor {
       const onChainAllocated = liveOnChainPositions.reduce((sum, p) => sum + (p.allocatedUsd || 0), 0);
       const localAllocated = openTrades.reduce((sum, t) => sum + (t.allocatedUsd || 0), 0);
       const currentAllocated = Math.max(onChainAllocated, localAllocated);
-      const accountEquity = config.BUDGET_USD; // or live margin balance
-      const availableMargin = Math.max(0, config.BUDGET_USD - currentAllocated);
+      const onChainBal = this.cachedOnChainBalance?.balanceUsd || 0;
+      // Real effective budget is capped by config.BUDGET_USD, but cannot exceed real on-chain equity when live
+      const liveEquity = (onChainBal > 0 && !config.PAPER_TRADING) ? onChainBal : config.BUDGET_USD;
+      const effectiveBudget = Math.min(config.BUDGET_USD, liveEquity);
+      const accountEquity = effectiveBudget;
+      const availableMargin = Math.max(0, effectiveBudget - currentAllocated);
 
       // 1. Run Pre-Trade Risk Guard
       const risk = riskGuard.validateSignal(signal, aiEval, accountEquity, availableMargin, currentAllocated, openTrades.length);
@@ -970,6 +1056,7 @@ export class TradeExecutor {
       let orderId = tradeId;
       let txHash = isPaper ? `paper_tx_${Date.now()}` : '';
       let liveResult: { filled: boolean; orderId: string; txHash: string; isMaker?: boolean; actualEntryPrice?: number; actualSize?: number; cancelledReason?: string } | null = null;
+      let tpSlSecured = false;
 
       if (!isPaper && this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
         if (this.cachedOnChainBalance.lastChecked > 0 && this.cachedOnChainBalance.aptBalance < 0.002) {
@@ -982,11 +1069,31 @@ export class TradeExecutor {
         }
         try {
           // Ensure on-chain leverage is explicitly configured on Decibel DEX before opening
-          await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
+          const actualLev = await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
+          if (actualLev && actualLev !== risk.leverage) {
+            logger.info(`⚙️ [EXECUTOR] Adjusting order leverage from ${risk.leverage}x to exchange maximum ${actualLev}x for ${signal.symbol}`);
+            risk.leverage = actualLev;
+          }
 
-          const isUrgent = signal.confidence >= 90 || risk.directivesUsed.regime === 'HIGH_VOLATILITY';
-          // PILLAR 1: When PostOnly is active, strictly ban taker fallback to eliminate taker fee drag completely
-          const allowTakerFallback = !signal.postOnly && (isUrgent || signal.confidence >= 80);
+          const directivesAny = risk.directivesUsed as any;
+          const regime = directivesAny?.regime || 'IDIOSYNCRATIC_CRYPTO';
+          const scoreFloor = directivesAny?.scoreFloor || 70;
+
+          // Adaptive Maker-First Routing with Conviction Taker Fallback:
+          const postOnly = signal.postOnly;
+          const limitPrice = signal.limitPrice;
+          const allowTakerFallback = directivesAny?.layer5?.allowTakerFallback === true || signal.confidence >= 75;
+
+          // Dynamic maker fill timeout: adaptive by regime (30s trending/high-vol, 60s range, default 45s)
+          let defaultTimeoutMs = 45000;
+          if (regime === 'HIGH_VOLATILITY' || regime === 'TRENDING_BREAKOUT') {
+            defaultTimeoutMs = 30000;
+          } else if (regime === 'RANGE_BOUND' || regime === 'COMPRESSION') {
+            defaultTimeoutMs = 60000;
+          }
+
+          const makerTimeoutMs = directivesAny?.makerFillTimeoutMs 
+            || (directivesAny?.optimalEntry?.ttlSeconds ? Math.min(60000, directivesAny.optimalEntry.ttlSeconds * 1000) : defaultTimeoutMs);
 
           liveResult = await this.executeOnChain(
             signal.symbol,
@@ -994,9 +1101,13 @@ export class TradeExecutor {
             risk.positionSizeBase,
             signal.entryPrice,
             risk.leverage,
-            signal.limitPrice,
-            signal.postOnly,
+            limitPrice,
+            postOnly,
             allowTakerFallback,
+            makerTimeoutMs,
+            signal.confidence,
+            scoreFloor,
+            regime,
           );
 
           if (!liveResult.filled) {
@@ -1007,7 +1118,18 @@ export class TradeExecutor {
           orderId = liveResult.orderId;
           txHash = liveResult.txHash;
           if (liveResult.actualEntryPrice && liveResult.actualEntryPrice > 0) {
+            const oldEntry = signal.entryPrice;
             signal.entryPrice = liveResult.actualEntryPrice;
+            // If entry price shifted from stale signal candle close, adjust TP and SL proportionally
+            if (oldEntry > 0 && Math.abs(signal.entryPrice - oldEntry) / oldEntry > 0.002) {
+              const priceRatio = signal.entryPrice / oldEntry;
+              if (signal.takeProfit > 0) {
+                signal.takeProfit = Number((signal.takeProfit * priceRatio).toFixed(4));
+              }
+              if (signal.stopLoss > 0) {
+                signal.stopLoss = Number((signal.stopLoss * priceRatio).toFixed(4));
+              }
+            }
           }
           if (liveResult.actualSize && liveResult.actualSize > 0) {
             risk.positionSizeBase = liveResult.actualSize;
@@ -1023,15 +1145,18 @@ export class TradeExecutor {
           // On-chain SL is strictly the HARD SL. Soft SL / Ratchet SL is managed off-chain inside our software system.
           if (signal.takeProfit > 0 || hardSlPrice > 0) {
             logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | Hard SL (On-Chain): $${hardSlPrice} on ${signal.symbol} (Soft Ratchet SL: $${signal.stopLoss} in-system)...`);
+            // Brief 1.5s propagation window to guarantee matching engine has finalized position settlement on-chain
+            await new Promise((r) => setTimeout(r, 1500));
             try {
               await mcpClient.setTpSl({
                 symbol: signal.symbol,
                 tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
                 slTrigger: hardSlPrice > 0 ? hardSlPrice : undefined,
               });
+              tpSlSecured = true;
               logger.info(`✅ [ON-CHAIN TP/SL] Confirmed Hard TP/SL placement for ${signal.symbol}`);
             } catch (tpErr: any) {
-              logger.warn(`⚠️ [ON-CHAIN TP/SL] Placement note: ${tpErr?.message || tpErr}`);
+              logger.warn(`⚠️ [ON-CHAIN TP/SL] Initial placement note: ${tpErr?.message || tpErr}. Background reconciler will auto-secure on the next cycle.`);
             }
           }
         } catch (err: any) {
@@ -1111,6 +1236,8 @@ export class TradeExecutor {
         leverage: risk.leverage,
         allocatedUsd: risk.allocatedUsd,
         confidence: aiEval.confidenceScore,
+        executionProfile: signal.executionProfile,
+        microTargetProfitUsd: signal.microTargetProfitUsd,
         orderId,
         txHash,
         status: 'open',
@@ -1129,6 +1256,7 @@ export class TradeExecutor {
         lifecycleEvents: [initialLifecycleEvent],
         isMaker: liveResult?.isMaker ?? false,
         routing: liveResult?.isMaker ? 'MAKER_POST_ONLY' : (isPaper ? 'PAPER' : 'TAKER_IOC'),
+        onChainTpSlSecured: isPaper ? true : tpSlSecured,
       };
 
       const existingIdx = this.tradesCache.findIndex((t) => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');
@@ -1170,6 +1298,10 @@ export class TradeExecutor {
     targetLimitPrice?: number,
     preferPostOnly = false,
     allowTakerFallback = false,
+    makerTimeoutMs?: number,
+    initialConfidence?: number,
+    confidenceFloor?: number,
+    regime?: string,
   ): Promise<{
     orderId: string;
     txHash: string;
@@ -1195,14 +1327,17 @@ export class TradeExecutor {
     }
 
     const isBuy = side === 'buy';
-    // If entryPrice <= 0, fetch current mark price
-    let refPrice = entryPrice;
-    if (refPrice <= 0) {
-      try {
-        const p = await mcpClient.getPrice(symbol);
-        refPrice = p.markPrice || p.lastPrice || 0;
-      } catch { }
+    // Always fetch fresh live mark/last price from Decibel DEX right before on-chain execution.
+    // Stale signal prices (e.g. from candle closes or slow analysis) guarantee IOC violations
+    // because the limit price will be placed behind current best ask (for buy) or bid (for sell).
+    let livePrice = 0;
+    try {
+      const p = await mcpClient.getPrice(symbol);
+      livePrice = p.markPrice || p.lastPrice || 0;
+    } catch (e: any) {
+      logger.warn(`⚠️ Failed to fetch fresh live price for ${symbol} before on-chain execution: ${e?.message || e}`);
     }
+    const refPrice = livePrice > 0 ? livePrice : entryPrice;
 
     // Determine Maker Post-Only Limit Price vs Taker IOC Price
     // Decibel TimeInForce enum: 0 = GTC, 1 = PostOnly (Maker), 2 = ImmediateOrCancel (IOC)
@@ -1210,30 +1345,47 @@ export class TradeExecutor {
     const timeInForce = isMakerPostOnly ? 1 : 2; // 1 = PostOnly Maker, 2 = IOC Taker
     const reduceOnly = false; // Decibel param 7 is reduce_only: bool! MUST be false for opening new positions.
 
+    // 0.02 (2.0%) slippage buffer for IOC Taker execution.
+    // Crypto altcoins on Decibel order book can experience wide top-of-book spreads (20-60 bps) and thin depth.
+    // 2.0% guarantees aggressive fill capability while strictly preventing catastrophic execution.
+    const takerSlippage = 0.02;
     let limitPrice = 0;
     if (isMakerPostOnly && targetLimitPrice) {
-      limitPrice = targetLimitPrice;
+      // Dynamic Maker Offset: Driven by Sim Lab Pair Directives and active Market Regime
+      const pairDir = getSimPairDirective(symbol);
+      const simRegime = standaloneEngine.getDirectives()?.regime;
+      const isChop = simRegime === 'RANGING_CHOP';
+      const isHighVol = simRegime === 'HIGH_VOLATILITY';
+      const offset = typeof pairDir?.makerOffsetPct === 'number'
+        ? pairDir.makerOffsetPct
+        : (isChop ? 0.0006 : isHighVol ? 0.0010 : 0.0008);
+
+      // Strict Anti-Spread Cross Invariant:
+      // A Maker Post-Only order MUST sit strictly inside the book to avoid matching immediately as a taker.
+      // If live mark/ask price has moved lower (for BUY) or higher (for SELL), clamp targetLimitPrice
+      // so it NEVER crosses the best bid/ask and never triggers Decibel "Post Only violation".
+      if (isBuy) {
+        const maxMakerPrice = refPrice > 0 ? refPrice * (1 - offset) : targetLimitPrice;
+        limitPrice = Math.min(targetLimitPrice, maxMakerPrice);
+      } else {
+        const minMakerPrice = refPrice > 0 ? refPrice * (1 + offset) : targetLimitPrice;
+        limitPrice = Math.max(targetLimitPrice, minMakerPrice);
+      }
     } else {
-      const takerSlippage = 0.002;
+      // Dynamic Taker Slippage Buffer:
+      // In CLOB execution, 0.002 (0.20%) or stale refPrice causes Decibel on-chain "IOC Violation" cancels.
+      // 0.02 (2.00%) with live refPrice ensures immediate execution against resting liquidity.
       limitPrice = refPrice > 0
         ? (isBuy ? refPrice * (1 + takerSlippage) : refPrice * (1 - takerSlippage))
         : 0;
     }
 
-    const chainPrice = limitPrice > 0
-      ? Math.round((limitPrice * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize
-      : (isBuy ? 999999999999 : 1);
-
-    let chainSize = Math.round(size * Math.pow(10, market.sizeDecimals));
-    if (market.lotSize && market.lotSize > 0) {
-      chainSize = Math.round(chainSize / market.lotSize) * market.lotSize;
-    }
-    if (market.minSize && chainSize < market.minSize) {
-      chainSize = market.minSize;
-    }
-
-    // Double-check effective notional to prevent decimal misconfigurations from inflating positions
-    const effectiveBase = chainSize / Math.pow(10, market.sizeDecimals);
+    const { chainPrice, chainSize, effectiveBaseSize: effectiveBase } = quantizeOrderParameters(
+      market,
+      limitPrice,
+      size,
+      isBuy,
+    );
     const effectiveNotional = effectiveBase * (refPrice > 0 ? refPrice : entryPrice);
     const maxAllowedNotional = Math.max(config.BUDGET_USD * (targetLeverage || config.MAX_LEVERAGE) * 1.5, 200);
 
@@ -1243,12 +1395,31 @@ export class TradeExecutor {
       throw new Error(err);
     }
 
+    // PRE-FLIGHT DOUBLE ORDER SHIELD:
+    // Query Decibel DEX to ensure no resting order exists for this market before placing a new one.
+    // If a resting limit order exists (e.g. from an orphaned container run or previous cycle), cancel it first.
+    try {
+      const restingOrders = await mcpClient.getOrders(symbol);
+      if (restingOrders && restingOrders.length > 0) {
+        logger.warn(`🛡️ [DOUBLE ORDER SHIELD] Found ${restingOrders.length} existing resting order(s) for ${symbol} on Decibel DEX. Sweeping before placing new order...`);
+        for (const ord of restingOrders) {
+          const cid = ord.clientOrderId || ord.client_order_id;
+          if (cid) {
+            await mcpClient.cancelClientOrder(symbol, cid).catch(() => {});
+          }
+        }
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    } catch (orderCheckErr: any) {
+      logger.debug(`[PRE-FLIGHT DOUBLE ORDER SHIELD] Notice: ${orderCheckErr.message}`);
+    }
+
     const clientOrderId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     if (isMakerPostOnly) {
       logger.info(`🏛️ [MAKER POST-ONLY] Routing resting FVG limit order on Decibel DEX: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (0% Taker Fee)`);
     } else {
-      logger.info(`⚡ [ON-CHAIN IOC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (IOC Market Execution)`);
+      logger.info(`⚡ [ON-CHAIN IOC] Signing Decibel order: ${symbol} ${side.toUpperCase()} sizeUnits=${chainSize} priceLimit=${chainPrice} (IOC Market Execution, slippageCap=${(takerSlippage * 100).toFixed(1)}%)`);
     }
 
     const sendTx = async (): Promise<{ txHash: string; isCancelledByEngine: boolean; cancelReason: string }> => {
@@ -1306,7 +1477,7 @@ export class TradeExecutor {
             const status = evData?.status?.__variant__ || evData?.status;
             if (status === 'CANCELLED') {
               isCancelledByEngine = true;
-              cancelReason = evData?.details || 'Order rejected by matching engine (crossed spread)';
+              cancelReason = evData?.details || 'Order rejected by matching engine';
               break;
             }
           }
@@ -1331,77 +1502,200 @@ export class TradeExecutor {
     }
 
     if (txRes.isCancelledByEngine) {
-      logger.warn(`⚠️ [MAKER ROUTING] Decibel matching engine rejected PostOnly order for ${symbol}: ${txRes.cancelReason}`);
-      if (allowTakerFallback) {
-        logger.info(`⚡ [MAKER FALLBACK] Falling back to urgent IOC Taker execution for ${symbol}...`);
-        return this.executeOnChain(symbol, side, size, entryPrice, targetLeverage, targetLimitPrice, false, false);
+      if (isMakerPostOnly) {
+        logger.warn(`⚠️ [MAKER ROUTING] Decibel matching engine rejected PostOnly order for ${symbol}: ${txRes.cancelReason}`);
+        if (allowTakerFallback) {
+          logger.info(`⚡ [MAKER FALLBACK] Falling back to urgent IOC Taker execution for ${symbol}...`);
+          return this.executeOnChain(symbol, side, size, entryPrice, targetLeverage, targetLimitPrice, false, false);
+        }
+      } else {
+        logger.warn(`⚠️ [IOC TAKER ROUTING] Decibel matching engine rejected IOC order for ${symbol}: ${txRes.cancelReason}`);
       }
       return {
         orderId: clientOrderId,
         txHash: txRes.txHash,
         filled: false,
-        isMaker: true,
+        isMaker: isMakerPostOnly,
         cancelledReason: txRes.cancelReason,
       };
     }
 
     if (isMakerPostOnly) {
-      logger.info(`⏳ [MAKER POST-ONLY] Resting maker order active on book at $${limitPrice.toFixed(4)}. Polling fill confirmation (max 5s)...`);
+      // Regime-Adaptive Dynamic Timeout (calibrated to 30s-60s to allow healthy pullbacks)
+      let adaptiveTimeoutMs = makerTimeoutMs ?? 45000;
+      if (regime === 'HIGH_VOLATILITY' || regime === 'TRENDING_BREAKOUT') {
+        adaptiveTimeoutMs = Math.min(adaptiveTimeoutMs, 30000);
+      } else if (regime === 'RANGE_BOUND' || regime === 'COMPRESSION') {
+        adaptiveTimeoutMs = Math.max(adaptiveTimeoutMs, 60000);
+      }
+      const timeoutMs = Math.max(25000, Math.min(90000, adaptiveTimeoutMs));
       const symUpper = symbol.replace('-', '/').toUpperCase();
-      const timeoutMs = 5000;
-      const pollIntervalMs = 1000;
+      const baseConfidence = initialConfidence || 72;
+      const minConfidenceGate = confidenceFloor || 68;
+
+      logger.info(
+        `⏳ [DYNAMIC MAKER POST-ONLY] Resting order active at $${limitPrice.toFixed(4)} | ` +
+        `Initial Conf: ${baseConfidence.toFixed(1)}% (Floor: ${minConfidenceGate}%) | ` +
+        `Regime: ${regime || 'STANDARD'} (Max Window: ${timeoutMs / 1000}s)...`
+      );
+
+      const pollIntervalMs = 1500;
       const maxPolls = Math.max(1, Math.floor(timeoutMs / pollIntervalMs));
       let fillConfirmed = false;
       let actualFillPrice = limitPrice > 0 ? limitPrice : refPrice;
-      let actualFillSize = effectiveBase;
+      let actualFillSize = 0;
+      let earlyCancelReason: string | null = null;
+      let shouldUpgradeToMarket = false;
 
       for (let poll = 1; poll <= maxPolls; poll++) {
         await new Promise((r) => setTimeout(r, pollIntervalMs));
+
+        // 1. Check Fill Confirmation on Decibel DEX
         try {
           const positions = await mcpClient.getPositions();
           const pos = positions.find((p) => p.symbol.replace('-', '/').toUpperCase() === symUpper);
-          const hasFill = pos && ((pos.sizeBase && pos.sizeBase > 0) || (pos.sizeUsd && pos.sizeUsd > 0) || ((pos as any).size && (pos as any).size > 0));
-          if (hasFill) {
-            fillConfirmed = true;
-            actualFillPrice = pos.entryPrice || actualFillPrice;
-            actualFillSize = pos.sizeBase || (pos as any).size || actualFillSize;
-            logger.info(`⚡ [MAKER FILLED] Confirmed Maker execution on Decibel DEX! Symbol=${symbol} Entry=$${actualFillPrice} Size=${actualFillSize} (Zero Taker Fee Captured)`);
-            break;
+          const posSize = Number(pos?.sizeBase || (pos as any)?.size || 0);
+
+          if (posSize > 0) {
+            actualFillPrice = pos?.entryPrice || actualFillPrice;
+            actualFillSize = posSize;
+            const fillPct = (posSize / effectiveBase) * 100;
+
+            // Fully or substantially filled (>= 90% of target order size)
+            if (posSize >= effectiveBase * 0.90) {
+              fillConfirmed = true;
+              logger.info(`⚡ [MAKER FILLED] Confirmed Maker execution on Decibel DEX! Symbol=${symbol} Entry=$${actualFillPrice} Size=${actualFillSize} (${fillPct.toFixed(1)}% complete fill, Zero Taker Fee Captured)`);
+              break;
+            } else {
+              // Partial fill: keep resting on book so the remaining order size has time to fill!
+              logger.info(`⏳ [MAKER PARTIAL FILL] ${symbol}: Filled ${posSize.toFixed(4)} / ${effectiveBase.toFixed(4)} (${fillPct.toFixed(1)}%). Continuing to rest on book (poll ${poll}/${maxPolls})...`);
+            }
           }
         } catch (pollErr: any) {
           logger.debug(`Fill poll ${poll} notice: ${pollErr?.message || pollErr}`);
         }
+
+        // 2. Dynamic In-Flight Alpha Thesis & Confidence Evaluation
+        try {
+          const currentPriceData = await mcpClient.getPrice(symbol);
+          const currentPrice = currentPriceData?.markPrice || currentPriceData?.lastPrice || 0;
+          if (currentPrice > 0 && refPrice > 0) {
+            // Price drift relative to trade direction
+            // Positive drift = price is moving favorably (running away from resting maker order)
+            // Negative drift = price is moving adversely against trade thesis
+            const pctChange = isBuy
+              ? ((currentPrice - refPrice) / refPrice) * 100
+              : ((refPrice - currentPrice) / refPrice) * 100;
+
+            // Calibrate sensitivity: require real structural move (~0.5%-1.0%), not normal bid-ask jitter
+            const dynamicConfDelta = pctChange * 10;
+            const currentLiveConfidence = Math.max(0, Math.min(100, baseConfidence + dynamicConfDelta));
+
+            // THESIS DEGRADATION (Adverse Selection Protection):
+            // Cancel only if live confidence drops significantly below floor or drops by >= 12%
+            if (currentLiveConfidence < (minConfidenceGate - 3) || (baseConfidence - currentLiveConfidence) >= 12) {
+              logger.warn(
+                `🛑 [ADVERSE SELECTION SHIELD] Thesis degraded during resting window! ` +
+                `Live Conf: ${currentLiveConfidence.toFixed(1)}% (Initial: ${baseConfidence.toFixed(1)}%, Floor: ${minConfidenceGate}%, Drift: ${pctChange.toFixed(2)}%). ` +
+                `Cancelling resting maker order ${clientOrderId} to prevent toxic fill!`
+              );
+              earlyCancelReason = `ADVERSE_SELECTION_CANCEL: Live confidence (${currentLiveConfidence.toFixed(1)}%) dropped >=12% or below floor`;
+              break;
+            }
+
+            // THESIS ACCELERATION (Urgency Surge / Breakout Chaser):
+            // If live confidence surges by +15% (e.g. 72% -> 87%+) or reaches >= 85%,
+            // market is ripping with high EV. Upgrade to IOC Market Order immediately!
+            if (allowTakerFallback && (currentLiveConfidence >= 85 || (currentLiveConfidence - baseConfidence) >= 15)) {
+              logger.info(
+                `🚀 [ALPHA ACCELERATION] High-conviction breakout surge detected! ` +
+                `Live Conf: ${currentLiveConfidence.toFixed(1)}% (+${(currentLiveConfidence - baseConfidence).toFixed(1)}% drift). ` +
+                `Cancelling resting maker and upgrading to IOC Market Order at $${currentPrice.toFixed(4)}!`
+              );
+              shouldUpgradeToMarket = true;
+              break;
+            }
+          }
+        } catch (dynErr: any) {
+          logger.debug(`Dynamic confidence check notice: ${dynErr?.message || dynErr}`);
+        }
+      }
+
+      // Check if position reached at least 90% by end of window
+      if (!fillConfirmed && actualFillSize >= effectiveBase * 0.90) {
+        fillConfirmed = true;
       }
 
       if (!fillConfirmed) {
-        logger.warn(`⏳ [MAKER TIMEOUT] Order unfilled after ${timeoutMs / 1000}s. Cancelling resting maker order ${clientOrderId} to eliminate phantom risk...`);
+        if (shouldUpgradeToMarket) {
+          try {
+            await mcpClient.cancelClientOrder(symbol, clientOrderId);
+          } catch {}
+          logger.info(`⚡ [URGENCY UPGRADE] Executing immediate IOC Market Taker for ${symbol} due to confidence surge...`);
+          return this.executeOnChain(symbol, side, size, refPrice, targetLeverage, 0, false, false);
+        }
+
+        const cancelLog = earlyCancelReason || `Order unfilled after ${timeoutMs / 1000}s`;
+        logger.warn(`⏳ [MAKER CANCEL] ${cancelLog}. Sweeping resting order ${clientOrderId}...`);
         try {
           await mcpClient.cancelClientOrder(symbol, clientOrderId);
-          await mcpClient.cancelAllOrders(symbol);
         } catch (cErr: any) {
-          logger.warn(`[MAKER TIMEOUT] order cancellation notice: ${cErr?.message || cErr}`);
+          logger.warn(`[MAKER CANCEL] order cancellation notice: ${cErr?.message || cErr}`);
         }
-        // Enforce 60s cooldown for this symbol to prevent consecutive cycles from stacking resting orders
-        this.markExecutionInFlight(symUpper, 60000);
+        // Post-Timeout DEX Shield: If cancelled without fill and no fallback, cool off pair for 3m (180s)
+        // to prevent immediate re-entry loop churn on the DEX
+        this.markExecutionInFlight(symUpper, allowTakerFallback ? 45000 : 180000);
 
         // Post-cancellation check: verify if the order filled right before/during the cancel window
         try {
           const finalPositions = await mcpClient.getPositions();
           const finalPos = finalPositions.find((p) => p.symbol.replace('-', '/').toUpperCase() === symUpper);
-          if (finalPos && ((finalPos.sizeBase && finalPos.sizeBase > 0) || (finalPos.sizeUsd && finalPos.sizeUsd > 0))) {
-            logger.info(`⚡ [MAKER FILLED (JUST-IN-TIME)] Fill confirmed during cancel window! Symbol=${symbol} Entry=$${finalPos.entryPrice} Size=${finalPos.sizeBase}`);
-            return {
-              orderId: clientOrderId,
-              txHash: txRes.txHash,
-              filled: true,
-              isMaker: true,
-              actualEntryPrice: finalPos.entryPrice || actualFillPrice,
-              actualSize: finalPos.sizeBase || actualFillSize,
-            };
+          const finalPosSize = Number(finalPos?.sizeBase || (finalPos as any)?.size || 0);
+          if (finalPosSize > 0) {
+            actualFillSize = Math.max(actualFillSize, finalPosSize);
+            actualFillPrice = finalPos?.entryPrice || actualFillPrice;
           }
         } catch {}
 
-        if (allowTakerFallback) {
+        // Partial Fill Resolution: If a partial fill occurred (< 90%), guarantee position reaches minimum size
+        if (actualFillSize > 0) {
+          const remainingBase = Number((effectiveBase - actualFillSize).toFixed(market.sizeDecimals));
+          const filledNotional = actualFillSize * actualFillPrice;
+          const minLotBase = market.minSize ? market.minSize / Math.pow(10, market.sizeDecimals) : 0;
+
+          // If filled portion is below $18 notional OR fallback is allowed, sweep remaining unfilled size
+          if (remainingBase > minLotBase && (filledNotional < 18 || allowTakerFallback)) {
+            logger.info(`⚡ [PARTIAL FILL SWEEP] ${symbol}: Maker window ended with partial fill of ${actualFillSize.toFixed(4)} / ${effectiveBase.toFixed(4)} ($${filledNotional.toFixed(2)} notional). Sweeping remaining ${remainingBase.toFixed(4)} via IOC Taker to guarantee full minimum margin requirement...`);
+            try {
+              const sweepRes = await this.executeOnChain(symbol, side, remainingBase, actualFillPrice, targetLeverage, 0, false, false);
+              if (sweepRes && sweepRes.filled) {
+                try {
+                  const updatedPositions = await mcpClient.getPositions();
+                  const updatedPos = updatedPositions.find((p) => p.symbol.replace('-', '/').toUpperCase() === symUpper);
+                  actualFillSize = Number(updatedPos?.sizeBase || (actualFillSize + (sweepRes.actualSize || remainingBase)));
+                  actualFillPrice = Number(updatedPos?.entryPrice || sweepRes.actualEntryPrice || actualFillPrice);
+                } catch {
+                  actualFillSize = actualFillSize + (sweepRes.actualSize || remainingBase);
+                }
+                logger.info(`✅ [SWEEP COMPLETED] Position brought to full size: ${actualFillSize} ${symbol} at avg entry $${actualFillPrice}`);
+              }
+            } catch (sweepErr: any) {
+              logger.warn(`Sweep of remaining partial size failed: ${sweepErr?.message || sweepErr}`);
+            }
+          }
+
+          return {
+            orderId: clientOrderId,
+            txHash: txRes.txHash,
+            filled: true,
+            isMaker: true,
+            actualEntryPrice: actualFillPrice,
+            actualSize: actualFillSize,
+          };
+        }
+
+        // If it was cancelled due to thesis degradation (adverse selection), do NOT execute taker fallback
+        if (!earlyCancelReason && allowTakerFallback) {
           logger.info(`⚡ [MAKER TIMEOUT] Fallback allowed — executing urgent IOC Taker order for ${symbol}...`);
           return this.executeOnChain(symbol, side, size, entryPrice, targetLeverage, targetLimitPrice, false, false);
         }
@@ -1411,7 +1705,7 @@ export class TradeExecutor {
           txHash: txRes.txHash,
           filled: false,
           isMaker: true,
-          cancelledReason: 'Maker post-only order unfilled within window; resting order cancelled',
+          cancelledReason: earlyCancelReason || 'Maker post-only order unfilled within window; resting order cancelled',
         };
       }
 
@@ -1421,7 +1715,7 @@ export class TradeExecutor {
         filled: true,
         isMaker: true,
         actualEntryPrice: actualFillPrice,
-        actualSize: actualFillSize,
+        actualSize: actualFillSize || effectiveBase,
       };
     }
 
@@ -1445,7 +1739,10 @@ export class TradeExecutor {
 
     // 1. Monitor real open trades
     for (const trade of this.getOpenTrades()) {
-      const currentPrice = livePrices[trade.symbol];
+      const sym = trade.symbol;
+      const symSlash = sym.replace('-', '/');
+      const symDash = sym.replace('/', '-');
+      const currentPrice = livePrices[sym] || livePrices[symSlash] || livePrices[symDash] || (trade.currentPrice && trade.currentPrice > 0 ? trade.currentPrice : 0);
       if (!currentPrice || currentPrice <= 0) continue;
 
       const isLong = trade.action === 'LONG';
@@ -1468,10 +1765,10 @@ export class TradeExecutor {
         let exitStatus: 'closed_tp' | 'closed_sl' = 'closed_sl';
         let exitReasonStr = 'ON_CHAIN_SL';
 
-        if (hitTp || pnlUsd > 0.05) {
+        if (pnlUsd > 0.05) {
           exitStatus = 'closed_tp';
           exitReasonStr = hitTp ? 'ON_CHAIN_TP' : ((trade.breakevenMoved || isProfitable) ? 'TRAILING_TP' : 'DEX_TP_EXTERNAL');
-        } else if (trade.breakevenMoved || isProfitable) {
+        } else if (pnlUsd >= 0 && (trade.breakevenMoved || isProfitable)) {
           exitStatus = 'closed_tp';
           exitReasonStr = 'BREAKEVEN';
         } else {
