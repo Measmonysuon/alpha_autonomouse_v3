@@ -470,9 +470,11 @@ export function calculateDynamicLeverage(params: {
 } {
   const { confidence, entry, sl, riskLevel, layer5 } = params;
   const mode: LeverageMode = layer5?.leverageMode || 'RISK_PARITY_SAFETY_CAP';
-  const minLev = Math.max(1, layer5?.minLeverage ?? (riskLevel === 'HIGH' ? 2 : 3));
-  const maxLev = Math.max(minLev, layer5?.maxLeverage ?? (riskLevel === 'HIGH' ? 4 : 8));
-  const fixedLev = layer5?.leverage ?? 5;
+  const clientMinLev = (config as any).MIN_LEVERAGE || 5;
+  const clientMaxLev = (config as any).MAX_LEVERAGE || 12;
+  const minLev = Math.max(clientMinLev, layer5?.minLeverage ?? (riskLevel === 'HIGH' ? 5 : 5));
+  const maxLev = Math.max(minLev, Math.min(clientMaxLev, layer5?.maxLeverage ?? (riskLevel === 'HIGH' ? 8 : 12)));
+  const fixedLev = Math.max(clientMinLev, Math.min(layer5?.leverage ?? clientMinLev, clientMaxLev));
 
   if (mode === 'FIXED') {
     return {
@@ -1128,22 +1130,24 @@ export class StandaloneTradingEngine {
     let sl = action === 'LONG' ? entry - slDist : entry + slDist;
 
     if (simPairDir?.reboundOpportunity?.isReboundActive) {
-      // AI Rebound Sniper SL: Snug stop anchored right below/above sweep wick with dynamic ATR buffer
+      // AI Rebound Sniper SL: Snug stop anchored right below/above sweep wick with minimum volatility floor
       const ro = simPairDir.reboundOpportunity;
-      const dynamicBuffer = atr * 0.25;
+      const dynamicBuffer = Math.max(entry * 0.003, atr * 0.5);
+      const minRequiredSlDist = Math.max(entry * 0.008, atr * 1.0 * slMultiplier);
+
       if (action === 'LONG' && ro.reboundSide === 'LONG') {
-        const candidateSl = ro.structuralAnchor - dynamicBuffer;
-        if (candidateSl < entry && (entry - candidateSl) >= atr * 0.3) {
+        const candidateSl = Math.min(entry - minRequiredSlDist, ro.structuralAnchor - dynamicBuffer);
+        if (candidateSl < entry) {
           sl = Number(candidateSl.toFixed(4));
           slDist = entry - sl;
-          reasons.push(`🎯 AI REBOUND SL: Snug stop placed below sweep wick low ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} ATR buffer`);
+          reasons.push(`🎯 AI REBOUND SL: Calibrated stop placed below sweep wick low ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} volatility buffer`);
         }
       } else if (action === 'SHORT' && ro.reboundSide === 'SHORT') {
-        const candidateSl = ro.structuralAnchor + dynamicBuffer;
-        if (candidateSl > entry && (candidateSl - entry) >= atr * 0.3) {
+        const candidateSl = Math.max(entry + minRequiredSlDist, ro.structuralAnchor + dynamicBuffer);
+        if (candidateSl > entry) {
           sl = Number(candidateSl.toFixed(4));
           slDist = sl - entry;
-          reasons.push(`🎯 AI REBOUND SL: Snug stop placed above sweep wick high ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} ATR buffer`);
+          reasons.push(`🎯 AI REBOUND SL: Calibrated stop placed above sweep wick high ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} volatility buffer`);
         }
       }
     } else if (action === 'LONG') {
@@ -1309,11 +1313,16 @@ export class StandaloneTradingEngine {
         (action === 'LONG' && ind.trend1h === 'BEARISH') ||
         (action === 'SHORT' && ind.trend1h === 'BULLISH')
       ) {
-        if (simPairDir?.reboundOpportunity?.isReboundActive) {
+        const orderflow = simPairDir?.orderflow;
+        const isFlowSupportive = action === 'LONG'
+          ? (orderflow?.cvdTrend !== 'STRONG_SELL' && ((orderflow as any)?.takerBuyRatio === undefined || (orderflow as any)?.takerBuyRatio >= 0.48))
+          : (orderflow?.cvdTrend !== 'STRONG_BUY' && ((orderflow as any)?.takerBuyRatio === undefined || (orderflow as any)?.takerBuyRatio <= 0.52));
+
+        if (simPairDir?.reboundOpportunity?.isReboundActive && isFlowSupportive) {
           reasons.push(`⚡ REBOUND MTF EXEMPTION: 1h macro trend lag waived for AI-confirmed ${simPairDir.reboundOpportunity.reboundType}.`);
         } else {
           technicalScore = Math.min(technicalScore, 60);
-          reasons.push(`🛑 MTF HARD GATE: 15m ${action} contradicts 1h ${ind.trend1h} macro trend. Capped at 60%.`);
+          reasons.push(`🛑 MTF HARD GATE: 15m ${action} contradicts 1h ${ind.trend1h} macro trend without supportive flow. Capped at 60%.`);
         }
       }
 
@@ -1564,10 +1573,11 @@ export class StandaloneTradingEngine {
       layer5: activeStrategy.layer5,
     });
 
-    const hardMaxLev = config.MAX_LEVERAGE || 5;
-    let leverage = Math.min(dynamicLev.leverage, hardMaxLev);
+    const hardMinLev = (config as any).MIN_LEVERAGE || 5;
+    const hardMaxLev = (config as any).MAX_LEVERAGE || 12;
+    let leverage = Math.max(hardMinLev, Math.min(dynamicLev.leverage, hardMaxLev));
     if (pairOverrides && typeof pairOverrides.maxLeverage === 'number' && pairOverrides.maxLeverage > 0) {
-      const pairCap = Math.min(pairOverrides.maxLeverage, hardMaxLev);
+      const pairCap = Math.max(hardMinLev, Math.min(pairOverrides.maxLeverage, hardMaxLev));
       if (leverage > pairCap) {
         reasons.push(`🛡️ PAIR LEVERAGE CAP: Leverage ${leverage}x capped to pair limit ${pairCap}x`);
         leverage = pairCap;

@@ -7,83 +7,319 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 > **Next-generation autonomous perpetual futures trading client for Decibel DEX on Aptos.**  
-> Features real-time on-chain Move order execution, multi-model AI decision confluence, macro volatility risk gates, autonomous profit harvesting, and a non-custodial 1-minute browser onboarding wizard.
+> Powered by **Alpha Forge Sim Lab** quantitative intelligence via secure License API Key streaming. 100% Non-Custodial, zero-dependency on-chain Move order execution, 4-stage pre-trade risk sentinels, autonomous trailing profit harvesting, and a 1-minute browser onboarding wizard.
 
 ---
 
-## ⚡ Architecture Overview
-
-```mermaid
-flowchart TB
-    subgraph SimLab["🔬 Sim Lab Intelligence Core (Port 4000 / Cloud)"]
-        direction TB
-        Macro["Macro World State & Dynamic Sizing (0.5x–1.2x)"]
-        SimArena["Parallel Paper Simulation Arena (<35% WR Veto)"]
-        Bans["Directional Bans & Active Regime Traps"]
-    end
-
-    subgraph Bridge["📡 Multi-Channel Failover Bridge"]
-        direction TB
-        ConnMgr["src/pipeline/connection-manager.ts<br/>(Local LAN Fast 3.5s ⇄ Public Cloud Edge with 3m auto-reprobe)"]
-        Supercharge["src/simlab/supercharge-client.ts<br/>(Base64url Token Pairing + 8s Heartbeat Telemetry)"]
-        ConnMgr --> Supercharge
-    end
-
-    SimLab --> Bridge
-
-    subgraph ClientCore["⚡ Client V3 Unified Execution Engine"]
-        direction TB
-        Scanner["Continuous Confluence Scanner (28 Parallel Pairs)"]
-        
-        RiskGuard["src/risk/guard.ts<br/>🛡️ Step 1: Directional Ban Veto<br/>🛡️ Step 2: Rejection Wick Shield<br/>🛡️ Step 3: Macro Dynamic Risk Multiplier<br/>🛡️ Step 4: Emergency Shockwave Freeze"]
-        
-        AptosExecutor["src/trades/executor.ts<br/>⚙️ Native Aptos SDK Move Order Signing<br/>⛽ Pre-Execution Gas Sentry (&lt;0.002 APT)<br/>🔄 8-Check Strike Reconciliation Guard"]
-        
-        Harvester["src/risk/portfolio-harvester.ts<br/>🌾 Autonomous Harvester Hub<br/>• 1h Multi-Timeframe Trend Alignment<br/>• Sim Lab Banned-Side Penalty<br/>• Defensive Bleed Cut (&le;-3% fast harvest)<br/>• Trailing Tight Profit Lock (Ratchets 80% gains)"]
-        
-        Scanner --> RiskGuard
-        RiskGuard --> AptosExecutor
-        AptosExecutor --> Harvester
-    end
-
-    Bridge --> ClientCore
-    ClientCore -->|"Live Telemetry"| SimLab
+```
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                           EXECUTIVE OVERVIEW                           │
+  │                                                                        │
+  │  Target Product   : Alpha Autonomous Client V3                         │
+  │  Intelligence Hub : Alpha Forge Sim Lab (Cloud Quantitative Engine)    │
+  │  Access Model     : License API Key (Direct Telemetry Stream)          │
+  │  Execution Venue  : Decibel DEX • Aptos Mainnet                        │
+  │  Custody Model    : 100% Non-Custodial (Your Wallet, Your Subaccount)  │
+  └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 Key Feature Highlights
+## Executive Summary
 
-### 1. 🔑 Non-Custodial Browser Onboarding Wizard
-- **Zero Manual Configuration Required**: Clone, launch, and open the web dashboard at `http://localhost:5050`.
-- **Pre-Onboard Menu Lockdown**: Navigation and trading docks remain protected behind a lock shield (`🔒`) until credentials are configured.
-- **Gas Signer Confusion Guard**: Prevents accidentally setting your Gas Signer key address as your Trading Subaccount.
-- **Real-Time On-Chain Verification**: Probes Decibel smart contracts on Aptos mainnet to verify primary ownership, delegate permissions, and available USDC collateral before activation.
+**Alpha Autonomous Client V3** represents a paradigm shift in decentralized algorithmic trading. Designed specifically for quantitative funds, proprietary trading desks, and serious decentralized finance (DeFi) traders, Client V3 pairs **non-custodial on-chain execution speed** with the computational firepower of **Alpha Forge Sim Lab**—a high-frequency cloud research and simulation laboratory.
 
-### 2. 🧠 Multi-Model AI Confluence
-- **Flexible Intelligence Backends**:
-  - **Google Gemini**: Gemini 2.5 Flash / Flash Lite for ultra-fast, low-cost quantitative reasoning.
-  - **Anthropic Claude**: Claude 3.5 Sonnet for deep market context evaluation.
-  - **Local Hardware LLM**: Ollama / Qwen2.5 / DeepSeek for 100% offline, zero-data-leakage VPS & Mac execution.
-  - **Pure Algorithmic Math Rules**: Zero-dependency quantitative technical confluence models requiring no API keys.
-- **Dual-Model Failover**: Hot-swaps from Primary AI to Secondary AI automatically upon rate limits or latency spikes.
+Traditional retail trading bots operate in a complete vacuum: they rely on lagged chart indicators, fail during sudden market regime shifts, and suffer catastrophic drawdowns from toxic order flow. Centralized hedge funds, conversely, demand full custody of your capital.
 
-### 3. 🛡️ 4-Stage Pre-Trade Risk Sentinel
-- **Gate 1 — Directional Ban Filter**: Immediately rejects candidate setups opposing macro regime trends.
-- **Gate 2 — Rejection Wick Trap Shield**: Detects distribution wicks and absorptions to prevent buying tops or selling bottoms.
-- **Gate 3 — Counterfactual Paper Veto**: Rejects trades if the live shadow simulation model on the asset exhibits $<35\%$ win rate.
-- **Gate 4 — Dynamic Sizing & Shockwave Freeze**: Dynamically scales position sizing from `0.5x` in chop to `1.2x` in high-conviction trends, freezing entries during macro news shocks.
-
-### 4. 🌾 Autonomous Profit Harvester Master
-- **1-Hour Trend Alignment**: EMA25/50 higher-timeframe confluence shield (+25 pts / -15 pts).
-- **Defensive Bleed Cutting**: Automatically closes bleeding positions ($\le -3.0\%$ without a breakeven stop) before margin erosion.
-- **Trailing Tight Profit Lock**: Dynamically ratchets stop orders to lock in $\ge 80\%$ of peak gains.
+**Client V3 solves both problems simultaneously:**
+1. **Zero Custody Risk:** You deploy Client V3 inside your own private environment (Docker container, private VPS, or dedicated local hardware). Your private keys, subaccounts, and collateral never leave your sovereign control.
+2. **Institutional Quantitative Brain:** Through a cryptographically authenticated **License API Key**, your private Client V3 terminal links directly into **Alpha Forge Sim Lab**. Sim Lab continuously streams real-time macro regimes, multi-venue orderflow intelligence, parallel paper simulation vetoes, and dynamic risk parameters directly to your execution engine.
 
 ---
 
-## 💻 Quick Start & Setup
+## 🏛️ Ecosystem Architecture
 
-### Method A: Docker Deployment (Recommended)
+<p align="center">
+  <img src="assets/client_v3_simlab_architecture.jpg" alt="Alpha Autonomous Client V3 & Sim Lab Architecture" width="100%" />
+  <br>
+  <em>Figure 1: High-level architectural overview of the Alpha Forge Sim Lab quantitative core streaming intelligence through an encrypted License API Key bridge to sovereign Client V3 execution nodes on Aptos Mainnet.</em>
+</p>
+
+---
+
+## 🔄 End-to-End System Flow
+
+The diagram below illustrates how raw multi-venue market data transforms into hardened on-chain profit execution across the decentralized ecosystem:
+
+```mermaid
+flowchart TD
+    %% Global Ingestion Layer
+    subgraph DataUniverse["🌐 Multi-Venue Market Intelligence"]
+        direction TB
+        L2["Cross-Exchange L2 Orderbooks<br/>(Binance, Bybit, Hyperliquid)"]
+        Orderflow["Microstructure Orderflow<br/>(CVD, Liquidations, Funding Spreads)"]
+        Macro["Macro Economic Calendars<br/>(Fed Rates, CPI, Volatility Cones)"]
+    end
+
+    %% Sim Lab Core
+    subgraph SimLabCore["🔬 ALPHA FORGE SIM LAB (Cloud Quantitative Brain)"]
+        direction TB
+        RegimeEngine["<b>Macro Regime Classifier</b><br/>Identifies Trend, Range, Chop & Directional Traps"]
+        PaperArena["<b>Parallel Paper Arena</b><br/>Continuous real-time shadow simulation across 28+ pairs"]
+        RiskGates["<b>Adversarial Risk Sentinel</b><br/>Automatic pre-event freezes & toxic wick detection"]
+        Directives["<b>Dynamic Strategy Synthesizer</b><br/>Calculates optimal maker offsets & dynamic sizing (0.5x - 1.2x)"]
+        
+        RegimeEngine --> PaperArena --> RiskGates --> Directives
+    end
+
+    DataUniverse --> SimLabCore
+
+    %% Secure Licensing Bridge
+    subgraph LicenseBridge["🔑 SECURE LICENSE API KEY BRIDGE"]
+        direction TB
+        Auth["Tokenized Authentication & Machine Identity Binding"]
+        Stream["Encrypted Sub-Second Telemetry & Intelligence Stream"]
+        Auth --> Stream
+    end
+
+    SimLabCore --> LicenseBridge
+
+    %% Client V3 Node
+    subgraph ClientTerminal["⚡ ALPHA AUTONOMOUS CLIENT V3 (Your Private Node)"]
+        direction TB
+        Scanner["<b>28-Pair Confluence Scanner</b><br/>Sub-second technical scanning & trigger evaluation"]
+        Shield["<b>4-Stage Pre-Trade Risk Sentinel</b><br/>Directional ban enforcement & wick trap veto"]
+        Harvester["<b>Autonomous Portfolio Harvester</b><br/>Trailing profit lock, bleed cutter & breakeven ratchets"]
+        
+        Scanner --> Shield --> Harvester
+    end
+
+    LicenseBridge --> ClientTerminal
+
+    %% Settlement Venue
+    subgraph OnChainExecution["⚡ DECIBEL DEX (Aptos Mainnet)"]
+        direction TB
+        AptosEngine["Native Move Smart Contracts<br/>Sub-second finality | Ultra-low gas (<0.002 APT)"]
+        Account["Trader Subaccount<br/>100% Non-Custodial USDC Collateral"]
+        AptosEngine --- Account
+    end
+
+    ClientTerminal -->|"Signed Move Transactions"| OnChainExecution
+```
+
+---
+
+## 🔬 The Core Advantage: Alpha Forge Sim Lab
+
+Why is Sim Lab essential to institutional performance? In high-frequency and automated derivatives trading, executing trades without continuous simulation is financial suicide. 
+
+### 1. Continuous Parallel Paper Arena
+Sim Lab runs non-stop shadow simulations across 28+ perpetual pairs simultaneously. It evaluates market entry setups against historical and real-time counterfactual conditions:
+* If a strategy candidate's shadow win rate falls below $35\%$ in current liquidity, Sim Lab issues an immediate **Pre-Trade Veto**.
+* Your Client V3 terminal automatically bypasses the losing trade, preserving your capital for high-probability setups.
+
+### 2. Multi-Venue Orderflow Microstructure
+Crypto markets move as a unified liquidity fabric. Decibel DEX price action is directly influenced by global taker volume, cumulative volume delta (CVD), and cross-exchange basis.
+* Sim Lab ingests real-time depth from Binance, Bybit, and Hyperliquid.
+* Detects institutional absorption, iceberg orders, and spoofing before they impact Decibel mark prices.
+
+### 3. Dynamic Volatility & Directional Bans
+* **Directional Bans:** During aggressive institutional distribution or markup regimes, Sim Lab locks out counter-trend trades (`bannedSide: 'LONG'` or `bannedSide: 'SHORT'`).
+* **Macro Event Freeze:** Sim Lab monitors global macroeconomic shockwaves (FOMC, CPI releases), automatically freezing trade entries 30 minutes prior to high-impact announcements.
+* **Dynamic Sizing:** Scales position sizes between `0.5x` (low-liquidity chop) and `1.2x` (high-conviction directional expansion).
+
+---
+
+## ⚡ The Flagship Product: Alpha Autonomous Client V3
+
+**Alpha Autonomous Client V3** is the execution powerhouse deployed by the trader. It is engineered with high resilience, minimal resource footprint, and zero operational friction.
+
+### 🛡️ 100% Non-Custodial Security
+* You maintain complete custody of your private keys and trading subaccounts.
+* Trades are signed locally and broadcast directly to Aptos Mainnet via native Move contract calls.
+* No middleman, no pool deposits, no withdrawal lockups.
+
+### ⏱️ 1-Minute Browser Onboarding
+* Zero complex command-line headaches.
+* Simply launch Client V3 and open the dedicated browser dashboard (`http://localhost:5050`).
+* Built-in setup wizard verifies your Aptos wallet, configures your Decibel subaccount, and performs on-chain gas sentry verification in under 60 seconds.
+
+### 🌾 Autonomous Portfolio Harvester
+Winning trades are not determined solely by the entry; they are won at the exit:
+* **Dynamic Trailing Profit Lock:** Ratchets trailing stop-losses to protect $\ge 80\%$ of peak unrealized gains.
+* **Defensive Bleed Cutter:** Automatically cuts underperforming positions ($\le -3\%$) before volatility erodes account margin.
+* **Higher-Timeframe Alignment:** Positions aligned with the 1-hour macro trend are granted expanded runway to capture major swing expansions.
+
+---
+
+## 🔁 The Complete Trading Lifecycle: From Scan to Settlement
+
+How does a trade actually move from raw market noise to locked-in profit? The system treats every position as an asymmetric risk contract governed by a strict 6-stage lifecycle:
+
+<p align="center">
+  <img src="assets/trade_lifecycle_volatility_shield.jpg" alt="Autonomous Algorithmic Trading Lifecycle & Volatility Shield" width="100%" />
+  <br>
+  <em>Figure 2: The end-to-end autonomous trade execution journey and the multi-layered Volatility Shockwave Shield safeguarding capital against liquidation cascades and news spikes.</em>
+</p>
+
+```mermaid
+flowchart LR
+    S1["<b>1. SCAN & INGEST</b><br/>Global Radar Feeds<br/>CVD, OI & Orderbook"] -->
+    S2["<b>2. MULTI-GATE AUDIT</b><br/>Whale Trap Veto<br/>Sim Lab Paper Arena"] -->
+    S3["<b>3. DYNAMIC SIZING</b><br/>Half-Kelly Sizing<br/>Calibrated ATR Stop"] -->
+    S4["<b>4. MAKER EXECUTION</b><br/>Post-Only Move Order<br/>Zero Taker Fees"] -->
+    S5["<b>5. ACTIVE RATCHET</b><br/>+1.4R Breakeven Snap<br/>80% Peak Gain Lock"] -->
+    S6["<b>6. PROFIT SWEEP</b><br/>Reserve Vault Lock<br/>Zero-Noise Debrief"]
+```
+
+### Stage 1: Continuous Market Radar Scanning
+* Streams raw non-candle orderflow (Cumulative Volume Delta, Taker Buy/Sell Ratios, Open Interest velocity) across Binance, Bybit, OKX, and Decibel.
+* Continuously scans 28 perpetual pairs simultaneously in sub-second intervals for institutional imbalances.
+
+### Stage 2: Adversarial Multi-Gate Audit
+Before any order is drafted, the setup must clear 5 simultaneous validation gates:
+1. **Liquidity Trap Lens:** Has an institutional fakeout or absorption wick occurred?
+2. **Value Profile Lens:** Is price at an advantageous discount (for Longs) or premium (for Shorts)?
+3. **Macro Weather Lens:** Is the market trending or caught in random walk chop?
+4. **Counterfactual Paper Veto:** Did Sim Lab's live shadow simulation on this asset achieve $\ge 35\%$ win rate in the last 100 iterations?
+5. **Directional Invariant Check:** Enforces that Take-Profit targets mathematically exceed Entry and Stop distances.
+
+### Stage 3: Dynamic Sizing & Risk Floor Calibration
+* **Strict Capital Cap:** Risk per trade is strictly capped at $1.0\%$ to $2.0\%$ of available equity—never arbitrary lot sizing.
+* **Fractional Half-Kelly Sizing:** Position scale automatically adjusts based on real-time statistical edge ($0.05 \le f^* \le 0.40$).
+* **Calibrated Stop-Loss Floor:** Every order is armed with an immutable stop floor $\ge \max(\text{Entry} \times 0.8\%, 1.2 \times \text{ATR})$. No naked trades ever exist.
+
+### Stage 4: Post-Only Maker Execution on Aptos
+* Orders are submitted strictly as **Post-Only Maker Limit Orders**, eliminating expensive taker fees and capturing maker rebates.
+* Trades are signed natively using the trader's private key directly into Aptos Move smart contracts on Decibel DEX with sub-second settlement and gas costs under $<0.002\text{ APT}$.
+
+### Stage 5: Active Management & Dynamic Trailing Ratchet
+Once filled, Client V3’s autonomous pilot actively manages the trade every 500 milliseconds:
+* **The +1.4R Breakeven Snap:** As soon as the position gains $+1.4R$ in profit, the stop-loss automatically moves to Breakeven plus fees. The trade can mathematically no longer lose capital.
+* **Dynamic Trailing Ratchet:** As profit expands, the stop-loss ratchets upward, locking in $\ge 80\%$ of peak unrealized gains.
+* **Defensive Bleed Cutter:** If market momentum stalls and the position drifts to $\le -3.0\%$, the bot terminates the trade early rather than hoping for a turnaround.
+
+### Stage 6: Settlement & Profit Reserve Sweep
+* Closed trade PnL is credited directly to the trader’s on-chain subaccount in real-time USDC.
+* **25% High-Water Mark Reserve Sweep:** $25\%$ of new peak profits are mathematically cordoned off as protected reserve equity, ensuring previous gains cannot be wiped out by future market turbulence.
+* Closed trade telemetry is debriefed into the Sim Lab learning loop to refine tomorrow's parameter weights.
+
+---
+
+## ⚡ How the System Responds to High Volatility & Market Shocks
+
+Retail traders and traditional bots lose their entire accounts during high-volatility events (flash crashes, liquidation cascades, and surprise macroeconomic announcements). **Alpha Autonomous Client V3 is engineered with an institutional Volatility Shockwave Shield:**
+
+```
+ ┌────────────────────────────────────────────────────────────────────────────────────────┐
+ │                         VOLATILITY SHOCKWAVE SHIELD IN ACTION                          │
+ ├───────────────────────────────┬────────────────────────────────────────────────────────┤
+ │ MARKET THREAT                 │ AUTONOMOUS CLIENT V3 RESPONSE                          │
+ ├───────────────────────────────┼────────────────────────────────────────────────────────┤
+ │ High-Impact Economic News     │ 30-Minute Pre-Event Freeze (FOMC, CPI, NFP releases).  │
+ │ (e.g. CPI Spikes, Fed Rates)  │ Halts all new entries (`bannedSide: BOTH`).            │
+ ├───────────────────────────────┼────────────────────────────────────────────────────────┤
+ │ Flash Crash / Cascade Dump    │ Rejection Wick & Waterfall Cascade Shield.             │
+ │                               │ Vetoes catching "falling knives" until absorption POC. │
+ ├───────────────────────────────┼────────────────────────────────────────────────────────┤
+ │ Spread Widening & Slippage    │ Spread & Liquidity Sentry aborts entry if              │
+ │                               │ Spread/ATR > 35%, preventing toxic fills.              │
+ ├───────────────────────────────┼────────────────────────────────────────────────────────┤
+ │ Erratic Low-Liquidity Chop    │ Dynamic Sizing Contraction scales risk down to 0.5x    │
+ │                               │ or activates total Sideline Standby.                   │
+ ├───────────────────────────────┼────────────────────────────────────────────────────────┤
+ │ Sudden Reversal in Open Trade │ Instant Trailing Snap triggers, securing 80% of peak   │
+ │                               │ gains or exiting at Breakeven floor.                   │
+ └───────────────────────────────┴────────────────────────────────────────────────────────┘
+```
+
+1. **Automated 30-Minute Macro Event Lockout:**
+   Sim Lab continuously ingests the global economic calendar. Thirty minutes before high-impact events like FOMC interest rate announcements, CPI prints, or Non-Farm Payrolls, the system places the fleet into **Total Entry Lockdown**. No capital is gambled during binary news outcomes.
+2. **Dynamic Volatility De-leveraging:**
+   When market turbulence surges and the Average True Range (ATR) widens unpredictably, the system automatically shrinks position sizing from standard `1.0x` down to `0.5x` (or moves into complete cash safety). Sizing only expands back to `1.2x` when high-conviction directional clarity returns.
+3. **Spread & Liquidity Dislocation Sentry:**
+   During market panic, exchange orderbooks frequently thin out, causing catastrophic bid-ask spreads. Client V3 actively tracks the spread-to-ATR ratio. If `Spread / ATR > 35%`, execution is immediately suspended, protecting the trader from toxic slippage.
+4. **Zero-Averaging-Down Mandate (Anti-Martingale):**
+   The bot never adds to a losing position. Martingale and grid strategies are the primary culprits behind catastrophic account blowups. Client V3 treats every setup as an independent, strictly risk-capped probability event.
+
+---
+
+## 🛡️ Capital Preservation Philosophy: Why Traders Feel Safe
+
+Professional trading desks understand that **capital defense is the prerequisite for compound profitability**. Client V3 is built on four immutable pillars of capital safety:
+
+### 1. Sovereign Non-Custodial Security
+You never hand your funds over to an unregulated entity or opaque black box. Your capital resides inside your personal Decibel DEX trading subaccount on Aptos Mainnet, accessible only by your private cryptographic keys. You can disconnect or withdraw your capital at any moment.
+
+### 2. Every Position Has an Immutable Parachute
+There is no such thing as an unprotected trade in Client V3. Every order is entered with a pre-calculated mathematical Stop-Loss floor. Even in the event of an internet disconnect or local power failure, your stop orders remain active on-chain.
+
+### 3. Asymmetric Profit Harvesting (Ratchets, Not Hopes)
+By ratcheting stops to Breakeven at $+1.4R$ and locking in $80\%$ of peak gains on winning runners, the system mathematically shifts the distribution of returns: losses are small and capped, while winning trades are given room to generate asymmetric upside.
+
+### 4. High-Water Mark Equity Sweep
+To protect long-term gains, the system tracks account High-Water Marks (HWM). When new profit records are reached, $25\%$ is cordoned off into an untouchable profit reserve. Subsequent drawdowns only ever fluctuate against recent surplus, shielding your core starting capital.
+
+---
+
+## 🎯 Configurable Trader Profiles: Tailored to Your Risk Tolerance
+
+Whether managing proprietary desk capital or personal liquidity, Client V3 offers pre-calibrated risk profiles:
+
+| Profile | Target Objective | Sizing Multiplier | AI Confidence Floor | Harvester Mode |
+| :--- | :--- | :---: | :---: | :--- |
+| **🛡️ Capital Shield** *(Conservative)* | Maximum capital preservation; zero tolerance for drawdowns. | `0.5x` to `0.8x` | $\ge 85\%$ Confidence | Early $+1.0R$ Breakeven Snap, tight 75% profit lock |
+| **⚖️ Systematic Alpha** *(Balanced - Recommended)* | Optimal risk-adjusted Sharpe ratio with active trend participation. | `0.8x` to `1.0x` | $\ge 80\%$ Confidence | Standard $+1.4R$ Snap, 80% trailing gain ratchet |
+| **🚀 Momentum Flow** *(Aggressive)* | Captures high-velocity expansion moves across all 28 pairs. | `1.0x` to `1.2x` | $\ge 75\%$ Confidence | Trend-following extended runner profile |
+
+---
+
+## 📊 Feature Comparison: Standalone vs. Sim Lab Supercharged
+
+| Feature Dimension | Standard Unlicensed Client | Client V3 with Sim Lab License Key |
+| :--- | :--- | :--- |
+| **Custody & Security** | 100% Non-Custodial | 100% Non-Custodial |
+| **Supported Markets** | Decibel DEX (Aptos Mainnet) | Decibel DEX (Aptos Mainnet) |
+| **Confluence Scanning** | Local basic technical indicators | Full 6-Layer Multi-Venue Matrix |
+| **Regime Awareness** | Static parameters (Blind to shifts) | **Dynamic Macro Regime Stream** |
+| **Directional Trap Shield** | None (Susceptible to stop-hunts) | **Automated Directional Bans** |
+| **Shadow Simulation Veto** | None | **Live Paper Arena Veto (<35% WR)** |
+| **Macro Event Protection** | Manual trader intervention | **Autonomous 30m Pre-Event Freeze** |
+| **Position Sizing** | Fixed static lot sizes | **Dynamic Volatility Scaling (0.5x–1.2x)** |
+| **Maker Spread Optimization** | Static offset | **Real-Time Adaptive Maker Spreads** |
+| **Profit Harvester** | Basic take-profit levels | **Institutional Dynamic Ratchet & Bleed Cut** |
+| **Firmware & Model Updates** | Manual updates required | **Continuous Cloud Strategy Streaming** |
+
+---
+
+## 🔑 Licensing & Deployment Model
+
+To ensure optimal execution quality and prevent market saturation, **Alpha Autonomous Client V3** is delivered via an **Institutional License API Key**:
+
+```
+ ┌──────────────────────┐         ┌──────────────────────┐         ┌──────────────────────┐
+ │   1. Acquire License │         │   2. Deploy Client   │         │   3. Activate & Trade│
+ │                      │         │                      │         │                      │
+ │ • Secure API Key     │ ──────> │ • Docker / VPS / Edge│ ──────> │ • Enter License Key  │
+ │ • Machine Identity   │         │ • Connect Aptos Wallet│        │ • Live Supercharged  │
+ │   Binding            │         │ • Subaccount Wizard  │         │   Execution Starts   │
+ └──────────────────────┘         └──────────────────────┘         └──────────────────────┘
+```
+
+1. **Client Deployment:** Deploy your dedicated Client V3 node via standard Docker container or lightweight Node.js service on your choice of infrastructure (Cloud VPS, Mac, Linux, or Jetson Edge hardware).
+2. **License Activation:** Input your License API Key into the onboarding wizard or environment file (`SIM_LAB_TOKEN`).
+3. **Instant Pairing:** Client V3 initiates an encrypted handshake with Sim Lab, instantly activating institutional-tier strategy directives, risk sentinels, and real-time execution parameters.
+
+---
+
+## 💻 Quick Start & Deployment Options
+
+### Method A: Standalone 1-Click Launchers (Mac & Windows)
+* **macOS:** Download `release/alpha-client-v3-macos.zip`, extract, and double-click `start-macos.command`.
+* **Windows:** Download `release/alpha-client-v3-windows.zip`, extract, and double-click `start-windows.bat`.
+* The dashboard opens automatically at `http://localhost:5050` with the 1-minute onboarding wizard.
+
+### Method B: Docker Deployment (Recommended for Cloud VPS)
 
 ```bash
 # 1. Clone the repository
@@ -97,104 +333,30 @@ docker compose up -d --build
 open http://localhost:5050
 ```
 
----
-
-### Method B: Standalone 1-Click Launchers
-
-#### 🍎 macOS
-1. Download `alpha-client-v3-macos.zip` from the [Latest Release](https://github.com/Measmonysuon/alpha_autonomouse_v3/releases).
-2. Unzip and double-click `start-macos.command`.
-3. The launcher will verify dependencies and launch the browser at `http://localhost:5050`.
-
-#### 🪟 Windows
-1. Download `alpha-client-v3-windows.zip` from the [Latest Release](https://github.com/Measmonysuon/alpha_autonomouse_v3/releases).
-2. Unzip and double-click `start-windows.bat`.
-3. The dashboard will automatically launch at `http://localhost:5050`.
-
----
-
-### Method C: Node.js / NPM
+### Method C: Native Node.js Deployment (Developers & Quants)
 
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Build TypeScript production bundle
+# 2. Build TypeScript
 npm run build
 
-# 3. Start the client
+# 3. Start client
 npm start
-
-# Or run in development mode with hot-reload:
-npm run dev
 ```
 
 ---
 
-## 🧙‍♂️ Initial Onboarding Walkthrough
+## 🎯 Target Trader Profiles
 
-1. Navigate to **`http://localhost:5050`** in your browser.
-2. The **Autonomous Agent Initial Setup Card** will be presented:
-   - **Decibel Subaccount Address**: Your primary wallet or Decibel subaccount holding USDC collateral (e.g. `0x...`).
-   - **Delegate Signing Private Key**: Authorized delegate signing key for order execution (`ed25519-priv-0x...`).
-   - **Gas Signer Address Preview**: The card automatically derives your Aptos gas fee wallet. Send **0.05 – 0.1 APT** to this address on Aptos mainnet to cover transaction fees.
-   - **AI Provider**: Select Gemini, Claude, Ollama, or built-in quantitative math rules.
-   - **Admin Password**: (Optional) Protects dashboard controls if deployed on a public VPS.
-3. Click **⚡ ACTIVATE AUTONOMOUS AGENT**.
-4. The dashboard will verify credentials on-chain, dismiss the setup card, unlock all menus, and begin autonomous market monitoring!
+* **Proprietary Trading Desks:** Deploy isolated client instances across multiple subaccounts with unified Sim Lab quantitative governance.
+* **High-Net-Worth DeFi Traders:** Automate 24/7 perpetual futures trading without relinquishing custody or trusting centralized black boxes.
+* **Algorithmic Traders & Quants:** Leverage state-of-the-art microstructure research and machine-learning signals without the overhead of building massive data ingestion clusters from scratch.
 
 ---
 
-## ⚙️ Environment Variables Reference
+## 📜 License & Compliance
 
-A pre-configured template is available at [`.env.example`](file:///.env.example). Copy to `.env` if configuring headless:
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `DECIBEL_NETWORK` | Aptos target network (`mainnet` or `testnet`) | `mainnet` |
-| `DECIBEL_DELEGATE_KEY` | Ed25519 private key used to sign trade transactions | *(Configured via Wizard)* |
-| `DECIBEL_SUBACCOUNT_ADDRESS`| Aptos address holding USDC collateral on Decibel DEX | *(Configured via Wizard)* |
-| `DECIBEL_NODE_API_KEY` | Dedicated Decibel Gateway Node API key | *(Dynamic Failover)* |
-| `GEMINI_API_KEY` | Google Gemini API key for quantitative decision brain | *(Optional)* |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API key | *(Optional)* |
-| `OLLAMA_BASE_URL` | Local or remote Ollama URL | `http://localhost:11434` |
-| `SIMLAB_KEY` | Pairing token (`simlab_live_...`) for Sim Lab Cloud macro | *(Optional)* |
-| `BUDGET_USD` | Total capital ceiling allocated for trading ($ USD) | `30.00` |
-| `MAX_LEVERAGE` | Maximum allowed perpetual leverage | `5` |
-| `PAPER_TRADING` | Safe simulation mode without risking real capital | `false` |
-| `HEALTH_PORT` | Port for web dashboard and API server | `5050` |
-
----
-
-## 🧪 Verification & Testing
-
-Client V3 includes end-to-end automated testing suites:
-
-```bash
-# Verify Onboarding Wizard (on-chain resolution, guards, activation lifecycle)
-npm run test:onboard
-
-# Check environment, network connectivity, and kline feeds
-npm run setup
-
-# Test Telegram notification dispatch
-npm run test:telegram
-```
-
----
-
-## 🔒 Security & Non-Custodial Architecture
-
-- **Keys Never Leave Your Machine**: All transaction payloads are constructed and signed locally via `@aptos-labs/ts-sdk`. Private keys are never transmitted to external telemetry servers.
-- **Isolated Signer / Gas Key**: Client V3 uses delegate signing keys with order-placement permissions only. Withdrawals require your primary cold wallet.
-- **Zero Hardcoded Secrets**: All configuration templates and release scripts enforce clean environment variable resolution.
-
----
-
-## 📜 License
-
-Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
+Distributed under the MIT License. See [LICENSE](LICENSE) for more information.  
+*© 2026 Alpha Autonomous Systems. All rights reserved. Non-Custodial Algorithmic Technology.*

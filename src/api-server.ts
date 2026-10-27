@@ -1818,10 +1818,12 @@ function triggerBackgroundOnChainSync(): void {
         return;
       }
 
+      const limitParam = parseInt(parsedUrl.searchParams.get('limit') || '500', 10);
+
       // 1. Fetch immediately from SQLite database (0ms blocking, sub-millisecond response)
       let trades: any[] = [];
       try {
-        const sqliteTrades = dbClient.getTrades({ limit: 100 });
+        const sqliteTrades = dbClient.getTrades({ limit: limitParam });
         if (sqliteTrades && sqliteTrades.length > 0) {
           trades = sqliteTrades.map(dbTradeToFrontendTrade);
         }
@@ -1843,7 +1845,7 @@ function triggerBackgroundOnChainSync(): void {
           const onChainFills = await mcpClient.getTradeHistory(50);
           if (onChainFills && onChainFills.length > 0) {
             dbClient.syncOnChainTrades(onChainFills);
-            const freshSqlite = dbClient.getTrades({ limit: 100 });
+            const freshSqlite = dbClient.getTrades({ limit: limitParam });
             if (freshSqlite && freshSqlite.length > 0) {
               trades = freshSqlite.map(dbTradeToFrontendTrade);
             }
@@ -2046,17 +2048,25 @@ function triggerBackgroundOnChainSync(): void {
               hasSecondaryApiKey: Boolean(saved.ai?.secondaryApiKey || saved.secondaryApiKey || saved.secondaryAiApiKey),
               trading: {
                 budgetUsd: config.BUDGET_USD,
-                maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 60,
+                minPositionUsd: config.MIN_POSITION_USD ?? saved.trading?.minPositionUsd ?? 35,
+                maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 150,
                 maxOpenPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
                 paperTrading: config.PAPER_TRADING,
                 clientName: config.CLIENT_NAME,
                 watchPairs: config.WATCH_PAIRS,
                 maxRiskPerTradePct: config.MAX_RISK_PER_TRADE_PCT,
                 minConfidencePct: config.MIN_CONFIDENCE_PCT,
-                maxLeverage: config.MAX_LEVERAGE,
-                maxAllocPct: config.MAX_ALLOC_PCT,
+                minLeverage: config.MIN_LEVERAGE ?? 5,
+                maxLeverage: config.MAX_LEVERAGE ?? 12,
+                minAllocPct: config.MIN_ALLOC_PCT ?? 35,
+                maxAllocPct: config.MAX_ALLOC_PCT ?? 60,
               },
-              maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 60,
+              minPositionUsd: config.MIN_POSITION_USD ?? saved.trading?.minPositionUsd ?? 35,
+              maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 150,
+              minLeverage: config.MIN_LEVERAGE ?? 5,
+              maxLeverage: config.MAX_LEVERAGE ?? 12,
+              minAllocPct: config.MIN_ALLOC_PCT ?? 35,
+              maxAllocPct: config.MAX_ALLOC_PCT ?? 60,
               maxOpenPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
               telegram: telegramNotifier.getSettings(),
               security: {

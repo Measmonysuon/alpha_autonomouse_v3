@@ -522,10 +522,10 @@ export class TradeExecutor {
           continue;
         }
 
-        const isLong = pos.action === 'LONG' || pos.side === 'buy';
         let existing = this.tradesCache.find(
           (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status === 'open',
         );
+        const isLong = existing ? existing.action === 'LONG' : (pos.action === 'LONG' || pos.side === 'buy');
 
         const lev = Math.max(1, pos.leverage || existing?.leverage || 1);
         // 1. Static Hard Stop Loss (15% margin risk / catastrophic on-chain circuit breaker)
@@ -560,7 +560,13 @@ export class TradeExecutor {
         const dynamicTp = isLong
           ? Number((pos.entryPrice + dynamicTpDist).toFixed(4))
           : Number((pos.entryPrice - dynamicTpDist).toFixed(4));
-        const activeTp = (pos.takeProfit && pos.takeProfit > 0 && Math.abs(pos.takeProfit - pos.entryPrice) / pos.entryPrice <= 0.04)
+
+        // Strict Directional Invariant: Long TP must be > entry; Short TP must be < entry
+        const isPosTpDirectionallyValid = pos.takeProfit && pos.takeProfit > 0 &&
+          (isLong ? pos.takeProfit >= pos.entryPrice * 1.008 : pos.takeProfit <= pos.entryPrice * 0.992) &&
+          Math.abs(pos.takeProfit - pos.entryPrice) / pos.entryPrice <= 0.04;
+
+        const activeTp = isPosTpDirectionallyValid
           ? pos.takeProfit
           : dynamicTp;
 
@@ -677,15 +683,23 @@ export class TradeExecutor {
             existing.strategyAttribution = simStratAttribution;
             modified = true;
           }
-          const isTpUnrealistic = existing.takeProfit > 0 && (Math.abs(existing.takeProfit - (pos.entryPrice || existing.entryPrice)) / (pos.entryPrice || existing.entryPrice) > 0.04);
+          const refEntry = pos.entryPrice || existing.entryPrice;
+          const isExistingLong = existing.action === 'LONG';
+          const isTpDirectionallySane = (tp: number) =>
+            isExistingLong ? (tp >= refEntry * 1.008) : (tp <= refEntry * 0.992);
+
+          const isTpUnrealistic = existing.takeProfit > 0 &&
+            (!isTpDirectionallySane(existing.takeProfit) || Math.abs(existing.takeProfit - refEntry) / refEntry > 0.04);
+
           if (!existing.takeProfit || existing.takeProfit <= 0 || isTpUnrealistic) {
             const oldTp = existing.takeProfit;
-            existing.takeProfit = (pos.takeProfit && pos.takeProfit > 0 && Math.abs(pos.takeProfit - (pos.entryPrice || existing.entryPrice)) / (pos.entryPrice || existing.entryPrice) <= 0.04)
-              ? pos.takeProfit
-              : dynamicTp;
+            const validOnChainTp = pos.takeProfit && pos.takeProfit > 0 && isTpDirectionallySane(pos.takeProfit) && Math.abs(pos.takeProfit - refEntry) / refEntry <= 0.04;
+            existing.takeProfit = validOnChainTp
+              ? pos.takeProfit!
+              : (isExistingLong ? Number((refEntry + dynamicTpDist).toFixed(4)) : Number((refEntry - dynamicTpDist).toFixed(4)));
             modified = true;
             logger.info(`🎯 [DYNAMIC TP REALIGN] Calibrated TP for ${existing.symbol}: $${oldTp} → $${existing.takeProfit}`);
-          } else if (pos.takeProfit && pos.takeProfit !== existing.takeProfit) {
+          } else if (pos.takeProfit && pos.takeProfit !== existing.takeProfit && isTpDirectionallySane(pos.takeProfit)) {
             existing.takeProfit = pos.takeProfit;
             modified = true;
           }
@@ -1134,6 +1148,34 @@ export class TradeExecutor {
           if (liveResult.actualSize && liveResult.actualSize > 0) {
             risk.positionSizeBase = liveResult.actualSize;
             risk.positionSizeUsd = liveResult.actualSize * signal.entryPrice;
+          }
+
+          // Strict Take-Profit Directional Invariant: Ensure TP is mathematically sound before on-chain DEX arming
+          const isLongEntry = signal.action === 'LONG';
+          if (isLongEntry) {
+            if (!signal.takeProfit || signal.takeProfit <= signal.entryPrice) {
+              const oldTp = signal.takeProfit;
+              signal.takeProfit = Number((signal.entryPrice * 1.018).toFixed(4));
+              logger.warn(`🛡️ [TP INVARIANT HEALED] Invalid initial TP on ${signal.symbol} LONG ($${oldTp} <= Entry $${signal.entryPrice}). Calibrated to $${signal.takeProfit}`);
+            }
+            if (signal.takeProfit1 && signal.takeProfit1 <= signal.entryPrice) {
+              signal.takeProfit1 = Number((signal.entryPrice * 1.018).toFixed(4));
+            }
+            if (signal.takeProfit2 && signal.takeProfit2 <= signal.entryPrice) {
+              signal.takeProfit2 = Number((signal.entryPrice * 1.032).toFixed(4));
+            }
+          } else {
+            if (!signal.takeProfit || signal.takeProfit >= signal.entryPrice) {
+              const oldTp = signal.takeProfit;
+              signal.takeProfit = Number((signal.entryPrice * 0.982).toFixed(4));
+              logger.warn(`🛡️ [TP INVARIANT HEALED] Invalid initial TP on ${signal.symbol} SHORT ($${oldTp} >= Entry $${signal.entryPrice}). Calibrated to $${signal.takeProfit}`);
+            }
+            if (signal.takeProfit1 && signal.takeProfit1 >= signal.entryPrice) {
+              signal.takeProfit1 = Number((signal.entryPrice * 0.982).toFixed(4));
+            }
+            if (signal.takeProfit2 && signal.takeProfit2 >= signal.entryPrice) {
+              signal.takeProfit2 = Number((signal.entryPrice * 0.968).toFixed(4));
+            }
           }
 
           // Hard Stop Loss barrier (15% margin max risk catastrophic circuit breaker for on-chain DEX order book)
@@ -1750,11 +1792,27 @@ export class TradeExecutor {
       let hitSl = false;
 
       if (isLong) {
-        if (trade.takeProfit > 0 && currentPrice >= trade.takeProfit) hitTp = true;
-        else if (trade.stopLoss > 0 && currentPrice <= trade.stopLoss) hitSl = true;
+        if (trade.takeProfit > trade.entryPrice && currentPrice >= trade.takeProfit) {
+          hitTp = true;
+        } else if (trade.stopLoss > 0 && currentPrice <= trade.stopLoss) {
+          hitSl = true;
+        } else if (trade.takeProfit > 0 && trade.takeProfit <= trade.entryPrice) {
+          // Self-heal inverted TP: reset to standard +1.8% ATR target
+          trade.takeProfit = Number((trade.entryPrice * 1.018).toFixed(4));
+          modified = true;
+          logger.warn(`🛡️ [TP INVARIANT HEALED] Inverted TP on ${trade.symbol} LONG auto-corrected: $${trade.takeProfit}`);
+        }
       } else {
-        if (trade.takeProfit > 0 && currentPrice <= trade.takeProfit) hitTp = true;
-        else if (trade.stopLoss > 0 && currentPrice >= trade.stopLoss) hitSl = true;
+        if (trade.takeProfit > 0 && trade.takeProfit < trade.entryPrice && currentPrice <= trade.takeProfit) {
+          hitTp = true;
+        } else if (trade.stopLoss > 0 && currentPrice >= trade.stopLoss) {
+          hitSl = true;
+        } else if (trade.takeProfit >= trade.entryPrice) {
+          // Self-heal inverted TP: reset to standard -1.8% ATR target
+          trade.takeProfit = Number((trade.entryPrice * 0.982).toFixed(4));
+          modified = true;
+          logger.warn(`🛡️ [TP INVARIANT HEALED] Inverted TP on ${trade.symbol} SHORT auto-corrected: $${trade.takeProfit}`);
+        }
       }
 
       if (hitTp || hitSl) {
@@ -1872,10 +1930,10 @@ export class TradeExecutor {
       let hitSl = false;
 
       if (isLong) {
-        if (st.takeProfit > 0 && currentPrice >= st.takeProfit) hitTp = true;
+        if (st.takeProfit > st.entryPrice && currentPrice >= st.takeProfit) hitTp = true;
         else if (st.stopLoss > 0 && currentPrice <= st.stopLoss) hitSl = true;
       } else {
-        if (st.takeProfit > 0 && currentPrice <= st.takeProfit) hitTp = true;
+        if (st.takeProfit > 0 && st.takeProfit < st.entryPrice && currentPrice <= st.takeProfit) hitTp = true;
         else if (st.stopLoss > 0 && currentPrice >= st.stopLoss) hitSl = true;
       }
 

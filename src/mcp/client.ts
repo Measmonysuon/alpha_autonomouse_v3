@@ -787,8 +787,11 @@ export class DecibelMCPClient {
         const entryPrice = Number(p.entry_price ?? p.entryPrice ?? 0);
         const sizeBase = Math.abs(rawSize);
         const sizeUsd = sizeBase * entryPrice;
-        const action: 'LONG' | 'SHORT' = rawSize > 0 ? 'LONG' : 'SHORT';
-        const side: 'buy' | 'sell' = rawSize > 0 ? 'buy' : 'sell';
+        const rawAction = String(p.action || p.side || p.position_type || '').toUpperCase();
+        const isExplicitShort = rawAction.includes('SHORT') || rawAction.includes('SELL') || p.is_bid === false || p.is_long === false;
+        const isExplicitLong = rawAction.includes('LONG') || rawAction.includes('BUY') || p.is_bid === true || p.is_long === true;
+        const action: 'LONG' | 'SHORT' = isExplicitShort ? 'SHORT' : (isExplicitLong ? 'LONG' : (rawSize < 0 ? 'SHORT' : 'LONG'));
+        const side: 'buy' | 'sell' = action === 'LONG' ? 'buy' : 'sell';
 
         const rawMargin = Number(p.margin ?? p.position_margin ?? p.collateral ?? p.allocatedUsd ?? 0);
         let leverage = Number(p.leverage ?? p.user_leverage ?? p.target_leverage ?? 0);

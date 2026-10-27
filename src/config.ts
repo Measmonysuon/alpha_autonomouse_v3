@@ -50,8 +50,9 @@ const configSchema = z.object({
   SIMLAB_SERVER_URL: z.string().optional().default(() => envOrFallback('SIMLAB_SERVER_URL') || 'https://simlab.measmony.me'),
 
   // ── Trading Settings ─────────────────────────────────────────────────────────
-  BUDGET_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('BUDGET_USD') || 30.0)),
-  MAX_POSITION_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('MAX_POSITION_USD') || 60.0)),
+  BUDGET_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('BUDGET_USD') || 100.0)),
+  MIN_POSITION_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('MIN_POSITION_USD') || 35.0)),
+  MAX_POSITION_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('MAX_POSITION_USD') || 150.0)),
   MAX_OPEN_POSITIONS: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MAX_OPEN_POSITIONS') || 3)),
   CLIENT_ID: z.string().default(() => {
     const fromEnv = envOrFallback('CLIENT_ID');
@@ -100,9 +101,10 @@ const configSchema = z.object({
     .default(() => envOrFallback('PAPER_TRADING') || 'false'),
 
   // ── Risk & Execution Parameters ──────────────────────────────────────────────
-  MAX_LEVERAGE: z.coerce.number().min(1).max(20).default(5),
-  MAX_ALLOC_PCT: z.coerce.number().min(5).max(100).default(35),
-  MIN_ALLOC_PCT: z.coerce.number().min(5).max(100).default(15),
+  MIN_LEVERAGE: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MIN_LEVERAGE') || 5)),
+  MAX_LEVERAGE: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MAX_LEVERAGE') || 12)),
+  MAX_ALLOC_PCT: z.coerce.number().min(5).max(100).default(() => Number(envOrFallback('MAX_ALLOC_PCT') || 60)),
+  MIN_ALLOC_PCT: z.coerce.number().min(5).max(100).default(() => Number(envOrFallback('MIN_ALLOC_PCT') || 35)),
   MAX_RISK_PER_TRADE_PCT: z.coerce.number().min(0.1).max(50).default(30),
   MIN_24H_VOLUME_USD: z.coerce.number().default(100_000),
   MAX_FUNDING_RATE_PCT: z.coerce.number().default(0.3),
@@ -266,6 +268,16 @@ const savedBudget = savedSettings.trading?.budgetUsd ?? savedSettings.budgetUsd;
 if (savedBudget !== undefined) rawConfig.BUDGET_USD = Number(savedBudget);
 const savedMaxPos = savedSettings.trading?.maxPositionUsd ?? savedSettings.maxPositionUsd;
 if (savedMaxPos !== undefined) rawConfig.MAX_POSITION_USD = Number(savedMaxPos);
+const savedMinPos = savedSettings.trading?.minPositionUsd ?? savedSettings.minPositionUsd;
+if (savedMinPos !== undefined) rawConfig.MIN_POSITION_USD = Number(savedMinPos);
+const savedMinLev = savedSettings.trading?.minLeverage ?? savedSettings.minLeverage;
+if (savedMinLev !== undefined) rawConfig.MIN_LEVERAGE = Number(savedMinLev);
+const savedMaxLev = savedSettings.trading?.maxLeverage ?? savedSettings.maxLeverage;
+if (savedMaxLev !== undefined) rawConfig.MAX_LEVERAGE = Number(savedMaxLev);
+const savedMinAlloc = savedSettings.trading?.minAllocPct ?? savedSettings.minAllocPct;
+if (savedMinAlloc !== undefined) rawConfig.MIN_ALLOC_PCT = Number(savedMinAlloc);
+const savedMaxAlloc = savedSettings.trading?.maxAllocPct ?? savedSettings.maxAllocPct;
+if (savedMaxAlloc !== undefined) rawConfig.MAX_ALLOC_PCT = Number(savedMaxAlloc);
 const savedMaxOpen = savedSettings.trading?.maxOpenPositions ?? savedSettings.maxOpenPositions;
 if (savedMaxOpen !== undefined) rawConfig.MAX_OPEN_POSITIONS = Number(savedMaxOpen);
 if (savedSettings.trading) {
@@ -275,7 +287,12 @@ if (savedSettings.trading) {
   }
   if (savedSettings.trading.maxRiskPerTradePct !== undefined) rawConfig.MAX_RISK_PER_TRADE_PCT = Number(savedSettings.trading.maxRiskPerTradePct);
   if (savedSettings.trading.minConfidencePct !== undefined) rawConfig.MIN_CONFIDENCE_PCT = Number(savedSettings.trading.minConfidencePct);
+  if (savedSettings.trading.minLeverage !== undefined) rawConfig.MIN_LEVERAGE = Number(savedSettings.trading.minLeverage);
   if (savedSettings.trading.maxLeverage !== undefined) rawConfig.MAX_LEVERAGE = Number(savedSettings.trading.maxLeverage);
+  if (savedSettings.trading.minPositionUsd !== undefined) rawConfig.MIN_POSITION_USD = Number(savedSettings.trading.minPositionUsd);
+  if (savedSettings.trading.maxPositionUsd !== undefined) rawConfig.MAX_POSITION_USD = Number(savedSettings.trading.maxPositionUsd);
+  if (savedSettings.trading.minAllocPct !== undefined) rawConfig.MIN_ALLOC_PCT = Number(savedSettings.trading.minAllocPct);
+  if (savedSettings.trading.maxAllocPct !== undefined) rawConfig.MAX_ALLOC_PCT = Number(savedSettings.trading.maxAllocPct);
 }
 if (savedSettings.simlab?.key) {
   rawConfig.SIMLAB_KEY = savedSettings.simlab.key;
@@ -676,12 +693,40 @@ export function updateDynamicSettings(updates: any): void {
         merged.budgetUsd = config.BUDGET_USD;
         merged.trading.budgetUsd = config.BUDGET_USD;
       }
+      if (tradingUpdates.minPositionUsd !== undefined) {
+        const rawMinPos = Math.max(1, Number(tradingUpdates.minPositionUsd));
+        config.MIN_POSITION_USD = rawMinPos;
+        merged.minPositionUsd = rawMinPos;
+        merged.trading.minPositionUsd = rawMinPos;
+      }
       if (tradingUpdates.maxPositionUsd !== undefined) {
         const rawMaxPos = Number(tradingUpdates.maxPositionUsd);
-        const safeMaxPos = Math.min(rawMaxPos, config.BUDGET_USD);
+        const safeMaxPos = Math.max(config.MIN_POSITION_USD || 1, rawMaxPos);
         config.MAX_POSITION_USD = safeMaxPos;
         merged.maxPositionUsd = safeMaxPos;
         merged.trading.maxPositionUsd = safeMaxPos;
+      }
+      if (tradingUpdates.minLeverage !== undefined) {
+        const rawMinLev = Math.max(1, Math.min(50, Number(tradingUpdates.minLeverage)));
+        config.MIN_LEVERAGE = rawMinLev;
+        merged.minLeverage = rawMinLev;
+        merged.trading.minLeverage = rawMinLev;
+      }
+      if (tradingUpdates.maxLeverage !== undefined) {
+        const rawMaxLev = Math.max(config.MIN_LEVERAGE || 1, Math.min(50, Number(tradingUpdates.maxLeverage)));
+        config.MAX_LEVERAGE = rawMaxLev;
+        merged.maxLeverage = rawMaxLev;
+        merged.trading.maxLeverage = rawMaxLev;
+      }
+      if (tradingUpdates.minAllocPct !== undefined) {
+        config.MIN_ALLOC_PCT = Math.max(1, Math.min(100, Number(tradingUpdates.minAllocPct)));
+        merged.minAllocPct = config.MIN_ALLOC_PCT;
+        merged.trading.minAllocPct = config.MIN_ALLOC_PCT;
+      }
+      if (tradingUpdates.maxAllocPct !== undefined) {
+        config.MAX_ALLOC_PCT = Math.max(config.MIN_ALLOC_PCT || 1, Math.min(100, Number(tradingUpdates.maxAllocPct)));
+        merged.maxAllocPct = config.MAX_ALLOC_PCT;
+        merged.trading.maxAllocPct = config.MAX_ALLOC_PCT;
       }
       if (tradingUpdates.maxOpenPositions !== undefined) {
         const safeMaxOpen = Math.max(1, Number(tradingUpdates.maxOpenPositions));
@@ -705,10 +750,6 @@ export function updateDynamicSettings(updates: any): void {
       if (tradingUpdates.minConfidencePct !== undefined) {
         config.MIN_CONFIDENCE_PCT = Number(tradingUpdates.minConfidencePct);
         merged.trading.minConfidencePct = config.MIN_CONFIDENCE_PCT;
-      }
-      if (tradingUpdates.maxLeverage !== undefined) {
-        config.MAX_LEVERAGE = Number(tradingUpdates.maxLeverage);
-        merged.trading.maxLeverage = config.MAX_LEVERAGE;
       }
       if (tradingUpdates.mode || tradingUpdates.autonomousMode) {
         config.AUTONOMOUS_MODE = 'full';

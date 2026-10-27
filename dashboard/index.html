@@ -3918,6 +3918,48 @@
       border: 1px solid var(--border);
     }
 
+    /* ── History Pagination Controls ── */
+    .history-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.45);
+      font-size: 12px;
+    }
+    .hist-page-btn {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      user-select: none;
+    }
+    .hist-page-btn:hover:not(:disabled) {
+      color: #fff;
+      background: rgba(59, 130, 246, 0.2);
+      border-color: rgba(59, 130, 246, 0.5);
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.25);
+    }
+    .hist-page-btn:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+    .hist-page-btn:disabled {
+      opacity: 0.32;
+      cursor: not-allowed;
+      border-color: transparent;
+    }
+
     /* ── Log Feed ── */
     .log-feed {
       background: var(--bg2);
@@ -9294,6 +9336,19 @@
               </tbody>
             </table>
           </div>
+          <!-- History Pagination Controls -->
+          <div id="history-pagination" class="history-pagination">
+            <div id="history-pagination-info" style="color:var(--text3);font-family:'JetBrains Mono',monospace;font-size:11.5px;">
+              Showing 0 of 0 trades
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button id="history-btn-first" class="hist-page-btn" onclick="goToHistoryPage(1)" title="First Page" disabled>⏮ First</button>
+              <button id="history-btn-prev" class="hist-page-btn" onclick="changeHistoryPage(-1)" title="Previous 100 Trades" disabled>◀ Back</button>
+              <span id="history-page-indicator" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-weight:700;font-size:11px;font-family:'JetBrains Mono',monospace;">Page 1 / 1</span>
+              <button id="history-btn-next" class="hist-page-btn" onclick="changeHistoryPage(1)" title="Next 100 Trades" disabled>Next ▶</button>
+              <button id="history-btn-last" class="hist-page-btn" onclick="goToHistoryPage('last')" title="Last Page" disabled>Last ⏭</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -9677,20 +9732,53 @@
                 </div>
                 <div>
                   <label
+                    style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Min
+                    Position ($ USD)</label>
+                  <input type="number" id="set-min-position-usd" min="1" max="10000" step="1" value="35"
+                    placeholder="35.00"
+                    style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Minimum floor sizing per trade before leverage.</div>
+                </div>
+                <div>
+                  <label
                     style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Max
                     Position ($ USD)</label>
-                  <input type="number" id="set-max-position-usd" min="1" max="30" step="1" value="10"
-                    placeholder="10.00"
+                  <input type="number" id="set-max-position-usd" min="1" max="10000" step="1" value="150"
+                    placeholder="150.00"
                     style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
-                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Maximum sizing per trade before
-                    leverage (must be ≤ Budget Ceiling).</div>
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Maximum sizing ceiling per trade before leverage.</div>
+                </div>
+                <div>
+                  <label
+                    style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Min
+                    Leverage</label>
+                  <input type="number" id="set-min-leverage" min="1" max="50" step="1" value="5"
+                    style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Client sovereign leverage floor (overrides Sim Lab).</div>
                 </div>
                 <div>
                   <label
                     style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Max
                     Leverage</label>
-                  <input type="number" id="set-max-leverage" min="1" max="50" step="1" value="5"
+                  <input type="number" id="set-max-leverage" min="1" max="50" step="1" value="12"
                     style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Client sovereign leverage cap.</div>
+                </div>
+                <div>
+                  <label
+                    style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Min
+                    Allocation (%)</label>
+                  <input type="number" id="set-min-alloc-pct" min="1" max="100" step="1" value="35"
+                    style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Minimum % of budget per trade.</div>
+                </div>
+                <div>
+                  <label
+                    style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Max
+                    Allocation (%)</label>
+                  <input type="number" id="set-max-alloc-pct" min="1" max="100" step="1" value="60"
+                    style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Maximum % of budget per trade.</div>
                 </div>
                 <div>
                   <label
@@ -15569,7 +15657,12 @@
 
     function drawCandlestickCanvas(canvas, rawKlines, options) {
       if (!canvas || !rawKlines || !rawKlines.length) return;
-      const klines = rawKlines.map(k => ({
+      const opt = options || {};
+
+      // Slicing klines to a fixed standard window (28 bars) prevents horizontal stretching/squishing accordion jitter
+      const CANDLE_COUNT = 28;
+      const slicedKlines = rawKlines.length > CANDLE_COUNT ? rawKlines.slice(-CANDLE_COUNT) : rawKlines;
+      const klines = slicedKlines.map(k => ({
         t: k.t !== undefined ? k.t : (k.openTime || 0),
         o: Number(k.o !== undefined ? k.o : k.open),
         h: Number(k.h !== undefined ? k.h : k.high),
@@ -15579,7 +15672,14 @@
       })).filter(k => isFinite(k.o) && isFinite(k.h) && isFinite(k.l) && isFinite(k.c));
       if (!klines.length) return;
 
-      const opt = options || {};
+      // Real-time synchronization: Update latest candle's Close and High/Low with live currentPrice so chart moves with live ticks
+      if (opt.currentPrice && opt.currentPrice > 0 && klines.length > 0) {
+        const lastK = klines[klines.length - 1];
+        lastK.c = opt.currentPrice;
+        if (opt.currentPrice > lastK.h) lastK.h = opt.currentPrice;
+        if (opt.currentPrice < lastK.l) lastK.l = opt.currentPrice;
+      }
+
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       let W = rect.width;
@@ -15594,37 +15694,48 @@
       }
       if (!W || !H) return;
 
-      canvas.width = Math.floor(W * dpr);
-      canvas.height = Math.floor(H * dpr);
-
+      const targetW = Math.floor(W * dpr);
+      const targetH = Math.floor(H * dpr);
       const ctx = canvas.getContext('2d');
+
+      // Only resize canvas buffer if dimensions actually changed to avoid white flash / flicker
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      } else {
+        ctx.clearRect(0, 0, targetW, targetH);
+      }
+
       ctx.save();
       ctx.scale(dpr, dpr);
 
-      // Price range calculation including execution lines
-      let minP = Infinity;
-      let maxP = -Infinity;
+      // Calculate true candle bounds first
+      let cMin = Infinity;
+      let cMax = -Infinity;
       for (let i = 0; i < klines.length; i++) {
-        if (klines[i].l < minP) minP = klines[i].l;
-        if (klines[i].h > maxP) maxP = klines[i].h;
+        if (klines[i].l < cMin) cMin = klines[i].l;
+        if (klines[i].h > cMax) cMax = klines[i].h;
       }
-      if (opt.lines && opt.lines.length) {
-        // Prevent distant execution lines (e.g. wild TP) from squishing candles into a flat line
-        const candleSpan = Math.max(maxP - minP, (maxP || 1) * 0.01);
-        const allowedMin = minP - candleSpan * 2.5;
-        const allowedMax = maxP + candleSpan * 2.5;
+      if (!isFinite(cMin) || !isFinite(cMax) || cMin === cMax) {
+        cMin = (cMin === Infinity ? 1 : cMin) * 0.99;
+        cMax = (cMax === -Infinity ? 1 : cMax) * 1.01;
+      }
 
+      const candleSpan = Math.max(cMax - cMin, cMax * 0.005);
+      let minP = cMin;
+      let maxP = cMax;
+
+      // Execution lines near current action expand visible range comfortably;
+      // distant extreme lines (e.g. catastrophic Hard SL 3-15% away) are clamped to 1.6x candle span
+      // so candlesticks remain prominently visible and do not collapse into a thin flat line
+      if (opt.lines && opt.lines.length) {
         opt.lines.forEach(l => {
           if (l.price && l.price > 0) {
-            const clampedP = Math.max(allowedMin, Math.min(allowedMax, l.price));
-            if (clampedP < minP) minP = clampedP;
-            if (clampedP > maxP) maxP = clampedP;
+            const clampedPrice = Math.max(cMin - candleSpan * 1.6, Math.min(cMax + candleSpan * 1.6, l.price));
+            if (clampedPrice < minP) minP = clampedPrice;
+            if (clampedPrice > maxP) maxP = clampedPrice;
           }
         });
-      }
-      if (!isFinite(minP) || !isFinite(maxP) || minP === maxP) {
-        minP = (minP === Infinity ? 1 : minP) * 0.98;
-        maxP = (maxP === -Infinity ? 1 : maxP) * 1.02;
       }
 
       const span = Math.max(maxP - minP, maxP * 0.005);
@@ -16548,6 +16659,7 @@
             showLiqHeatmap: showLiq,
             liqData: liqData,
             lines: lines,
+            currentPrice: currentPrice,
             onHoverCandle: (candle, idx) => {
               if (!hudEl) return;
               const timeStr = new Date(candle.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -17044,6 +17156,12 @@
         const markValEl = card.querySelector('.pos-price-value.mark');
         if (markValEl) markValEl.textContent = fmtPosPrice(currentPrice);
 
+        // 2b. Update Take Profit in 4-tile matrix and gauge if adjusted
+        const tpValEl = card.querySelector('.pos-price-value.tp');
+        if (tpValEl && p.takeProfit > 0) tpValEl.textContent = fmtPosPrice(p.takeProfit);
+        const gaugeTpEl = card.querySelector('.pos-gauge-bound.tp');
+        if (gaugeTpEl && p.takeProfit > 0) gaugeTpEl.textContent = fmtPosPrice(p.takeProfit);
+
         // 3. Update Chart Legend Mark Price
         const lvlMarkEl = card.querySelector('.pos-lvl-tag.mark b');
         if (lvlMarkEl) lvlMarkEl.textContent = fmtPosPrice(currentPrice);
@@ -17331,7 +17449,6 @@
       });
 
       renderAllPositionCandles(sortedPositions);
-      setTimeout(() => renderAllPositionCandles(sortedPositions), 60);
       if (metaEl) metaEl.innerHTML = metaHtml;
       if (dashMetaEl) dashMetaEl.innerHTML = metaHtml;
       const harvestBackdrop = document.getElementById('harvest-modal-backdrop');
@@ -17370,13 +17487,54 @@
     let currentHistoryFilter = 'all';
     let rawHistoryTrades = [];
     let lastRenderedTradeSignature = '';
+    let historyCurrentPage = 1;
+    const historyPageSize = 100;
+
+    function changeHistoryPage(delta) {
+      historyCurrentPage += delta;
+      renderHistory();
+    }
+
+    function goToHistoryPage(page) {
+      if (page === 'last') {
+        historyCurrentPage = 999999;
+      } else {
+        historyCurrentPage = Number(page) || 1;
+      }
+      renderHistory();
+    }
 
     function setHistoryFilter(filter) {
       currentHistoryFilter = filter;
+      historyCurrentPage = 1; // Reset to page 1 on filter switch
       document.querySelectorAll('.hf-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.filter === filter);
       });
       renderHistory(rawHistoryTrades);
+    }
+
+    function updateHistoryPaginationUI(totalRecords, currentPage, totalPages, startIndex = 0, endIndex = 0) {
+      const pageInfo = document.getElementById('history-pagination-info');
+      const pageIndicator = document.getElementById('history-page-indicator');
+      const btnFirst = document.getElementById('history-btn-first');
+      const btnPrev = document.getElementById('history-btn-prev');
+      const btnNext = document.getElementById('history-btn-next');
+      const btnLast = document.getElementById('history-btn-last');
+
+      if (pageInfo) {
+        if (!totalRecords || totalRecords === 0) {
+          pageInfo.textContent = 'Showing 0 of 0 trades';
+        } else {
+          pageInfo.textContent = `Showing ${(startIndex + 1).toLocaleString()}–${endIndex.toLocaleString()} of ${totalRecords.toLocaleString()} trades (100 per page)`;
+        }
+      }
+      if (pageIndicator) {
+        pageIndicator.textContent = `Page ${currentPage} / ${totalPages}`;
+      }
+      if (btnFirst) btnFirst.disabled = (currentPage <= 1 || totalRecords === 0);
+      if (btnPrev) btnPrev.disabled = (currentPage <= 1 || totalRecords === 0);
+      if (btnNext) btnNext.disabled = (currentPage >= totalPages || totalRecords === 0);
+      if (btnLast) btnLast.disabled = (currentPage >= totalPages || totalRecords === 0);
     }
 
     async function syncOnChainTradesHistory(event) {
@@ -17536,8 +17694,20 @@
         return true;
       });
 
-      // Signature diffing: do not wipe DOM if trades have not changed
-      const currentSig = `${currentHistoryFilter}_${filtered.length}_${totalNetPnl.toFixed(2)}_${totalGrossPnl.toFixed(2)}_${autoNetPnl.toFixed(2)}_${manualNetPnl.toFixed(2)}_${filtered.slice(0, 5).map(t => `${t.id || t.client_order_id || t.tx || ''}_${t.netPnl}_${t.actionStr}_${t.price}_${t.timestamp}`).join(';')}_${filtered.slice(-3).map(t => `${t.id || t.client_order_id || t.tx || ''}_${t.netPnl}`).join(';')}`;
+      const totalRecords = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(totalRecords / historyPageSize));
+      if (historyCurrentPage > totalPages) historyCurrentPage = totalPages;
+      if (historyCurrentPage < 1) historyCurrentPage = 1;
+
+      const startIndex = (historyCurrentPage - 1) * historyPageSize;
+      const endIndex = Math.min(startIndex + historyPageSize, totalRecords);
+      const pageTrades = filtered.slice(startIndex, endIndex);
+
+      // Update pagination controls UI
+      updateHistoryPaginationUI(totalRecords, historyCurrentPage, totalPages, startIndex, endIndex);
+
+      // Signature diffing: do not wipe DOM if trades and page have not changed
+      const currentSig = `${currentHistoryFilter}_p${historyCurrentPage}_tot${totalRecords}_${totalNetPnl.toFixed(2)}_${totalGrossPnl.toFixed(2)}_${autoNetPnl.toFixed(2)}_${manualNetPnl.toFixed(2)}_${pageTrades.slice(0, 3).map(t => `${t.id || t.client_order_id || t.tx || ''}_${t.netPnl}_${t.actionStr}_${t.price}_${t.timestamp}`).join(';')}_${pageTrades.slice(-2).map(t => `${t.id || t.client_order_id || t.tx || ''}_${t.netPnl}`).join(';')}`;
 
       if (lastRenderedTradeSignature === currentSig) {
         return;
@@ -17563,12 +17733,12 @@
     `;
       }
 
-      if (!filtered.length) {
+      if (!pageTrades.length) {
         tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--text3);">No ${currentHistoryFilter} trades found.</td></tr>`;
         return;
       }
 
-      tbody.innerHTML = filtered.map(t => {
+      tbody.innerHTML = pageTrades.map(t => {
         const isWin = t.netPnl > 0;
         const isLoss = t.netPnl < 0;
         const pnlClass = isWin ? 'win' : isLoss ? 'loss' : '';
@@ -17608,10 +17778,12 @@
             reasonBadge = `<span class="trade-reason-pill time" title="Time Stagnation Exit">⏱️ TIME</span>`;
           } else if (rawReason.includes('AI_CLOSE') || rawReason.includes('SIM_EXIT') || rawReason === 'CLOSED_AI') {
             reasonBadge = `<span class="trade-reason-pill auto" style="background:rgba(99,102,241,0.18);color:#818cf8;border:1px solid rgba(99,102,241,0.35);" title="Autonomous AI Defensive Exit (Loss)">🤖 AI SL</span>`;
-          } else if (rawReason.includes('MANUAL') || t.isManual) {
-            reasonBadge = `<span class="trade-reason-pill manual" title="Manual User / External DEX Close (Loss)">👤 MANUAL SL</span>`;
+          } else if (rawReason.includes('STRUCTURE') || rawReason.includes('DEFENSIVE')) {
+            reasonBadge = `<span class="trade-reason-pill sl" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:#f87171;" title="Defensive Market Structure Cut">🛡️ STRUCTURE SL</span>`;
           } else if (rawReason.includes('TP') || rawReason.includes('HARVEST') || rawReason.includes('TRAILING')) {
             reasonBadge = `<span class="trade-reason-pill sl" title="Exit target reached but slipped/settled in net loss after on-chain protocol fees">🛑 SL (SLIP)</span>`;
+          } else if (rawReason.includes('DEX') || rawReason.includes('EXTERNAL')) {
+            reasonBadge = `<span class="trade-reason-pill sl" title="On-Chain DEX Stop Loss Settlement">🛑 ON-CHAIN SL</span>`;
           } else {
             reasonBadge = `<span class="trade-reason-pill sl" title="Stop Loss Hit">🛑 SL</span>`;
           }
@@ -17627,10 +17799,8 @@
           reasonBadge = `<span class="trade-reason-pill liq" title="On-Chain Liquidation">⚠️ LIQ</span>`;
         } else if (rawReason.includes('STAGNATION') || rawReason.includes('TIME')) {
           reasonBadge = `<span class="trade-reason-pill time" title="Time Stagnation Exit">⏱️ TIME</span>`;
-        } else if (rawReason.includes('AI_CLOSE') || rawReason.includes('SIM_EXIT') || rawReason === 'CLOSED_AI' || (isTestnet && rawReason.includes('MANUAL'))) {
-          reasonBadge = `<span class="trade-reason-pill auto" style="background:rgba(99,102,241,0.18);color:#818cf8;border:1px solid rgba(99,102,241,0.35);" title="Autonomous Simulated Market Exit / AI Rebalance">🤖 AI CLOSE</span>`;
-        } else if (rawReason.includes('MANUAL') || t.isManual) {
-          reasonBadge = `<span class="trade-reason-pill manual" title="Manual User / External DEX Close">👤 MANUAL</span>`;
+        } else if (rawReason.includes('AI_CLOSE') || rawReason.includes('SIM_EXIT') || rawReason === 'CLOSED_AI' || rawReason.includes('MANUAL')) {
+          reasonBadge = `<span class="trade-reason-pill auto" style="background:rgba(99,102,241,0.18);color:#818cf8;border:1px solid rgba(99,102,241,0.35);" title="Autonomous Market Exit / AI Rebalance">🤖 AI CLOSE</span>`;
         } else if (isProfitableExit) {
           reasonBadge = `<span class="trade-reason-pill tp" title="Take Profit Hit">🎯 TP</span>`;
         } else {
@@ -21862,16 +22032,16 @@
           }
           bEl.value = budgetCeil;
         }
-        if (document.getElementById('set-max-leverage')) document.getElementById('set-max-leverage').value = trading.maxLeverage ?? s.maxLeverage ?? 5;
+        if (document.getElementById('set-min-leverage')) document.getElementById('set-min-leverage').value = trading.minLeverage ?? s.minLeverage ?? 5;
+        if (document.getElementById('set-max-leverage')) document.getElementById('set-max-leverage').value = trading.maxLeverage ?? s.maxLeverage ?? 12;
+        if (document.getElementById('set-min-position-usd')) document.getElementById('set-min-position-usd').value = trading.minPositionUsd ?? s.minPositionUsd ?? 35;
         if (document.getElementById('set-max-position-usd')) {
           const posEl = document.getElementById('set-max-position-usd');
-          posEl.max = budgetCeil;
-          let posVal = s.maxPositionUsd ?? (trading.budgetUsd ? Math.round(trading.budgetUsd * (trading.maxRiskPerTradePct || 35) / 100) : 10);
-          if (!posVal || posVal > budgetCeil) {
-            posVal = Math.min(budgetCeil, Math.round(budgetCeil * 0.35) || 10);
-          }
+          let posVal = trading.maxPositionUsd ?? s.maxPositionUsd ?? 150;
           posEl.value = posVal;
         }
+        if (document.getElementById('set-min-alloc-pct')) document.getElementById('set-min-alloc-pct').value = trading.minAllocPct ?? s.minAllocPct ?? 35;
+        if (document.getElementById('set-max-alloc-pct')) document.getElementById('set-max-alloc-pct').value = trading.maxAllocPct ?? s.maxAllocPct ?? 60;
         if (document.getElementById('set-stop-loss-pct')) document.getElementById('set-stop-loss-pct').value = s.defaultStopLossPct ?? 1.5;
         if (document.getElementById('set-take-profit-pct')) document.getElementById('set-take-profit-pct').value = s.defaultTakeProfitPct ?? 3.0;
         if (document.getElementById('set-max-open-positions')) document.getElementById('set-max-open-positions').value = s.maxOpenPositions ?? 3;
@@ -22198,16 +22368,20 @@
         if (bEl) bEl.value = budgetUsd;
         showToastNotification(`⚠️ Budget Ceiling capped to on-chain wallet balance: $${budgetUsd.toFixed(2)}`);
       }
-      let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 10;
-      if (maxPositionUsd > budgetUsd) {
-        maxPositionUsd = budgetUsd;
-        const posEl = document.getElementById('set-max-position-usd');
-        if (posEl) posEl.value = budgetUsd;
-      }
+      let minPositionUsd = parseFloat(document.getElementById('set-min-position-usd')?.value) || 35;
+      let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 150;
+      let minLeverage = parseFloat(document.getElementById('set-min-leverage')?.value) || 5;
+      let maxLeverage = parseFloat(document.getElementById('set-max-leverage')?.value) || 12;
+      let minAllocPct = parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35;
+      let maxAllocPct = parseFloat(document.getElementById('set-max-alloc-pct')?.value) || 60;
       const payload = {
         budgetUsd: budgetUsd,
-        maxLeverage: parseFloat(document.getElementById('set-max-leverage')?.value) || 5,
+        minPositionUsd: minPositionUsd,
         maxPositionUsd: maxPositionUsd,
+        minLeverage: minLeverage,
+        maxLeverage: maxLeverage,
+        minAllocPct: minAllocPct,
+        maxAllocPct: maxAllocPct,
         defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
         defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
         maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
@@ -22328,8 +22502,12 @@
         aiModel: getSelectedAIModel(),
         aiApiKey: document.getElementById('set-ai-key')?.value.trim(),
         budgetUsd: budgetUsd,
-        maxLeverage: parseFloat(document.getElementById('set-max-leverage')?.value) || 5,
-        maxPositionUsd: maxPositionUsd,
+        minPositionUsd: parseFloat(document.getElementById('set-min-position-usd')?.value) || 35,
+        maxPositionUsd: parseFloat(document.getElementById('set-max-position-usd')?.value) || 150,
+        minLeverage: parseFloat(document.getElementById('set-min-leverage')?.value) || 5,
+        maxLeverage: parseFloat(document.getElementById('set-max-leverage')?.value) || 12,
+        minAllocPct: parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35,
+        maxAllocPct: parseFloat(document.getElementById('set-max-alloc-pct')?.value) || 60,
         defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
         defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
         maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,

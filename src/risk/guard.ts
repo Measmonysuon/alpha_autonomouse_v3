@@ -462,8 +462,9 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
+    const clientMinPosUsd = (config as any).MIN_POSITION_USD || 35.0;
     const stratMinMargin = Math.max(
-      20.0,
+      clientMinPosUsd,
       activeDirectives?.strategy?.layer5?.minMarginUsd ??
       (activeDirectives?.strategy as any)?.minMarginUsd ??
       20.0,
@@ -497,7 +498,7 @@ export class RiskGuard {
       logger.info(`⚖️ [Risk Guard] ${signal.symbol} — Counter-trend 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
     }
 
-    // Enforce strategy minimum margin floor of $20.00
+    // Enforce strategy minimum margin floor
     targetAllocUsd = Math.max(targetAllocUsd, stratMinMargin);
 
     // STRICT HARD CLAMPS:
@@ -510,15 +511,18 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    // Adaptive Leverage Min-Clamp:
-    // Sim Lab may recommend lower leverage (e.g. 3x on volatile alts) under client max ceiling (e.g. 5x)
-    // Strictly respects exchange maximum leverage caps (e.g. 5x for SUI, NEAR, TAO, LDO, ZRO)
+    // Adaptive Leverage Sovereign [Min 5x, Max 12x] Clamp:
+    // Client enforces sovereign minLeverage (default 5x) and maxLeverage (default 12x)
+    // Strictly respects exchange maximum leverage caps
     const marketAuth = AUTHORITATIVE_DECIBEL_MARKETS[normSym];
-    const exchangeMaxLev = marketAuth?.maxLeverage || 10;
+    const exchangeMaxLev = marketAuth?.maxLeverage || 12;
 
-    const simLabSuggestedLev = pairDir?.confidenceSizing?.recommendedLeverage || pairDir?.maxLeverage || signal.suggestedLeverage || activeDirectives?.strategy?.leverage || 3;
-    const clientMaxLev = Math.min(config.MAX_LEVERAGE || 5, exchangeMaxLev);
-    const leverage = Math.min(simLabSuggestedLev, clientMaxLev, exchangeMaxLev);
+    const clientMinLev = (config as any).MIN_LEVERAGE || 5;
+    const clientMaxLev = Math.min((config as any).MAX_LEVERAGE || 12, exchangeMaxLev);
+
+    const simLabSuggestedLev = pairDir?.confidenceSizing?.recommendedLeverage || pairDir?.maxLeverage || signal.suggestedLeverage || activeDirectives?.strategy?.leverage || clientMinLev;
+    const candidateLev = Math.max(clientMinLev, Math.min(simLabSuggestedLev, clientMaxLev));
+    const leverage = Math.min(candidateLev, exchangeMaxLev);
 
     // ── Risk-Parity Hard Cap: Maximum Dollar Loss at Stop Loss (UNCONDITIONAL) ──
     const entryPrice = signal.entryPrice || signal.limitPrice || 0;
@@ -528,8 +532,8 @@ export class RiskGuard {
       : 0.02;
     const bufferedSlDistPct = rawSlDistPct + 0.0030; // 30 bps slippage & taker fee buffer
 
-    // Maximum loss at SL is percentage-scaled, calibrated for minimum margin (e.g. $20 min margin @ 15% hard SL = $3.00)
-    const maxLossPerTradeUsd = Math.max(stratMinMargin * 0.15, maxBudget * 0.02);
+    // Maximum loss at SL is percentage-scaled, calibrated for larger position capital (5% of budget)
+    const maxLossPerTradeUsd = Math.max(stratMinMargin * 0.25, maxBudget * 0.05);
     if (bufferedSlDistPct > 0 && leverage > 0) {
       const maxSafeAllocForSl = maxLossPerTradeUsd / (bufferedSlDistPct * leverage);
       if (targetAllocUsd > maxSafeAllocForSl) {
