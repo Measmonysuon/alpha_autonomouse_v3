@@ -62,13 +62,13 @@ To understand how the entire system operates 24/7 without emotional bias or huma
 │                    TIER 2: SPECIALIZED AGENT OFFICERS                  │
 │       Department Heads: Macro, Microstructure, Risk, & Harvest        │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │ Allocates Operational Tasks
+                                    │ Allocates Operational Directives
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                  TIER 3: OPERATIONAL PROCESSING NODES                  │
-│       Physical Stations: Sim Lab Cloud, Jetson Edge, Client Terminal   │
+│       Physical Stations: Sim Lab Cloud, Edge Execution, Client Terminal│
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │ Deploys to Factory Floor
+                                    │ Deploys to Factory Floors
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                 TIER 4: NODE FUNCTIONS & DEDICATED WORKERS             │
@@ -109,13 +109,13 @@ Just like senior partners at a quantitative hedge fund, four dedicated Agent Off
 
 The intelligence and execution responsibilities are cleanly divided across three physical processing nodes:
 
-1. **Node Alpha: The Sim Lab Cloud Research Node (Port 4000):**
+1. **Node Alpha: The Sim Lab Cloud Research Node:**
    * **Location:** Cloud / Research Cluster (`alpha-forge-server`).
    * **Function:** The 24/7 analytical factory. Continuously runs parallel shadow simulations across 28+ perpetual markets, runs counterfactual backtests, trains neural models, and broadcasts unified Alpha Directives to licensed clients.
 
-2. **Node Beta: The Jetson Edge Execution Node (Port 5050 & 3000):**
-   * **Location:** Dedicated 24/7 Hardware (`NVIDIA Jetson Orin Nano`).
-   * **Function:** Colocated low-latency execution node running in isolated Docker containers with local Ollama AI models. Executes trades with millisecond precision and zero desktop OS interruption.
+2. **Node Beta: The Dedicated Edge Execution Node:**
+   * **Location:** Dedicated 24/7 Execution Hardware.
+   * **Function:** Colocated low-latency execution node running in isolated Docker containers with local AI models. Executes trades with millisecond precision and zero desktop OS interruption.
 
 3. **Node Gamma: The Client Sovereign Terminal & Operator Node:**
    * **Location:** The Trader’s Local Workstation / Private Browser Dashboard.
