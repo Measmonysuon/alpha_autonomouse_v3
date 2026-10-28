@@ -164,6 +164,12 @@ export interface AlphaBundleResponse {
     shockwaveReason?: string;
     updatedAt: number;
   };
+  quantumDirectives?: {
+    active: boolean;
+    trackedWallsCount: number;
+    baseMassThresholdUsd: number;
+    criticalDistancePct: number;
+  };
 }
 
 // ─── Retry State Machine ──────────────────────────────────────────────────────

@@ -256,6 +256,33 @@ export function evaluateAITrapShield(
     return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
+  // ── 1E. QUANTUM DECOHERENCE & SPOOF WALL VETO ──────────────────────────────
+  const pairOrderflow = bundle?.pairDirectives?.[symbol]?.orderflow;
+  const cvdSlope = pairOrderflow?.cvdTrend === 'BUY' ? 'ACCUMULATION' : (pairOrderflow?.cvdTrend === 'SELL' ? 'DISTRIBUTION' : (ind.cvdTrend === 'BUY' ? 'ACCUMULATION' : (ind.cvdTrend === 'SELL' ? 'DISTRIBUTION' : 'NEUTRAL')));
+  const cvdResult = evaluateCVDConfirmation(candidateAction, undefined, {
+    cvdSlope,
+    takerBuyRatio: pairOrderflow?.orderflowImbalancePct !== undefined 
+      ? 1.0 + (pairOrderflow.orderflowImbalancePct / 100) 
+      : 1.0,
+  });
+  if (!cvdResult.isApproved) {
+    const res: AITrapValidationResult = {
+      timestamp: Date.now(),
+      symbol,
+      candidateAction,
+      signalConfidence: signal.confidence,
+      verdict: 'TRAP_EVENT',
+      trapCategory: 'QUANTUM_HOAX_COLLAPSE',
+      vetoTrade: true,
+      confidence: 86,
+      convictionBonus: 0,
+      metricsEvaluated: metrics,
+      reasoning: `🛡️ [QUANTUM DECOHERENCE] Hoax Collapse detected: ${cvdResult.vetoReason || 'Aggressive opposing delta flow'}. Resting liquidity floor evaporated.`,
+      modelUsed: 'Quantum Observer (Layer 2)',
+    };
+    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+  }
+
   // ── 2. TECHNICAL TRAP VALIDATION ───────────────────────────────────────────
   // A. Rejection Wick Traps
 
