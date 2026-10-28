@@ -123,14 +123,15 @@ At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, w
 #### **Subordinate Agent 1: Macro & Global Liquidity Sentinel (The Strategist)**
 * **Persona & Role:** Chief Macro Strategist responsible for broad market climate, cross-venue capital flows, and macroeconomic risk sentinels.
 * **Governed Nodes:**
-  * **Node 1: Master Data Hub & Netflow Sentinel Node (`src/hub/master-data-hub.ts`, `src/macro/netflow-sentinel.ts`)**:
-    * *Ingestion Worker:* Polls 21 external feeds every 15s (CoinGlass, FRED liquidity, TradFi indices, Coinbase-Binance spread).
-    * *Macro State Machine Worker:* Evaluates the 4-regime macro state machine (`SIMULTANEOUS_OUTFLOW`, `TRADFI_HEDGING`, `CRYPTO_PANIC`, `RISK_ON_BETA`). Enforces directional bans (`bannedSide: 'LONG' | 'SHORT' | 'BOTH'`).
-    * *Event Freeze Worker:* Monitors the high-impact economic calendar (FOMC, CPI, NFP), triggering an automated 30-minute pre-event and 15-minute post-event trading halt.
-  * **Node 2: Kronos Neural Engine - Foundation Layer 0 (`src/market/kronos-engine.ts`)**:
-    * *Trajectory Generator Worker:* Produces 15-bar continuous price forecasts using autoregressive foundation models.
-    * *Volatility Cone Worker:* Calculates statistical $P05$ support shelves and $P95$ resistance ceilings.
-    * *Entropy & Knife Risk Worker:* Computes Shannon Entropy $H$. Declares `HIGH_ENTROPY_CHOP` when $H \ge 0.68$, and blocks Longs when Falling Knife Score $\ge 0.70$.
+  * **Node 1: Sim Lab Pipeline & Macro Directive Ingest (`src/pipeline/sim-consumer.ts`, `src/simlab/supercharge-client.ts`)**:
+    * *Ingestion Worker:* Streams real-time macro bundle updates every 15s directly from Sim Lab Server.
+    * *Macro State Machine Worker:* Enforces the 4-regime macro state machine (`SIMULTANEOUS_OUTFLOW`, `TRADFI_HEDGING`, `CRYPTO_PANIC`, `RISK_ON_BETA`) and dynamic directional bans (`bannedSide: 'LONG' | 'SHORT' | 'BOTH'`).
+    * *Event Freeze Worker:* Monitors the high-impact economic calendar (FOMC, CPI, NFP), enforcing an automated 30-minute pre-event and 15-minute post-event trading halt.
+  * **Node 2: Kronos Neural Intelligence - Foundation Layer 0 (Streamed via Sim Lab Core)**:
+    * *Proprietary Neural Feed:* Hosted securely on Sim Lab Server and delivered via encrypted Alpha Bundle payload (`kronosIntelligence`).
+    * *Trajectory Forecasts:* Ingests 15-bar continuous price forecasts using autoregressive foundation models without requiring local heavy neural weights.
+    * *Volatility Cones:* Consumes statistical $P05$ support shelves and $P95$ resistance ceilings.
+    * *Entropy & Knife Sentinel:* Consumes Shannon Entropy $H$. Declares `HIGH_ENTROPY_CHOP` when $H \ge 0.68$, and blocks Longs when Falling Knife Score $\ge 0.70$.
 * **Pipeline Responsibilities:** Owns **Phase 1 (Activity Bar Guard & Macro Climate Gate)** and **Layer 0 (Neural Trajectory & Volatility Cones)**.
 
 ---
@@ -138,15 +139,15 @@ At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, w
 #### **Subordinate Agent 2: Quantitative Strategy & Confluence Officer (The Tactical Trader)**
 * **Persona & Role:** Head of Quantitative Trading responsible for sub-second signal generation, multi-lens technical confluence, and adversarial debate validation.
 * **Governed Nodes:**
-  * **Node 3: Strategy & Pair Confluence Node (`src/strategy/manager.ts`, `data/pair-strategy-overrides.json`)**:
-    * *Technical Indicator Worker:* Continuously calculates 15m RSI, EMAs, and multi-timeframe alignment across 28 pairs.
+  * **Node 3: Strategy & Pair Confluence Node (`src/strategy/manager.ts`, `src/engine/cvd-analyzer.ts`, `src/engine/oi-matrix.ts`, `src/engine/smc-detector.ts`)**:
+    * *Technical Indicator Worker:* Continuously calculates 15m RSI, EMAs, and multi-timeframe alignment across active pairs.
     * *Volume Profile Worker:* Calculates session Point of Control (POC), Value Area High (VAH), and Value Area Low (VAL).
-    * *Orderflow Microstructure Worker:* Analyzes Cumulative Volume Delta (CVD) divergence, Open Interest ($\Delta\text{OI}$) velocity, and VPIN flow toxicity.
+    * *Orderflow Microstructure Worker:* Analyzes Cumulative Volume Delta (CVD) divergence, Open Interest ($\Delta\text{OI}$) velocity, and taker flow toxicity.
     * *Smart Money Concepts Worker:* Validates Fair Value Gaps (FVGs), order blocks, and enforces the $\ge 25\%$ rejection wick absorption gate to prevent chasing fakeouts.
-    * *AI Trap Shield Worker:* Identifies spoof walls, liquidity traps, and random-walk chop ($H \ge 0.995$).
-  * **Node 4: Adversarial Arbiter & Dialectic Node (`src/ai/dialectic-engine.ts`)**:
-    * *Bull Researcher Worker (Gemini Cloud / GPT-4o):* Discovers breakout momentum and value expansion targets.
-    * *Bear Inquisitor Worker (`decibel-cio:v4` Local Inference):* Actively searches for spoof walls, VPIN toxicity, liquidity wicks, and seller absorption.
+    * *AI Trap Shield Worker (`src/ai/trap-validator.ts`):* Identifies spoof walls, liquidity traps, and random-walk chop ($H \ge 0.995$).
+  * **Node 4: Adversarial Arbiter & Dialectic Validation (`src/ai/brain.ts`, `src/agent/copilot.ts`)**:
+    * *Bull Researcher:* Discovers breakout momentum and value expansion targets.
+    * *Bear Inquisitor:* Actively tests for spoof walls, liquidity wicks, and seller absorption.
     * *Mathematical Arbiter Worker:* Requires zero vetoes and $\text{Net EV} \ge 1.40\times$ before approving any setup for execution.
 * **Pipeline Responsibilities:** Owns **Phase 2 (6-Layer Confluence Matrix: Layers 1, 2, 3, 4)** and **Phase 3 (Dual-Model Adversarial Arbiter)**.
 
@@ -160,18 +161,16 @@ At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, w
   * **Node 6: On-Chain Execution Node (`src/trades/executor.ts`)**:
     * *Maker Routing Worker:* Submits Post-Only Limit Orders to Decibel DEX to eliminate taker fees and capture maker rebates.
     * *On-Chain Sentry Worker:* Automatically arms a hard on-chain Stop-Loss ($-5.0\%$ price / $-15.0\%$ margin) directly in Move smart contracts. Cancels and re-anchors resting orders after a 45-second fill timeout.
-  * **Node 7: Live Portfolio Harvester Node - Harvest Master (`src/risk/portfolio-harvester.ts`)**:
+  * **Node 7: Live Portfolio Harvester Node - Harvest Master (`src/risk/portfolio-harvester.ts`, `src/engine/harvester.ts`)**:
     * *Dynamic ATR & POC Volatility Worker:* Replaces static hardcoded exits with 15m ATR distance multiplied by regime factor (`1.05x` in chop, `1.80x` in momentum trends), snapping take-profit hurdles to high-volume POC liquidity nodes.
     * *Capital-Scaled Dollar Floor Worker:* Calculates minimum dollar hurdles proportional to position notional (`Math.max(0.25, notional * 0.00625)`), securing +$1.25 to +$2.80+ wins and strictly enforcing the `&&` conjunction invariant.
     * *Institutional Breakeven Ratchet Worker:* Once $+1.40R$ profit is hit, snaps runner stop-losses to **Entry $+ 0.75\%$ Fee Cushion**, preventing exchange spread stop-outs while guaranteeing risk-free runner status.
     * *Windfall Stretcher Worker:* Expands runner targets toward Kronos $P95$ volatility cone resistance with 45%–50% retracement runway.
-  * **Node 8: Scientific Evolution & Learning Node (`src/learning/hypothesis-engine.ts`, `src/forensics/curate-cio-r1-dataset.ts`)**:
-    * *Invariant Forensic Worker:* Intercepts 100% of closed trades, filtering normal variance (`noiseFiltered: true`) from structural air gaps.
-    * *Shadow Arena Worker:* Manages continuous head-to-head competition between the active Champion and candidate Challengers.
-    * *DeepSeek-R1 Curator Worker:* Extracts structural lessons and updates local AI weights (`decibel-cio:v4`).
-  * **Treasury & Capital Router Worker (`src/risk/capital-router.ts`)**:
-    * Aggregates fleet AUM ($7,900+), tracks peak High-Water Marks, sweeps 25% of new profits into protected reserve equity, and sizes positions via fractional Half-Kelly ($0.05 \le f^* \le 0.40$).
-* **Pipeline Responsibilities:** Owns **Phase 4 (Risk Pre-Execution Veto)**, **Layer 5 (Dynamic Harvest Master Engine & Invariant Risk Guard)**, **Phase 5 (Alpha Bundle Dispatch)**, and post-trade forensics.
+  * **Node 8: Fleet Telemetry & Closed-Loop Learning Bridge (`src/pipeline/telemetry-feeder.ts`)**:
+    * *Telemetry Dispatcher:* Dispatches closed trade logs and execution telemetry back to Sim Lab Server for reinforcement learning and shadow arena evaluation.
+  * **Treasury & Capital Sizing Node:**
+    * Ingests Half-Kelly capital allocation parameters (`assignedTier`, `tierAllocPct`) streamed from Sim Lab Server, sizing positions strictly within allocated desk budgets.
+* **Pipeline Responsibilities:** Owns **Phase 4 (Risk Pre-Execution Veto)**, **Layer 5 (Dynamic Harvest Master Engine & Invariant Risk Guard)**, and **Phase 5 (Execution & Telemetry Feedback)**.
 
 ---
 
@@ -301,7 +300,7 @@ flowchart TD
 
     %% ──────────────── STAGE 6: FLEET DISPATCH ────────────────
     subgraph STAGE6["STAGE 6: ALPHA BUNDLE DISPATCH & ROUTING (Dimension 2: Phase 5)"]
-        ALPHA_PUB["Alpha Bundle Producer<br/><i>alpha-producer.ts</i>"]
+        ALPHA_PUB["Sim Lab Alpha Producer<br/><i>Cloud Stream</i>"]
         AG4["<b>AGENT 4: TREASURY ROUTER</b><br/><i>Fleet AUM | HWM 25% Sweep | Half-Kelly Desk Capacity</i>"]
         DISPATCH{"Fleet Client Ingestion"}
         V1_CLIENT["Desk 01 (Client V1)<br/><i>Aptos Subaccount A</i>"]
@@ -333,7 +332,7 @@ flowchart TD
         AG3["<b>AGENT 3: FORENSIC AUDITOR</b><br/><i>Intercepts Closed Trades | Noise Filter | Air-Gap Auto-Healing</i>"]
         REPLAY_BUF["Unified Experience Replay Store<br/><i>logs/experience_replay.json (Anchored to 2,338 Samples)</i>"]
         HYPO_ENG["Hypothesis Formation Engine<br/><i>Champion vs Challenger (Shadow Arena)</i>"]
-        R1_CURATOR["DeepSeek-R1 <think> Curator<br/><i>curate-cio-r1-dataset.ts</i>"]
+        R1_CURATOR["DeepSeek-R1 Curator<br/><i>Reinforcement Learning</i>"]
         LOCAL_AI["Autonomous Calibration → decibel-cio:v4<br/><i>Modelfile.v4 Local Inference</i>"]
 
         HARVESTER --> AG3
@@ -439,7 +438,7 @@ Every potential trade must survive all 5 sequential phases before execution:
 * **Operational Guidelines for Velocity vs. Downside Protection**:
   - **Avoid Over-Tightening**: Setting gates to $\ge 85\%$ on consolidating or lower-beta pairs drops historical trade pass rate to $< 5\%$, causing excessive missed opportunities.
   - **Optimal Liquid Pair Range**: Setting gates to **$70\% - 78\%$** on active liquid pairs (`SOL`, `ETH`, `SUI`, `TAO`, `NEAR`) provides an optimal balance of $35\% - 50\%$ throughput, while **Phase 3** ($\text{Net EV} \ge 1.40\times$) and **Phase 4** ($\$0.85\text{ USD}$ max loss cap) eliminate tail risk.
-  - **Empirical Probation Escalation**: In `alpha-producer.ts:L804`, if an asset has $\ge 6$ historical trades with win rate $< 35\%$, its gate is automatically elevated:
+  - **Empirical Probation Escalation**: Within the Sim Lab Alpha Producer, if an asset has $\ge 6$ historical trades with win rate $< 35\%$, its gate is automatically elevated:
     ```typescript
     directive.minConfidenceGate = Math.max(directive.minConfidenceGate || 80, 85);
     directive.probationActive = true;
@@ -450,7 +449,7 @@ Every potential trade must survive all 5 sequential phases before execution:
 
 ### Pure Non-Candle Microstructure Physics & Orderbook Telemetry
 
-The architecture eliminates time-based distortion (arbitrary 15m/1h candle clocks) by executing on **Event-Driven Activity-Based Sampling (Dollar Bars)** and **Microstructure Thermodynamic Invariants** ([microstructure-physics.ts](file:///Volumes/SSD%20DATA/code%202026/Trading_Autonomouse/Alpha%20Forge%20Sim%20Lab%20Server/src/math/microstructure-physics.ts), [pure-non-candle-engine.ts](file:///Volumes/SSD%20DATA/code%202026/Trading_Autonomouse/Alpha%20Forge%20Sim%20Lab%20Server/src/strategy/pure-non-candle-engine.ts)):
+The architecture eliminates time-based distortion (arbitrary 15m/1h candle clocks) by executing on **Event-Driven Activity-Based Sampling (Dollar Bars)** and **Microstructure Thermodynamic Invariants** (Microstructure Thermodynamic Physics & Pure Non-Candle Engine):
 
 1. **Activity-Based Sampling (Dollar Energy Slices)**:
    - Bars emit only when economic energy quota is filled ($\$1,500,000$ for BTC, $\$500,000$ for SOL, $\$300,000$ for alts).
