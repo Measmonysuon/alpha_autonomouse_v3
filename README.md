@@ -51,7 +51,7 @@ Traditional retail trading bots operate in a complete vacuum: they rely on lagge
 
 To provide total structural clarity into how the autonomous trading machinery operates without human fatigue or emotional bias, the fleet is organized into a disciplined **institutional quantitative trading firm hierarchy**. 
 
-At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, which delegates all specialized analytical and tactical operations to **3 Subordinate Department Head Agents**. Each subordinate agent commands dedicated processing nodes and specialized background task workers. Together, they execute the **5 Pipeline Phases (Dimension 2)** and **6 Strategy Confluence Layers (Dimension 3)**, synthesizing live intelligence into encrypted **Alpha Bundles** that are broadcast to distributed, 100% non-custodial execution client nodes (Host 1, Host 2, Host 3):
+At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, which delegates all specialized analytical and tactical operations to **3 Subordinate Department Head Agents**. Each subordinate agent commands dedicated processing nodes and specialized background task workers. Together, they execute the **5 Pipeline Phases (Dimension 2)** and **6 Strategy Confluence Layers (Dimension 3)**, synthesizing live intelligence into encrypted **Alpha Bundles** that are broadcast to distributed, 100% non-custodial execution client nodes (Host 1, Host 2, Host X):
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
