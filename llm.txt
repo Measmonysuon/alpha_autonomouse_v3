@@ -194,10 +194,14 @@ flowchart TD
 * Dispatches orders with `Post-Only` maker enforcement, ensuring zero taker fees and capturing maker rebates.
 * Gas Sentry validates that the gas balance is $\ge 0.002\text{ APT}$ before broadcasting.
 
-### Stage 4: Autonomous Portfolio Harvester (`src/risk/portfolio-harvester.ts`)
-* Actively evaluates open positions every 500ms.
-* **Breakeven Snap:** Automatically moves the stop-loss to entry price $+ \text{fees}$ once profit reaches $+1.4R$.
-* **Trailing Ratchet:** As price expands, trailing stops ratchet to secure $\ge 80\%$ of peak unrealized profits.
+### Stage 4: Autonomous Portfolio Harvester (`src/risk/portfolio-harvester.ts` - v3.2.0 Dynamic Engine)
+* Actively evaluates open positions every 500ms using real-time volatility and volume profile mathematics.
+* **Dynamic Volatility Scaling (15m ATR & ADX):** Calibrates take-profit target to market volatility (`1.05x ATR` in chop up to `1.80x ATR` in momentum trends).
+* **Volume Profile POC Snapping:** Aligns exit targets with High-Volume Point of Control liquidity nodes where institutional orders accumulate.
+* **Capital-Scaled Dynamic Dollar Floor:** Mathematically scales profit hurdle to notional position size (`notional * 0.625%` with $0.25 gas floor), requiring substantive +$1.25 to +$2.80+ net wins instead of micro-penny exits.
+* **Strict Logical Conjunction (`&&`):** Enforces that BOTH percentage hurdle AND dollar floor must be met before harvesting.
+* **Institutional 0.75% Breakeven Snap:** Once $+1.4R$ is reached, snaps runner stop-loss to entry plus a calibrated `+0.75%` fee cushion—safely above exchange bid-ask spread and noise.
+* **Trailing Ratchet:** As price expands, trailing stops ratchet to secure $\ge 80\%$ of peak unrealized profits on runners.
 * **Defensive Bleed Cut:** Cuts lagging positions at $\le -3.0\%$ to preserve margin.
 
 ---
