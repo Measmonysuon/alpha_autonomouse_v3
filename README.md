@@ -47,6 +47,103 @@ Traditional retail trading bots operate in a complete vacuum: they rely on lagge
 
 ---
 
+## 👥 Agent Fleet Organizational Structure (The Institutional Staff Hierarchy)
+
+To understand how the entire system operates 24/7 without emotional bias or human fatigue, think of it as an **institutional quantitative trading firm**. Rather than a monolithic black-box bot, the system is organized into a disciplined **human-style staff hierarchy** consisting of four operational tiers:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        TIER 1: THE AGENT BRAIN                         │
+│             Executive High Command • Chief Investment Officer          │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Directs Portfolio Mandate
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                    TIER 2: SPECIALIZED AGENT OFFICERS                  │
+│       Department Heads: Macro, Microstructure, Risk, & Harvest        │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Allocates Operational Tasks
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                  TIER 3: OPERATIONAL PROCESSING NODES                  │
+│       Physical Stations: Sim Lab Cloud, Jetson Edge, Client Terminal   │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Deploys to Factory Floor
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                 TIER 4: NODE FUNCTIONS & DEDICATED WORKERS             │
+│        The Task Force: Streamers, Evaluators, Sentinels, & Sweepers    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 🧠 Tier 1: The Executive Brain (Chief Investment Officer & High Command)
+* **Who It Is:** The top-level executive intelligence synthesizing macro insights, overall portfolio mandates, and inter-agent consensus.
+* **Core Mission:** Answers the primary strategic question: *"What is the overarching market regime today, and are we in capital preservation or aggressive capital deployment mode?"*
+* **Staff Responsibility:** Continuously balances long vs. short exposure across the entire fleet, sets the global confidence hurdle, and coordinates the specialized departmental officers below.
+
+---
+
+### 👔 Tier 2: Specialized Agent Officers (The Department Heads)
+
+Just like senior partners at a quantitative hedge fund, four dedicated Agent Officers oversee specialized domains:
+
+1. **The Macro Regime & Strategy Officer (The Strategist):**
+   * **Role:** Analyzes global market weather across crypto and TradFi (Bitcoin dominance, macro liquidity, interest rates, scheduled news events).
+   * **Duty:** Issues directional bans (e.g., banning Longs during distribution waterfalls), establishes trade confidence thresholds (e.g., 70% in trend vs. 85% in chop), and selects active strategy playbooks.
+
+2. **The Microstructure & Orderflow Officer (The Tape Reader):**
+   * **Role:** Analyzes sub-second multi-venue orderbook depth, Cumulative Volume Delta (CVD), Open Interest (OI) velocity, and liquidation clusters.
+   * **Duty:** Detects institutional footprints—spotting whether aggressive wicks are genuine breakouts or predatory stop-loss hunts—before any order is drafted.
+
+3. **The Risk Sentinel & Capital Officer (The Guardian):**
+   * **Role:** The immutable defense sentinel holding ultimate veto power over every proposed trade.
+   * **Duty:** Enforces fractional Half-Kelly sizing, maximum leverage caps (5x to 10x), strict position budget allocations, and triggers the mandatory 30-minute freeze prior to major macroeconomic data releases (CPI/FOMC).
+
+4. **The Portfolio Harvester Officer (The Exit Master):**
+   * **Role:** Manages the active life cycle of open positions once they are live on-chain.
+   * **Duty:** Dynamically calculates Take-Profit hurdles using 15-minute ATR and Volume Profile Point of Control (POC), ratchets stop-losses to an institutional 0.75% breakeven buffer once +1.4R is achieved, trails winners to capture big trends, and cuts stagnant positions before they bleed.
+
+---
+
+### 🏢 Tier 3: Operational Processing Nodes (The Physical Stations)
+
+The intelligence and execution responsibilities are cleanly divided across three physical processing nodes:
+
+1. **Node Alpha: The Sim Lab Cloud Research Node (Port 4000):**
+   * **Location:** Cloud / Research Cluster (`alpha-forge-server`).
+   * **Function:** The 24/7 analytical factory. Continuously runs parallel shadow simulations across 28+ perpetual markets, runs counterfactual backtests, trains neural models, and broadcasts unified Alpha Directives to licensed clients.
+
+2. **Node Beta: The Jetson Edge Execution Node (Port 5050 & 3000):**
+   * **Location:** Dedicated 24/7 Hardware (`NVIDIA Jetson Orin Nano`).
+   * **Function:** Colocated low-latency execution node running in isolated Docker containers with local Ollama AI models. Executes trades with millisecond precision and zero desktop OS interruption.
+
+3. **Node Gamma: The Client Sovereign Terminal & Operator Node:**
+   * **Location:** The Trader’s Local Workstation / Private Browser Dashboard.
+   * **Function:** Houses non-custodial cryptographic keys, manages local subaccount credentials, and provides the trader with real-time portfolio visualization, emergency stops, and parameter overrides.
+
+---
+
+### ⚙️ Tier 4: Node Functions & Dedicated Workers (The Operational Workforce)
+
+Inside each operational node sits a specialized workforce of background workers executing atomic duties around the clock:
+
+#### **Workers Inside the Edge Execution Node (Client V3):**
+* 📡 **Market Streamer Worker:** Continuously ingests sub-second WebSockets for mark prices, index prices, and orderbook changes from Decibel DEX on Aptos.
+* 🔍 **Confluence Evaluator Worker:** Audits live price action against the active strategy criteria every 500 milliseconds to find high-probability trade setups.
+* 🛡️ **Pre-Trade Gatekeeper Worker:** Intercepts every draft order. Checks if the side is banned, validates margin limits, confirms candle wick tolerances, and stops any invalid trade.
+* ✍️ **On-Chain Move Executor Worker:** Cryptographically signs transactions using the trader’s local private key and submits Post-Only Maker limit orders with zero slippage and ultra-low gas (<0.002 APT).
+* 🌾 **Dynamic Harvester & Ratchet Worker:** Evaluates open positions every second. Calculates dynamic ATR volatility bands, snaps stop-losses to +0.75% breakeven cushion once in profit, and trails winning runners.
+* 📊 **Telemetry Feeder Worker:** Reports anonymized execution metrics, slippage data, and win/loss statistics back to Sim Lab for continuous reinforcement learning.
+* 🐕 **Watchdog Sentry Worker:** Constantly monitors container memory, network sockets, and database locks, auto-reconnecting or recovering state if an RPC endpoint glitches.
+
+#### **Workers Inside the Sim Lab Node:**
+* 🌐 **Multi-Venue Ingestion Worker:** Streams depth and CVD from Binance, Bybit, OKX, and Hyperliquid.
+* 🥊 **Parallel Paper Arena Worker:** Simulates trades across all 28 pairs simultaneously to test strategy candidates in live conditions.
+* 🧪 **Stress Inoculator Worker:** Simulates flash crashes and liquidity drains to verify that strategy gates properly protect capital.
+* 🔑 **License & Fleet Key Dispatch Worker:** Securely encrypts and dispatches Alpha Bundles to authorized client nodes.
+
+---
+
 ## 🔄 End-to-End System Flow
 
 The diagram below illustrates how raw multi-venue market data transforms into hardened on-chain profit execution across the decentralized ecosystem:
@@ -144,11 +241,16 @@ Crypto markets move as a unified liquidity fabric. Decibel DEX price action is d
 * Simply launch Client V3 and open the dedicated browser dashboard (`http://localhost:5050`).
 * Built-in setup wizard verifies your Aptos wallet, configures your Decibel subaccount, and performs on-chain gas sentry verification in under 60 seconds.
 
-### 🌾 Autonomous Portfolio Harvester
-Winning trades are not determined solely by the entry; they are won at the exit:
-* **Dynamic Trailing Profit Lock:** Ratchets trailing stop-losses to protect $\ge 80\%$ of peak unrealized gains.
-* **Defensive Bleed Cutter:** Automatically cuts underperforming positions ($\le -3\%$) before volatility erodes account margin.
-* **Higher-Timeframe Alignment:** Positions aligned with the 1-hour macro trend are granted expanded runway to capture major swing expansions.
+### 🌾 Autonomous Portfolio Harvester (v3.2.0 Dynamic Engine)
+Winning trades are not determined solely by the entry; they are won at the exit. Version 3.2.0 introduces the **Institutional Dynamic Harvest Engine**, completely replacing static hardcoded dollar thresholds with real-time volatility and capital mathematics:
+* **15-Minute ATR Volatility Calibration:** Take-profit hurdles dynamically expand during high-volatility moves and contract during tight consolidations, capturing natural market momentum.
+* **ADX Regime Multiplier:** Automatically stretches the profit target from `1.05x ATR` during low-trend chop up to `1.8x ATR` during powerful expansion trends.
+* **Volume Profile POC Snapping:** Aligns exit targets with High-Volume Point of Control nodes where institutional liquidity naturally concentrates.
+* **Capital-Scaled Dynamic Profit Floor:** Eliminates premature micro-penny exits by mathematically scaling dollar profit floors to notional position size (`notional * 0.625%` with a `$0.25` gas floor), ensuring standard positions capture substantive `$1.25` to `$2.80+` gains.
+* **Strict Logical Conjunction (`&&`):** Both percentage target AND net dollar hurdles must be satisfied simultaneously before any partial harvest executes.
+* **Institutional 0.75% Breakeven Buffer:** Once $+1.4R$ profit is hit, runner stop-losses snap to entry plus a calibrated `+0.75%` fee cushion—protecting trades against exchange spread noise while guaranteeing risk-free runner status.
+* **Dynamic Trailing Profit Lock:** Ratchets trailing stop-losses to protect $\ge 80\%$ of peak unrealized gains on mature runners.
+* **Defensive Bleed Cutter:** Automatically cuts underperforming or stagnant positions ($\le -3\%$) before adverse drift threatens account margin.
 
 ---
 

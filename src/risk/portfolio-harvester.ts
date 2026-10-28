@@ -452,10 +452,44 @@ export class PortfolioHarvester {
         }
       }
 
-      // Execution Style Enforcement:
+      // ── Dynamic Volatility (ATR) & Agent-Tuned Target Calculation ──
+      const baseMinPct = this.config.minHarvestPct || 1.5;
+      const currentAtr = (trade.atr && trade.atr > 0) ? trade.atr : (trade.entryPrice * 0.008);
+
+      // 1. Regime-Adaptive Multiplier (tuned dynamically by Sim Lab / Agents)
+      let atrMultiplier = 1.35;
+      const pairDirective = pairDir || getSimPairDirective(trade.symbol);
+      const simRegime = trade.regime || (pairDirective as any)?.regime?.type;
+      if (simRegime === 'RANGING_CHOP') {
+        atrMultiplier = 1.05; // Chop: realistic, achievable scalp target
+      } else if (simRegime === 'HIGH_VOLATILITY' || simRegime === 'TRENDING_BULL' || simRegime === 'TRENDING_BEAR') {
+        atrMultiplier = 1.80; // Momentum trend expansion
+      }
+
+      // 2. Structural Magnet Snapping (Volume Profile POC / Opposing Key Levels)
+      let targetPriceDist = currentAtr * atrMultiplier;
+      const opposingVpoc = pairDirective?.dynamicTpTarget?.opposingVpocPrice || pairDirective?.keyLevels?.poc;
+      if (opposingVpoc && Math.abs(opposingVpoc - trade.entryPrice) > 0.002 * trade.entryPrice) {
+        const distToPoc = Math.abs(opposingVpoc - trade.entryPrice);
+        const isCorrectSide = isLong ? opposingVpoc > trade.entryPrice : opposingVpoc < trade.entryPrice;
+        if (isCorrectSide && distToPoc < targetPriceDist && distToPoc >= currentAtr * 0.8) {
+          targetPriceDist = distToPoc;
+        }
+      }
+
+      // 3. Dynamic Margin ROI % Scaled to Leverage
+      const targetPriceMovePct = (targetPriceDist / (trade.entryPrice || 1)) * 100;
+      const effectiveLeverage = Math.max(1, trade.leverage || 1);
+      const dynamicMinHarvestPct = Math.max(baseMinPct * 0.6, Number((targetPriceMovePct * effectiveLeverage).toFixed(2)));
+
+      // 4. Capital-Proportional Dollar Floor
+      const marginAllocated = trade.allocatedUsd || ((trade.sizeBase * trade.entryPrice) / effectiveLeverage) || 20;
+      const dynamicMinUsd = Math.max(0.20, Number(((marginAllocated * dynamicMinHarvestPct) / 100).toFixed(2)));
+
+      // 5. Strict AND Invariant: No hardcoded dollar overrides
       const shouldHarvest = this.config.enabled &&
-        pnlPct >= (this.config.minHarvestPct || 1.5) &&
-        pnlUsd >= ((this.config.minHarvestUsd || 0.15) / Math.max(1, openTrades.length));
+        pnlPct >= dynamicMinHarvestPct &&
+        pnlUsd >= dynamicMinUsd;
 
       if (shouldHarvest) {
         if (this.config.executionStyle === 'FULL_CLOSE_ONLY') {
