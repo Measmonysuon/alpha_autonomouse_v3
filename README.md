@@ -123,7 +123,7 @@ At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, w
 #### **Subordinate Agent 1: Macro & Global Liquidity Sentinel (The Strategist)**
 * **Persona & Role:** Chief Macro Strategist responsible for broad market climate, cross-venue capital flows, and macroeconomic risk sentinels.
 * **Governed Nodes:**
-  * **Node 1: Sim Lab Pipeline & Macro Directive Ingest (`src/pipeline/sim-consumer.ts`, `src/simlab/supercharge-client.ts`)**:
+  * **Node 1: Sim Lab Pipeline & Macro Directive Ingest (Sim Consumer & Supercharge Client)**:
     * *Ingestion Worker:* Streams real-time macro bundle updates every 15s directly from Sim Lab Server.
     * *Macro State Machine Worker:* Enforces the 4-regime macro state machine (`SIMULTANEOUS_OUTFLOW`, `TRADFI_HEDGING`, `CRYPTO_PANIC`, `RISK_ON_BETA`) and dynamic directional bans (`bannedSide: 'LONG' | 'SHORT' | 'BOTH'`).
     * *Event Freeze Worker:* Monitors the high-impact economic calendar (FOMC, CPI, NFP), enforcing an automated 30-minute pre-event and 15-minute post-event trading halt.
@@ -139,13 +139,13 @@ At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, w
 #### **Subordinate Agent 2: Quantitative Strategy & Confluence Officer (The Tactical Trader)**
 * **Persona & Role:** Head of Quantitative Trading responsible for sub-second signal generation, multi-lens technical confluence, and adversarial debate validation.
 * **Governed Nodes:**
-  * **Node 3: Strategy & Pair Confluence Node (`src/strategy/manager.ts`, `src/engine/cvd-analyzer.ts`, `src/engine/oi-matrix.ts`, `src/engine/smc-detector.ts`)**:
+  * **Node 3: Strategy & Pair Confluence Node (Strategy Manager, CVD Analyzer, OI Matrix & SMC Detector)**:
     * *Technical Indicator Worker:* Continuously calculates 15m RSI, EMAs, and multi-timeframe alignment across active pairs.
     * *Volume Profile Worker:* Calculates session Point of Control (POC), Value Area High (VAH), and Value Area Low (VAL).
     * *Orderflow Microstructure Worker:* Analyzes Cumulative Volume Delta (CVD) divergence, Open Interest ($\Delta\text{OI}$) velocity, and taker flow toxicity.
     * *Smart Money Concepts Worker:* Validates Fair Value Gaps (FVGs), order blocks, and enforces the $\ge 25\%$ rejection wick absorption gate to prevent chasing fakeouts.
-    * *AI Trap Shield Worker (`src/ai/trap-validator.ts`):* Identifies spoof walls, liquidity traps, and random-walk chop ($H \ge 0.995$).
-  * **Node 4: Adversarial Arbiter & Dialectic Validation (`src/ai/brain.ts`, `src/agent/copilot.ts`)**:
+    * *AI Trap Shield Worker (Trap Validator):* Identifies spoof walls, liquidity traps, and random-walk chop ($H \ge 0.995$).
+  * **Node 4: Adversarial Arbiter & Dialectic Validation (AI Brain & Copilot Engine)**:
     * *Bull Researcher:* Discovers breakout momentum and value expansion targets.
     * *Bear Inquisitor:* Actively tests for spoof walls, liquidity wicks, and seller absorption.
     * *Mathematical Arbiter Worker:* Requires zero vetoes and $\text{Net EV} \ge 1.40\times$ before approving any setup for execution.
@@ -156,17 +156,17 @@ At the pinnacle sits the **Executive Agent Brain (Chief Investment Officer)**, w
 #### **Subordinate Agent 3: Risk Sentinel, Treasury & Harvest Master Officer (The Execution & Capital Guardian)**
 * **Persona & Role:** Chief Risk Officer, Treasurer & Execution Master responsible for capital defense, non-custodial order routing, dynamic profit harvesting, and post-trade machine learning.
 * **Governed Nodes:**
-  * **Node 5: Pre-Execution Risk Node (`src/risk/guard.ts`)**:
+  * **Node 5: Pre-Execution Risk Node (Pre-Trade Risk Guard)**:
     * *Hard Risk Sentinel Worker:* Enforces the immutable $\$0.85\text{ USD}$ loss ceiling parity, rejects negative-EV quarantined assets ($<40\%$ win rate), and clamps leverage based on market volatility.
-  * **Node 6: On-Chain Execution Node (`src/trades/executor.ts`)**:
+  * **Node 6: On-Chain Execution Node (On-Chain Order Executor)**:
     * *Maker Routing Worker:* Submits Post-Only Limit Orders to Decibel DEX to eliminate taker fees and capture maker rebates.
     * *On-Chain Sentry Worker:* Automatically arms a hard on-chain Stop-Loss ($-5.0\%$ price / $-15.0\%$ margin) directly in Move smart contracts. Cancels and re-anchors resting orders after a 45-second fill timeout.
-  * **Node 7: Live Portfolio Harvester Node - Harvest Master (`src/risk/portfolio-harvester.ts`, `src/engine/harvester.ts`)**:
+  * **Node 7: Live Portfolio Harvester Node - Harvest Master (Dynamic Portfolio Harvester)**:
     * *Dynamic ATR & POC Volatility Worker:* Replaces static hardcoded exits with 15m ATR distance multiplied by regime factor (`1.05x` in chop, `1.80x` in momentum trends), snapping take-profit hurdles to high-volume POC liquidity nodes.
     * *Capital-Scaled Dollar Floor Worker:* Calculates minimum dollar hurdles proportional to position notional (`Math.max(0.25, notional * 0.00625)`), securing +$1.25 to +$2.80+ wins and strictly enforcing the `&&` conjunction invariant.
     * *Institutional Breakeven Ratchet Worker:* Once $+1.40R$ profit is hit, snaps runner stop-losses to **Entry $+ 0.75\%$ Fee Cushion**, preventing exchange spread stop-outs while guaranteeing risk-free runner status.
     * *Windfall Stretcher Worker:* Expands runner targets toward Kronos $P95$ volatility cone resistance with 45%–50% retracement runway.
-  * **Node 8: Fleet Telemetry & Closed-Loop Learning Bridge (`src/pipeline/telemetry-feeder.ts`)**:
+  * **Node 8: Fleet Telemetry & Closed-Loop Learning Bridge (Telemetry Feeder)**:
     * *Telemetry Dispatcher:* Dispatches closed trade logs and execution telemetry back to Sim Lab Server for reinforcement learning and shadow arena evaluation.
   * **Treasury & Capital Sizing Node:**
     * Ingests Half-Kelly capital allocation parameters (`assignedTier`, `tierAllocPct`) streamed from Sim Lab Server, sizing positions strictly within allocated desk budgets.
@@ -294,7 +294,7 @@ flowchart TD
 
     %% ──────────────── STAGE 5: RISK PRE-EXECUTION ────────────────
     subgraph STAGE5["STAGE 5: RISK OFFICER PRE-EXECUTION VETO (Dimension 2: Phase 4)"]
-        RISK_GUARD["Pre-Trade Risk Node (guard.ts)<br/>• $0.85 USD Loss Ceiling Parity<br/>• Multi-Venue VPIN Toxicity Veto (>0.350)<br/>• Taker Ratio (<0.48) & Flat-Bottom Dump Veto<br/>• Calibrated SL Floor (>=0.8%)<br/>• Negative EV Asset Quarantine (<40% Win Rate)"]
+        RISK_GUARD["Pre-Trade Risk Node (Pre-Trade Guard)<br/>• $0.85 USD Loss Ceiling Parity<br/>• Multi-Venue VPIN Toxicity Veto (>0.350)<br/>• Taker Ratio (<0.48) & Flat-Bottom Dump Veto<br/>• Calibrated SL Floor (>=0.8%)<br/>• Negative EV Asset Quarantine (<40% Win Rate)"]
         ARBITER --> RISK_GUARD
     end
 
@@ -315,7 +315,7 @@ flowchart TD
     %% ──────────────── STAGE 7: ON-CHAIN EXECUTION ────────────────
     subgraph STAGE7["STAGE 7: ON-CHAIN ORDER EXECUTION (Dimension 1: Pillar 3)"]
         AG2["<b>AGENT 2: EXECUTION OPTIMIZER</b><br/><i>Adaptive Maker Offset (1.5-4bps) | Spread/ATR <= 35% | Aptos RPC Sentinel</i>"]
-        EXEC["Decibel Order Executor (executor.ts)<br/>• Maker Post-Only Limit Routing (Zero fee drag)<br/>• On-Chain Hard SL (-5.0% price / -15% margin)<br/>• Calibrated Noise Cushion Floor (>=0.8%)"]
+        EXEC["Decibel Order Executor (Order Executor)<br/>• Maker Post-Only Limit Routing (Zero fee drag)<br/>• On-Chain Hard SL (-5.0% price / -15% margin)<br/>• Calibrated Noise Cushion Floor (>=0.8%)"]
         
         AG2 -.->|"Calibrates Offset & Latency Halt"| EXEC
         V1_CLIENT & V3_CLIENT --> EXEC
@@ -323,7 +323,7 @@ flowchart TD
 
     %% ──────────────── STAGE 8: HARVESTER LIFECYCLE ────────────────
     subgraph STAGE8["STAGE 8: LIVE POSITION & HARVEST MASTER"]
-        HARVESTER["Portfolio Harvester & Dynamic Ratchet (portfolio-harvester.ts)<br/>1. Volatility Calibration: 15m ATR + ADX Multiplier (1.05x-1.80x)<br/>2. +1.40R Hit: Snaps Ratchet to Institutional Breakeven (+0.75% fee cover)<br/>3. Structural Magnet: Snaps TP to Volume Profile POC node<br/>4. Capital-Proportional Floor: Requires $1.25-$2.80+ net wins (Strict &&)<br/>5. Windfall Stretcher: TP2 trails Kronos P95 cone with 45%-50% retracement"]
+        HARVESTER["Portfolio Harvester & Dynamic Ratchet (Dynamic Harvester)<br/>1. Volatility Calibration: 15m ATR + ADX Multiplier (1.05x-1.80x)<br/>2. +1.40R Hit: Snaps Ratchet to Institutional Breakeven (+0.75% fee cover)<br/>3. Structural Magnet: Snaps TP to Volume Profile POC node<br/>4. Capital-Proportional Floor: Requires $1.25-$2.80+ net wins (Strict &&)<br/>5. Windfall Stretcher: TP2 trails Kronos P95 cone with 45%-50% retracement"]
         EXEC --> HARVESTER
     end
 
