@@ -440,5 +440,62 @@ Previously, each pair card rendered identical DOM IDs (e.g. `mkt-candle-view-${s
 
 ---
 
+## SECTION XXVI: PRODUCTION RISK AUDIT HARDENING, ASYMMETRIC LEVERAGE GATE, FAIL-CLOSED EXECUTION & ON-CHAIN LIQUIDATION ENGINE (2026-10-29)
+
+### 1. Problem Statement & Audit Discovery
+Following a rigorous third-party architecture and trading risk audit of the Alpha Autonomous execution stack (V3 & V1), 7 critical failure modes were identified that could compromise capital safety or desynchronize state during exchange anomalies or market stress:
+1. **Emergency Liquidation Memory Decoupling**: Legacy `closeAllOpenTrades()` simply cleared in-memory tracking arrays without dispatching on-chain market close orders, leaving live exchange positions exposed.
+2. **Silent Leverage Configuration Failures & Market Caps**: Leverage setting failures were caught and logged as warnings while execution proceeded. Additionally, DEX-enforced market leverage caps (e.g., 5x on SUI/USD, NEAR/USD vs 40x on BTC/USD) caused silent Move VM aborts (`EINVALID_LEVERAGE(0x1)`) or unexpected on-chain margin levels.
+3. **Optimistic Pre-Flight Swallowing**: RPC query failures/timeouts for resting orders and existing positions were swallowed, risking order stacking and duplicate position entry.
+4. **Naked Position Risk on Stop Loss Arming Failure**: If post-entry TP/SL placement failed, the bot logged an error but left the open position completely unprotected on the exchange without an active stop loss.
+5. **Stop Loss Dollar Ceiling Bypass**: Minimum contract size and minimum margin requirements ($20–$35) overrode the risk parity allocation cap (`Math.max(stratMinMargin, maxSafeAllocForSl)`), exposing small accounts to stop loss hits exceeding the configured $0.85 loss ceiling.
+6. **Unauthenticated Control & Liquidation API Endpoints**: Endpoints like `POST /api/positions/close-all`, `POST /api/positions/close`, and `POST /api/control` lacked remote authentication checks when no master password was set, allowing any unauthenticated network actor to mutate bot trading state.
+7. **Permissive Public Network Binding**: Server bound to `0.0.0.0` by default, exposing internal APIs directly to LAN/WAN interfaces rather than restricting default access to local loopback (`127.0.0.1`).
+
+### 2. Implementation & On-Chain Move Validation
+
+#### 2.1 On-Chain Move Verification on Decibel DEX (Aptos Mainnet)
+Direct query of Decibel perpetual engine view function `perp_engine::market_max_leverage(market)` confirmed tiered leverage caps across asset classes:
+- **BTC/USD**: 40x
+- **ETH/USD**: 25x
+- **SOL/USD**: 20x
+- **APT/USD**, **DOGE/USD**: 10x
+- **SUI/USD**, **NEAR/USD**: 5x
+
+Simulated entry calls to `perp_positions::configure_user_settings_for_market` confirmed that attempting 10x leverage on a 5x max market (e.g. SUI/USD) strictly aborts Move execution with `EINVALID_LEVERAGE(0x1)`.
+
+#### 2.2 Asymmetric Leverage Gate Policy
+To reconcile strategy requirements with DEX contract constraints, an authoritative asymmetric rule was codified across `alpha-autonomouse-client_v3` (`src/trades/executor.ts`) and `alpha-autonomouse-client_v1` (`src/orders/executor.ts`):
+- **Bot Requested > DEX Market Maximum**: If the bot requests 10x on SUI/USD, the engine clamps target leverage to the market maximum (5x), logs an informative notice, recalculates margin safely, and proceeds.
+- **On-Chain Confirmed > Bot Requested**: If on-chain leverage is higher than the bot's requested risk profile (e.g. account has 10x leverage configured, but bot requests 5x), execution **ABORTS IMMEDIATELY** (`CRITICAL_LEVERAGE_EXCEEDS_REQUEST`).
+- **Configuration Failure**: If `mcpClient.setLeverage` fails or is rejected by the RPC, execution fails closed and aborts the trade (`CRITICAL_LEVERAGE_CONFIG_FAILED`).
+
+#### 2.3 Fail-Closed Pre-Flight Verification
+All pre-trade queries (`getPositions()`, `getOrders()`) are wrapped in a strict 6-second timeout race (`withTimeout`). Any timeout, network error, or RPC degradation immediately aborts execution (`PRE_FLIGHT_FAIL_CLOSED`), guaranteeing that no order is dispatched without 100% verified order book and position state.
+
+#### 2.4 Concrete Armor & Emergency Unwind Protocol
+Post-fill on-chain TP/SL placement operates under a 3-attempt backoff retry loop. If on-chain TP/SL attachment fails after all retries:
+1. The engine triggers an immediate emergency market unwind via `mcpClient.closePosition(symbol)` using IOC reduce-only routing.
+2. The trade execution result returns `success: false`.
+3. The local ledger retains the trade until on-chain verification confirms position size is 0, completely eliminating naked market exposure.
+
+#### 2.5 Absolute Dollar Loss Ceiling Gate ($0.85 Hard Cap)
+In `src/risk/guard.ts`, the allocation calculation enforces:
+$$\text{MaxSafeAlloc} = \frac{\text{MaxLossPerTradeUsd}}{(\text{BufferedSlDistPct} \times \text{Leverage})}$$
+Where `MaxLossPerTradeUsd` is strictly clamped to $\min(\$0.85, \text{Budget} \times 0.03)$.
+- If `stratMinMargin > maxSafeAllocForSl`, the trade is **HARD REJECTED** (`🛑 [HARD RISK REJECTION] Minimum margin exceeds safe allocation to guarantee max loss strictly ≤ $0.85`).
+- The legacy `Math.max(stratMinMargin, maxSafeAllocForSl)` override is permanently abolished.
+
+#### 2.6 On-Chain Verified Liquidation & Remote Auth Protection
+- `POST /api/positions/close-all`: Dispatches IOC reduce-only market close transactions across all open positions, cancels all resting orders, confirms on-chain position size equals 0, and only then releases local margin allocation.
+- Remote Authentication Gate: If `ADMIN_PASSWORD` is not configured, state-altering endpoints (`/api/control`, `/api/positions/close`, `/api/positions/close-all`, `/api/trades/reset`) reject all non-loopback requests with `401 Unauthorized`.
+- Loopback Binding Default: Server binds to `127.0.0.1` by default unless explicitly overridden via `BIND_ALL_INTERFACES=true` or `HOST=0.0.0.0`.
+
+### 3. Verification & Fleet Status
+- **Test Suite**: `alpha-autonomouse-client_v3/tests/risk-hardening.test.ts` passed 100% (2/2 tests verifying hard ceiling rejection and allocation bounding).
+- **TypeScript Compilation**: Both `alpha-autonomouse-client_v3` and `alpha-autonomouse-client_v1` compile cleanly with exit code 0 (`tsc`).
+- **Fleet Parity**: Identical risk-hardening safeguards applied symmetrically across Client V3 and Client V1.
+
+---
 
 *© 2026 Alpha Autonomous Systems. Alpha Autonomous Client V3 Architecture.*

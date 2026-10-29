@@ -565,20 +565,23 @@ function parseBody<T = any>(req: http.IncomingMessage): Promise<T> {
 }
 
 function isAuthorized(req: http.IncomingMessage): boolean {
-  if (!config.ADMIN_PASSWORD || config.ADMIN_PASSWORD.trim() === '') {
-    return true; // No password protection set
+  if (config.ADMIN_PASSWORD && config.ADMIN_PASSWORD.trim() !== '') {
+    const authHeader = req.headers['authorization'] || '';
+    if (authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      try {
+        const decoded = Buffer.from(token, 'base64').toString('utf8');
+        if (decoded.endsWith(`_${config.ADMIN_PASSWORD}`)) {
+          return true;
+        }
+      } catch {}
+    }
+    return false;
   }
-  const authHeader = req.headers['authorization'] || '';
-  if (authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7).trim();
-    try {
-      const decoded = Buffer.from(token, 'base64').toString('utf8');
-      if (decoded.endsWith(`_${config.ADMIN_PASSWORD}`)) {
-        return true;
-      }
-    } catch {}
-  }
-  return false;
+  // If no admin password is configured, restrict state-altering commands strictly to loopback (127.0.0.1 / ::1)
+  const remote = req.socket?.remoteAddress || '';
+  const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  return isLoopback;
 }
 
 export function startApiServer(): http.Server {
@@ -1509,18 +1512,36 @@ export function startApiServer(): http.Server {
     }
 
     if (pathname === '/api/positions/close-all' && req.method === 'POST') {
-      const count = tradeExecutor.closeAllOpenTrades('closed_manual');
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
+      const result = await tradeExecutor.closeAllOpenTradesAsync('closed_manual');
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, count, message: `Closed ${count} open positions.` }));
+      res.end(JSON.stringify({ 
+        success: result.failed === 0, 
+        count: result.closed, 
+        failed: result.failed, 
+        message: `Emergency liquidation: on-chain closed ${result.closed} position(s), ${result.failed} failed.` 
+      }));
       return;
     }
 
     if (pathname === '/api/positions/close' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       const body = await parseBody(req);
       const idOrSymbol = body.id || body.symbol || '';
-      const closed = tradeExecutor.closeTrade(idOrSymbol);
+      const closed = await tradeExecutor.closeTradeAsync(idOrSymbol);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: closed, message: closed ? `Closed position ${idOrSymbol}` : `Position ${idOrSymbol} not found` }));
+      res.end(JSON.stringify({ 
+        success: closed, 
+        message: closed ? `Closed on-chain position ${idOrSymbol}` : `Failed to close position ${idOrSymbol} on-chain or not found` 
+      }));
       return;
     }
 
@@ -1884,6 +1905,11 @@ function triggerBackgroundOnChainSync(): void {
     }
 
     if (pathname === '/api/trades/reset' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       tradeExecutor.resetTrades();
       try {
         dbClient.clearAllTrades();
@@ -1895,6 +1921,11 @@ function triggerBackgroundOnChainSync(): void {
 
     // ── Mode & Engine Control Endpoints ──────────────────────────────────────
     if (pathname === '/api/mode' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       config.AUTONOMOUS_MODE = 'full';
       updateDynamicSettings({ trading: { mode: 'full' } });
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1903,6 +1934,11 @@ function triggerBackgroundOnChainSync(): void {
     }
 
     if (pathname === '/api/control' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       const body = await parseBody(req);
       const cmd = (body.command || body.action || '').toLowerCase();
       let reply = '';
@@ -3434,17 +3470,18 @@ function triggerBackgroundOnChainSync(): void {
 
   let currentPort = Number(config.HEALTH_PORT || 5050);
   let retryCount = 0;
+  const bindHost = process.env.BIND_ALL_INTERFACES === 'true' || process.env.HOST === '0.0.0.0' ? '0.0.0.0' : (process.env.HOST || '127.0.0.1');
 
   server.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
       retryCount++;
       if (retryCount <= 5) {
         const nextPort = currentPort === 5000 ? 5050 : currentPort + 1;
-        logger.warn(`⚠️ [API SERVER] Port ${currentPort} is busy (e.g. macOS AirPlay / another instance). Auto-shifting to http://localhost:${nextPort}...`);
+        logger.warn(`⚠️ [API SERVER] Port ${currentPort} is busy (e.g. macOS AirPlay / another instance). Auto-shifting to http://${bindHost}:${nextPort}...`);
         currentPort = nextPort;
         config.HEALTH_PORT = currentPort;
         setTimeout(() => {
-          server.listen(currentPort, '0.0.0.0');
+          server.listen(currentPort, bindHost);
         }, 200);
         return;
       }
@@ -3452,11 +3489,11 @@ function triggerBackgroundOnChainSync(): void {
     logger.error(`❌ [API SERVER] Server error: ${err.message}`);
   });
 
-  server.listen(currentPort, '0.0.0.0', () => {
+  server.listen(currentPort, bindHost, () => {
     config.HEALTH_PORT = currentPort;
-    logger.info(`🖥️  Dashboard & Health API listening on http://localhost:${currentPort}`);
-    logger.info(`🩺 Health Check: http://localhost:${currentPort}/health`);
-    logger.info(`📡 Live State:   http://localhost:${currentPort}/api/state`);
+    logger.info(`🖥️  Dashboard & Health API listening on http://${bindHost}:${currentPort}`);
+    logger.info(`🩺 Health Check: http://${bindHost}:${currentPort}/health`);
+    logger.info(`📡 Live State:   http://${bindHost}:${currentPort}/api/state`);
   });
 
   return server;

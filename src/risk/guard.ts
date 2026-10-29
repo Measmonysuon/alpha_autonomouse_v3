@@ -294,26 +294,26 @@ export class RiskGuard {
 
     // ── 2. Rejection Wick Tolerance Check ──────────────────────────────────────
     const wickTolerance = directives.bullTrapUpperWickPct || 50;
-    if (action === 'LONG' && signal.indicators.upperWickPct > wickTolerance) {
-      const reason = `🛑 Rejection Wick Trap: Upper wick ${signal.indicators.upperWickPct.toFixed(1)}% exceeds max tolerance of ${wickTolerance}%.`;
+    if (action === 'LONG' && (signal.indicators?.upperWickPct ?? 0) > wickTolerance) {
+      const reason = `🛑 Rejection Wick Trap: Upper wick ${signal.indicators!.upperWickPct.toFixed(1)}% exceeds max tolerance of ${wickTolerance}%.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    if (action === 'SHORT' && signal.indicators.lowerWickPct > wickTolerance) {
-      const reason = `🛑 Rejection Wick Trap: Lower wick ${signal.indicators.lowerWickPct.toFixed(1)}% exceeds max tolerance of ${wickTolerance}%.`;
+    if (action === 'SHORT' && (signal.indicators?.lowerWickPct ?? 0) > wickTolerance) {
+      const reason = `🛑 Rejection Wick Trap: Lower wick ${signal.indicators!.lowerWickPct.toFixed(1)}% exceeds max tolerance of ${wickTolerance}%.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
     // ── 2b. Pullback Candle Confirmation & Falling Knife Guard ─────────────────
-    if (action === 'LONG' && signal.indicators.candleColor === 'RED' && signal.indicators.lowerWickPct < 25) {
-      const reason = `🛑 Falling Knife Guard: Active 15m candle is red without buyer absorption (lower wick ${signal.indicators.lowerWickPct.toFixed(1)}% < 25%). Waiting for green reversal candle.`;
+    if (action === 'LONG' && signal.indicators?.candleColor === 'RED' && (signal.indicators?.lowerWickPct ?? 0) < 25) {
+      const reason = `🛑 Falling Knife Guard: Active 15m candle is red without buyer absorption (lower wick ${(signal.indicators?.lowerWickPct ?? 0).toFixed(1)}% < 25%). Waiting for green reversal candle.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
-    if (action === 'SHORT' && signal.indicators.candleColor === 'GREEN' && signal.indicators.upperWickPct < 25) {
-      const reason = `🛑 Rocket Knife Guard: Active 15m candle is green without seller absorption (upper wick ${signal.indicators.upperWickPct.toFixed(1)}% < 25%). Waiting for red reversal candle.`;
+    if (action === 'SHORT' && signal.indicators?.candleColor === 'GREEN' && (signal.indicators?.upperWickPct ?? 0) < 25) {
+      const reason = `🛑 Rocket Knife Guard: Active 15m candle is green without seller absorption (upper wick ${(signal.indicators?.upperWickPct ?? 0).toFixed(1)}% < 25%). Waiting for red reversal candle.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
@@ -532,16 +532,30 @@ export class RiskGuard {
       : 0.02;
     const bufferedSlDistPct = rawSlDistPct + 0.0030; // 30 bps slippage & taker fee buffer
 
-    // Maximum loss at SL is percentage-scaled, calibrated for larger position capital (5% of budget)
-    const maxLossPerTradeUsd = Math.max(stratMinMargin * 0.25, maxBudget * 0.05);
+    // Maximum loss at SL is strictly capped by the risk policy ($0.85 hard cap or configured equity %)
+    const configuredRiskPct = Math.min((config.MAX_RISK_PER_TRADE_PCT && config.MAX_RISK_PER_TRADE_PCT <= 5) ? config.MAX_RISK_PER_TRADE_PCT : 1.5, 3.0);
+    const maxLossPerTradeUsd = Math.min(
+      (config as any).MAX_LOSS_PER_TRADE_USD || 0.85,
+      Math.max(0.50, accountEquity * (configuredRiskPct / 100))
+    );
+
     if (bufferedSlDistPct > 0 && leverage > 0) {
       const maxSafeAllocForSl = maxLossPerTradeUsd / (bufferedSlDistPct * leverage);
+      
+      // CRITICAL RISK GATE: If minimum required margin exceeds safe allocation, REJECT the trade!
+      if (stratMinMargin > maxSafeAllocForSl) {
+        const reason = `🛑 [HARD RISK REJECTION] Minimum margin ($${stratMinMargin.toFixed(2)}) exceeds safe allocation ` +
+          `($${maxSafeAllocForSl.toFixed(2)}) to guarantee max loss strictly ≤ $${maxLossPerTradeUsd.toFixed(2)} at ${(bufferedSlDistPct * 100).toFixed(2)}% SL distance. Trade aborted to protect capital.`;
+        logger.warn(reason);
+        return this.reject(reason, directives, accountEquity, availableMargin);
+      }
+
       if (targetAllocUsd > maxSafeAllocForSl) {
         logger.info(
           `🛡️ [RISK PARITY CAP] ${signal.symbol} — Allocation capped from $${targetAllocUsd.toFixed(2)} to $${maxSafeAllocForSl.toFixed(2)} ` +
           `to guarantee max SL loss is strictly ≤ $${maxLossPerTradeUsd.toFixed(2)} (${(bufferedSlDistPct * 100).toFixed(2)}% buffered SL dist @ ${leverage}x)`
         );
-        targetAllocUsd = Math.max(stratMinMargin, Number(maxSafeAllocForSl.toFixed(2)));
+        targetAllocUsd = Number(maxSafeAllocForSl.toFixed(2));
       }
     }
 

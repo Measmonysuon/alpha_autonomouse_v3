@@ -79,6 +79,7 @@ ssh $SSH_OPTS "$TARGET_HOST" "docker run -d \
   --env-file $REMOTE_DIR/.env \
   -e HEALTH_PORT=5050 \
   -e PORT=5050 \
+  -e BIND_ALL_INTERFACES=true \
   -e NODE_ENV=production \
   -e SIM_PIPELINE_URL=http://127.0.0.1:4000/api/pipeline/alpha-bundle \
   -e SIM_TELEMETRY_URL=http://127.0.0.1:4000/api/pipeline/telemetry \

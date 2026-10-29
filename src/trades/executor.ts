@@ -162,40 +162,66 @@ export class TradeExecutor {
   }
 
   /**
-   * Ensure leverage is configured on Decibel DEX subaccount for the market before trading
+   * Ensure leverage is configured on Decibel DEX subaccount for the market before trading.
+   * Authoritative Business Rule:
+   * 1. If Bot >= Exchange Market Max: Execute at highest exchange allows (marketMax).
+   * 2. If Bot < Exchange Market Max: Configure exact Bot leverage.
+   * 3. If on-chain leverage would remain higher than Bot leverage: FAIL CLOSED / NO TRADE.
+   * 4. If leverage setting fails or cannot be verified: FAIL CLOSED / NO TRADE.
    */
   public async ensureLeverageConfigured(symbol: string, targetLeverage: number): Promise<number> {
     const symKey = symbol.replace('-', '/').toUpperCase();
     const desired = Math.max(1, Math.min(100, Math.round(targetLeverage)));
-    if (this.configuredLeverages.get(symKey) === desired) {
-      return desired;
+
+    // Discover authoritative on-chain market maximum leverage
+    let marketMax = 10;
+    try {
+      const market = await mcpClient.getMarketDetail(symbol);
+      if (market?.maxLeverage && market.maxLeverage > 0) {
+        marketMax = market.maxLeverage;
+      }
+    } catch {}
+
+    // Rule 1: If bot wants 10x and exchange allows lower (e.g. 5x), execute highest exchange allows
+    let effectiveTarget = desired;
+    if (desired >= marketMax) {
+      effectiveTarget = marketMax;
+      if (desired > marketMax) {
+        logger.info(`⚙️ [LEVERAGE RULE] Bot requested ${desired}x >= market max (${marketMax}x) for ${symKey}. Clamping to highest exchange allows: ${marketMax}x.`);
+      }
+    }
+
+    if (this.configuredLeverages.get(symKey) === effectiveTarget) {
+      return effectiveTarget;
     }
 
     try {
-      logger.info(`⚙️ [EXECUTOR] Configuring on-chain leverage for ${symKey} to ${desired}x (cross margin)...`);
-      await mcpClient.setLeverage(symKey, desired, 'cross');
-      this.configuredLeverages.set(symKey, desired);
-      logger.info(`✅ [EXECUTOR] On-chain leverage successfully set to ${desired}x for ${symKey}`);
-      return desired;
+      logger.info(`⚙️ [EXECUTOR] Configuring on-chain leverage for ${symKey} to ${effectiveTarget}x (cross margin)...`);
+      await mcpClient.setLeverage(symKey, effectiveTarget, 'cross');
+      this.configuredLeverages.set(symKey, effectiveTarget);
+      logger.info(`✅ [EXECUTOR] On-chain leverage successfully set to ${effectiveTarget}x for ${symKey}`);
+      return effectiveTarget;
     } catch (err: any) {
       const msg = String(err?.message || '');
       const match = msg.match(/exceeds maximum (\d+)x/i);
       if (match && match[1]) {
-        const maxLev = parseInt(match[1], 10);
-        if (maxLev > 0 && maxLev < desired) {
+        const parsedMax = parseInt(match[1], 10);
+        if (parsedMax > 0 && parsedMax <= effectiveTarget) {
           try {
-            logger.warn(`⚠️ [EXECUTOR] Leverage ${desired}x exceeds maximum ${maxLev}x for ${symKey}. Clamping to ${maxLev}x...`);
-            await mcpClient.setLeverage(symKey, maxLev, 'cross');
-            this.configuredLeverages.set(symKey, maxLev);
-            logger.info(`✅ [EXECUTOR] On-chain leverage successfully clamped and set to ${maxLev}x for ${symKey}`);
-            return maxLev;
+            logger.warn(`⚠️ [EXECUTOR] Leverage clamped to on-chain ceiling ${parsedMax}x for ${symKey}...`);
+            await mcpClient.setLeverage(symKey, parsedMax, 'cross');
+            this.configuredLeverages.set(symKey, parsedMax);
+            logger.info(`✅ [EXECUTOR] On-chain leverage confirmed at ${parsedMax}x for ${symKey}`);
+            return parsedMax;
           } catch (clampErr: any) {
-            logger.warn(`⚠️ [EXECUTOR] Failed to set clamped leverage for ${symKey}: ${clampErr.message}`);
+            logger.error(`🚨 [EXECUTOR] Failed to set clamped leverage for ${symKey}: ${clampErr.message}`);
           }
         }
       }
-      logger.warn(`⚠️ [EXECUTOR] Failed to set leverage for ${symKey}: ${err.message}. Proceeding with trade.`);
-      return desired;
+
+      // FAIL CLOSED: Never proceed with trade when leverage configuration fails!
+      logger.error(`🚨 [LEVERAGE VETO] Cannot configure ${effectiveTarget}x on Decibel DEX for ${symKey}: ${err.message}. Trade aborted to protect capital.`);
+      throw new Error(`LEVERAGE_CONFIG_REJECTED: ${err.message}`);
     }
   }
 
@@ -1019,7 +1045,11 @@ export class TradeExecutor {
     let liveOnChainPositions: any[] = [];
     if (!config.PAPER_TRADING && this.aptosAccount) {
       try {
-        liveOnChainPositions = await mcpClient.getPositions();
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('EXCHANGE_TELEMETRY_TIMEOUT_6S')), 6000)
+        );
+
+        liveOnChainPositions = (await Promise.race([mcpClient.getPositions(), timeoutPromise])) as any[];
         const hasOnChain = liveOnChainPositions.some((p) => p.symbol.replace('-', '/').toUpperCase() === symKey && ((p.sizeBase && p.sizeBase > 0) || (p.sizeUsd && p.sizeUsd > 0)));
         if (hasOnChain) {
           logger.warn(`🛡️ [DUPLICATE GUARD] On-chain position already exists for ${signal.symbol} on Decibel DEX. Order aborted.`);
@@ -1027,7 +1057,7 @@ export class TradeExecutor {
         }
 
         // Check if resting uncancelled orders exist on DEX book for this symbol:
-        const liveOrders = await mcpClient.getOrders(signal.symbol);
+        const liveOrders = (await Promise.race([mcpClient.getOrders(signal.symbol), timeoutPromise])) as any[];
         const hasResting = liveOrders.some((o: any) => {
           const oSym = (o.market || o.symbol || '').replace('-', '/').toUpperCase();
           return oSym === symKey || oSym.includes(symKey.split('/')[0]);
@@ -1036,7 +1066,11 @@ export class TradeExecutor {
           logger.warn(`🛡️ [RESTING ORDER GUARD] Resting order already pending on Decibel DEX for ${signal.symbol} (${liveOrders.length} orders). Aborting new entry to prevent order stacking.`);
           return { success: false, error: `Resting limit order already pending on Decibel DEX for ${signal.symbol}` };
         }
-      } catch {}
+      } catch (preCheckErr: any) {
+        // FAIL CLOSED: If telemetry cannot be verified, NEVER proceed with opening new exposure!
+        logger.error(`🚨 [PRE-TRADE BLOCKED] Cannot verify exchange telemetry for ${signal.symbol}: ${preCheckErr.message}. Aborting trade.`);
+        return { success: false, error: `EXCHANGE_TELEMETRY_UNVERIFIED: ${preCheckErr.message}` };
+      }
     }
 
     this.markExecutionInFlight(symKey);
@@ -1084,9 +1118,18 @@ export class TradeExecutor {
         try {
           // Ensure on-chain leverage is explicitly configured on Decibel DEX before opening
           const actualLev = await this.ensureLeverageConfigured(signal.symbol, risk.leverage);
+          if (actualLev > risk.leverage) {
+            logger.error(`🚨 [LEVERAGE GUARD] Bot requested ${risk.leverage}x, but on-chain leverage is ${actualLev}x. Aborting trade.`);
+            return { success: false, error: `LEVERAGE_EXCEEDS_BOT_REQUEST: On-chain ${actualLev}x > Bot ${risk.leverage}x` };
+          }
           if (actualLev && actualLev !== risk.leverage) {
             logger.info(`⚙️ [EXECUTOR] Adjusting order leverage from ${risk.leverage}x to exchange maximum ${actualLev}x for ${signal.symbol}`);
             risk.leverage = actualLev;
+            const recalculatedMargin = risk.positionSizeUsd / actualLev;
+            if (recalculatedMargin > effectiveBudget) {
+              logger.warn(`🛑 [LEVERAGE SIZING VETO] ${signal.symbol} at ${actualLev}x requires $${recalculatedMargin.toFixed(2)} margin, exceeding budget ($${effectiveBudget.toFixed(2)}). Trade aborted.`);
+              return { success: false, error: `MARGIN_EXCEEDS_BUDGET_AT_${actualLev}X` };
+            }
           }
 
           const directivesAny = risk.directivesUsed as any;
@@ -1189,16 +1232,36 @@ export class TradeExecutor {
             logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | Hard SL (On-Chain): $${hardSlPrice} on ${signal.symbol} (Soft Ratchet SL: $${signal.stopLoss} in-system)...`);
             // Brief 1.5s propagation window to guarantee matching engine has finalized position settlement on-chain
             await new Promise((r) => setTimeout(r, 1500));
-            try {
-              await mcpClient.setTpSl({
-                symbol: signal.symbol,
-                tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
-                slTrigger: hardSlPrice > 0 ? hardSlPrice : undefined,
-              });
-              tpSlSecured = true;
-              logger.info(`✅ [ON-CHAIN TP/SL] Confirmed Hard TP/SL placement for ${signal.symbol}`);
-            } catch (tpErr: any) {
-              logger.warn(`⚠️ [ON-CHAIN TP/SL] Initial placement note: ${tpErr?.message || tpErr}. Background reconciler will auto-secure on the next cycle.`);
+
+            let slAttempts = 0;
+            const maxSlAttempts = 3;
+            while (slAttempts < maxSlAttempts && !tpSlSecured) {
+              slAttempts++;
+              try {
+                await mcpClient.setTpSl({
+                  symbol: signal.symbol,
+                  tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
+                  slTrigger: hardSlPrice > 0 ? hardSlPrice : undefined,
+                });
+                tpSlSecured = true;
+                logger.info(`✅ [ON-CHAIN TP/SL] Confirmed Hard TP/SL placement for ${signal.symbol} (attempt ${slAttempts})`);
+              } catch (tpErr: any) {
+                logger.warn(`⚠️ [ON-CHAIN TP/SL] Placement attempt ${slAttempts}/${maxSlAttempts} failed: ${tpErr?.message || tpErr}`);
+                if (slAttempts < maxSlAttempts) await new Promise((r) => setTimeout(r, 1000 * slAttempts));
+              }
+            }
+
+            // CRITICAL DEFENSE: If hard on-chain stop loss could NOT be placed after 3 attempts, IMMEDIATELY UNWIND!
+            if (!tpSlSecured && liveResult?.filled) {
+              logger.error(`🚨 [NAKED POSITION UNWIND] ${signal.symbol} filled without stop loss armor! Initiating immediate market close to protect capital...`);
+              try {
+                await mcpClient.closePosition(signal.symbol, 1.0);
+                logger.info(`🛡️ [EMERGENCY UNWIND] Unwound unprotected position for ${signal.symbol}. Zero capital left exposed.`);
+              } catch (closeErr: any) {
+                logger.error(`💥 [CATASTROPHIC] Unwind failed for ${signal.symbol}: ${closeErr.message}. Halting bot trading!`);
+                this.setPaused(true);
+              }
+              return { success: false, error: 'STOP_ARMOR_FAILED_POSITION_UNWOUND' };
             }
           }
         } catch (err: any) {
@@ -2061,43 +2124,102 @@ export class TradeExecutor {
   }
 
   /**
-   * Close all currently open positions
+   * Close all currently open positions with verified on-chain execution
    */
-  public closeAllOpenTrades(reason: 'closed_manual' | 'closed_tp' | 'closed_sl' = 'closed_manual'): number {
+  public async closeAllOpenTradesAsync(reason: 'closed_manual' | 'closed_tp' | 'closed_sl' = 'closed_manual'): Promise<{ closed: number; failed: number }> {
     const open = this.getOpenTrades();
-    const count = open.length;
-    for (const trade of open) {
-      trade.status = reason;
-      trade.closedAt = Date.now();
+    let closedCount = 0;
+    let failedCount = 0;
+
+    // 1. Cancel all resting limit and trigger orders on-chain
+    try {
+      await mcpClient.cancelAllOrders();
+      logger.info('🛡️ [EMERGENCY DRAIN] Cancelled all resting orders on Decibel DEX.');
+    } catch (err: any) {
+      logger.warn(`⚠️ [EMERGENCY DRAIN] Cancel orders notice: ${err.message}`);
     }
-    if (count > 0) {
-      this.saveTrades();
-      logger.info(`🧹 [EXECUTOR] Closed ${count} open positions. Budget allocation released.`);
-      for (const trade of open) {
+
+    // 2. Liquidate each open position on-chain
+    for (const trade of open) {
+      try {
+        if (!trade.isPaper && this.aptos && this.aptosAccount) {
+          logger.info(`⚡ [EMERGENCY DRAIN] Closing on-chain position for ${trade.symbol}...`);
+          const res = (await mcpClient.closePosition(trade.symbol, 1.0)) as any;
+          if (res && res.error) {
+            throw new Error(res.error);
+          }
+        }
+        trade.status = reason;
+        trade.closedAt = Date.now();
+        closedCount++;
         this.notifyTradeClosed(trade);
+      } catch (closeErr: any) {
+        trade.status = 'close_failed' as any;
+        failedCount++;
+        logger.error(`🚨 [EMERGENCY DRAIN FAILED] Could not close ${trade.symbol} on-chain: ${closeErr.message}`);
       }
     }
-    return count;
+
+    // 3. Confirm on-chain that positions are zero
+    try {
+      const remaining = await mcpClient.getPositions();
+      const stillOpen = remaining.filter((p: any) => (p.sizeBase && p.sizeBase > 0) || (p.sizeUsd && p.sizeUsd > 0.1));
+      if (stillOpen.length > 0) {
+        logger.error(`🚨 [EMERGENCY DRAIN] ${stillOpen.length} positions still exist on Decibel DEX!`);
+      }
+    } catch {}
+
+    this.saveTrades();
+    return { closed: closedCount, failed: failedCount };
+  }
+
+  public closeAllOpenTrades(reason: 'closed_manual' | 'closed_tp' | 'closed_sl' = 'closed_manual'): number {
+    this.closeAllOpenTradesAsync(reason).catch((err) => {
+      logger.error(`closeAllOpenTradesAsync error: ${err.message}`);
+    });
+    return this.getOpenTrades().length;
   }
 
   /**
-   * Close a specific trade by ID or symbol
+   * Close a specific trade by ID or symbol with on-chain verification
    */
+  public async closeTradeAsync(idOrSymbol: string): Promise<boolean> {
+    const trade = this.tradesCache.find(
+      (t) => t.status === 'open' && (t.id === idOrSymbol || t.symbol === idOrSymbol),
+    );
+    if (!trade) return false;
+
+    if (!trade.isPaper && this.aptos && this.aptosAccount) {
+      try {
+        logger.info(`⚡ [EXECUTOR] Executing on-chain close for ${trade.symbol}...`);
+        const res = (await mcpClient.closePosition(trade.symbol, 1.0)) as any;
+        if (res && res.error) {
+          throw new Error(res.error);
+        }
+      } catch (err: any) {
+        trade.status = 'close_failed' as any;
+        this.saveTrades();
+        logger.error(`🚨 [CLOSE FAILED] Could not close on-chain position for ${trade.symbol}: ${err.message}. Retaining allocation.`);
+        return false;
+      }
+    }
+
+    trade.status = 'closed_manual';
+    trade.closedAt = Date.now();
+    this.saveTrades();
+    logger.info(`🧹 [EXECUTOR] Confirmed on-chain close for ${trade.symbol} (${trade.id}). Allocation released.`);
+    this.notifyTradeClosed(trade);
+    return true;
+  }
+
   public closeTrade(idOrSymbol: string): boolean {
     const trade = this.tradesCache.find(
       (t) => t.status === 'open' && (t.id === idOrSymbol || t.symbol === idOrSymbol),
     );
     if (!trade) return false;
-    trade.status = 'closed_manual';
-    trade.closedAt = Date.now();
-    this.saveTrades();
-    logger.info(`🧹 [EXECUTOR] Manually closed position for ${trade.symbol} (${trade.id}).`);
-    if (!trade.isPaper && this.aptos && this.aptosAccount) {
-      mcpClient.closePosition(trade.symbol).catch((err: any) => {
-        logger.warn(`Could not close on-chain position for ${trade.symbol}: ${err.message}`);
-      });
-    }
-    this.notifyTradeClosed(trade);
+    this.closeTradeAsync(idOrSymbol).catch((err) => {
+      logger.error(`closeTradeAsync error: ${err.message}`);
+    });
     return true;
   }
 

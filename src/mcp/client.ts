@@ -1511,6 +1511,10 @@ export class DecibelMCPClient {
             transactionHash: committed.hash,
           });
 
+          if (!executed.success) {
+            throw new Error(`On-chain close transaction aborted: ${executed.vm_status}`);
+          }
+
           logger.info(`✅ On-chain position closed! Tx: ${committed.hash} (gas: ${executed.gas_used})`);
           return { success: true, txHash: committed.hash };
         }
