@@ -24,6 +24,7 @@ async function runSetup(): Promise<void> {
   console.log('1. Checking Decibel DEX Credentials...');
   if (!config.DECIBEL_SUBACCOUNT_ADDRESS) {
     console.log('   ⚠️  DECIBEL_SUBACCOUNT_ADDRESS is empty. (Required for live on-chain trading)');
+    console.log('       💡 Don\'t have an account? Create one with discounts: https://app.decibel.trade/r/53OP4B');
     warnings++;
   } else {
     console.log(`   ✅ Subaccount: ${config.DECIBEL_SUBACCOUNT_ADDRESS}`);

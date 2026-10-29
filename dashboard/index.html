@@ -9088,6 +9088,29 @@
             </div>
           </div>
 
+          <!-- Decibel Account Referral Onboarding Banner -->
+          <div style="margin-bottom:18px; padding:13px 18px; background:linear-gradient(90deg, rgba(14,165,233,0.15) 0%, rgba(99,102,241,0.15) 100%); border:1px solid rgba(56,189,248,0.35); border-radius:10px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; box-shadow:0 4px 16px rgba(14,165,233,0.08);">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="font-size:24px; filter:drop-shadow(0 0 6px rgba(56,189,248,0.5));">💎</span>
+              <div>
+                <div style="font-size:13px; font-weight:700; color:#f8fafc; letter-spacing:0.2px; display:flex; align-items:center; gap:8px;">
+                  <span>Don't have a Decibel DEX account yet?</span>
+                  <span style="font-size:10px; font-weight:800; background:rgba(56,189,248,0.2); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px;">OFFICIAL REFERRAL</span>
+                </div>
+                <div style="font-size:11.5px; color:#cbd5e1; margin-top:3px;">
+                  Create your account & deposit collateral using our official partner link for fee rebates and VIP perks: <strong style="color:#38bdf8;">r/53OP4B</strong>
+                </div>
+              </div>
+            </div>
+            <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer"
+              style="display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color:#ffffff; font-size:12px; font-weight:700; text-decoration:none; border-radius:7px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 4px 14px rgba(2,132,199,0.4); transition:all 0.15s ease; white-space:nowrap;"
+              onmouseover="this.style.filter='brightness(1.15)'; this.style.transform='translateY(-1px)';"
+              onmouseout="this.style.filter='none'; this.style.transform='none';">
+              <span>Open Decibel Account</span>
+              <span style="font-size:13px; line-height:1;">↗</span>
+            </a>
+          </div>
+
           <div
             style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:18px;">
             <!-- Field 1: Decibel Subaccount -->
@@ -9099,7 +9122,7 @@
               <input type="text" id="setup-subaccount" oninput="onSetupSubaccountInput(this.value)" placeholder="0x... (e.g. 0xcc2a2641...)"
                 style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; border-radius:6px; padding:9px 12px; font-size:12px; font-family:'JetBrains Mono',monospace;" />
               <div id="setup-subaccount-feedback" style="display:none; font-size:11px; margin-top:4px; line-height:1.4;"></div>
-              <div style="font-size:11px; color:var(--text3); margin-top:4px;">Your Decibel DEX subaccount or primary wallet holding deposit collateral.</div>
+              <div style="font-size:11px; color:var(--text3); margin-top:4px;">Your Decibel DEX subaccount or primary wallet holding deposit collateral. Don't have one? <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Create with Referral Link (r/53OP4B) ↗</a></div>
             </div>
 
             <!-- Field 2: Delegate Private Key -->
@@ -9484,7 +9507,7 @@
                   <input type="text" id="set-decibel-subaccount" placeholder="0x..." readonly
                     onclick="if(this.readOnly){showToastNotification('🔒 Subaccount is locked to protect trading collateral. Click Unlock to edit.');}"
                     style="width:100%; background:rgba(16, 185, 129, 0.08); border:1px solid rgba(52, 211, 153, 0.4); color:#34d399; padding:9px 12px; border-radius:8px; font-size:13px; font-family:monospace; box-sizing:border-box; cursor:not-allowed;">
-                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Your Aptos mainnet account or subaccount address with trading collateral.</div>
+                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Your Aptos mainnet account or subaccount address with trading collateral. Need an account? <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Open on Decibel (r/53OP4B) ↗</a></div>
                 </div>
 
                 <div>
