@@ -34,14 +34,16 @@ export function evaluateCVDConfirmation(
   if (!klines || klines.length < 5) {
     const cgSlope = cgCvd?.cvdSlope || 'NEUTRAL';
     const takerRatio = cgCvd?.takerBuyRatio ?? 1.0;
-    const isApproved = action === 'LONG' ? (cgSlope !== 'DISTRIBUTION' || takerRatio >= 0.90) : (cgSlope !== 'ACCUMULATION' || takerRatio <= 1.10);
+    const isEarlyApproved = action === 'LONG' 
+      ? (cgSlope !== 'DISTRIBUTION' && takerRatio >= 0.85) 
+      : (cgSlope !== 'ACCUMULATION' && takerRatio <= 1.15);
     return {
       cvdSlope: cgSlope,
       isAbsorptionDivergence: false,
       isExhaustionDivergence: false,
       takerBuyRatio: takerRatio,
-      isApproved,
-      vetoReason: isApproved ? undefined : `🛑 [CVD VETO] Aggressive ${cgSlope} flow (Taker Buy Ratio: ${takerRatio.toFixed(2)}) opposes ${action} entry.`,
+      isApproved: isEarlyApproved,
+      vetoReason: isEarlyApproved ? undefined : `🛑 [CVD VETO] Aggressive ${cgSlope} flow (Taker Buy Ratio: ${takerRatio.toFixed(2)}) opposes ${action} entry.`,
       convictionAdjustment: 0,
       summary: `CVD: ${cgSlope} (Taker Ratio: ${takerRatio.toFixed(2)})`,
     };

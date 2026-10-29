@@ -168,11 +168,17 @@ export class LocalAIBrain {
       };
     }
 
-    // A4. ByKaranteli Downward Flush Runaway VETO (Longs falling into stop pools)
-    if (action === 'LONG' && bkDirectives?.isLongMagnet && Math.abs(bkDirectives?.primaryMagnetIntensity || 0) >= 1.25) {
-      const magnetPrice = bkDirectives.primaryMagnetPrice || 0;
-      if (magnetPrice > 0 && signal.entryPrice > magnetPrice && (signal.entryPrice - magnetPrice) / signal.entryPrice <= 0.012) {
-        const reason = `🛑 Downward Liquidity Flush Magnet ($${magnetPrice.toFixed(2)}, ${bkDirectives.primaryMagnetIntensity}x intensity): Resting long stops pool drawing price downward. Long vetoed until sweep completes.`;
+    // A4. Multi-Venue Downward Flush Runaway VETO (Master Data Hub Primary, ByKaranteli Secondary)
+    const hubMagnet = simDir?.primaryLiquidityMagnet;
+    const isHubDownwardFlush = hubMagnet?.magnetType === 'DOWNWARD_LONG_FLUSH';
+    const isBkDownwardFlush = Boolean(bkDirectives?.isLongMagnet && Math.abs(bkDirectives?.primaryMagnetIntensity || 0) >= 1.25);
+    const hasFlushMagnet = isHubDownwardFlush || isBkDownwardFlush;
+    const flushMagnetPrice = hubMagnet?.magnetPrice || bkDirectives?.primaryMagnetPrice || 0;
+
+    if (action === 'LONG' && hasFlushMagnet && flushMagnetPrice > 0) {
+      if (signal.entryPrice > flushMagnetPrice && (signal.entryPrice - flushMagnetPrice) / signal.entryPrice <= 0.012) {
+        const sourceLabel = hubMagnet ? 'Master Data Hub Multi-Venue' : 'ByKaranteli Secondary';
+        const reason = `🛑 Downward Liquidity Flush Magnet (${sourceLabel}) at $${flushMagnetPrice.toFixed(2)}: Resting long stop pool drawing price downward. Long vetoed until sweep completes.`;
         riskGuard.triggerL4TrapCoolOff(signal.symbol, 'LONG', 'DOWNWARD_FLUSH_RUNAWAY', reason, 15);
         return {
           confirmed: false,
@@ -180,7 +186,7 @@ export class LocalAIBrain {
           action: 'HOLD',
           sentiment: 'BEARISH',
           reasoning: `🛡️ AI Shield VETO: ${reason}`,
-          provider: 'bykaranteli_liq_shield',
+          provider: 'multivenue_liq_shield',
           role,
           riskFlags: ['DOWNWARD_FLUSH_RUNAWAY'],
           trapCategory: 'DOWNWARD_FLUSH_RUNAWAY',
@@ -696,22 +702,55 @@ export class LocalAIBrain {
     let score = signal.baseScore;
     const riskFlags: string[] = [];
 
+    // Check Multi-Venue orderflow & Quantum Directives from Sim Lab Alpha Bundle
+    try {
+      const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+      const { getSimPairDirective } = require('../strategy/manager');
+      const bundle = getLastSyncedBundle();
+      const pairDir = getSimPairDirective(signal.symbol);
+      const of = pairDir?.orderflow;
+      const rw = (bundle as any)?.rollingWindowDirectives;
+
+      // 1. Quantum Hoax Collapse & CVD Distribution Veto
+      if (signal.action === 'LONG' && (of?.cvdTrend === 'SELL' || of?.cvdTrend === 'STRONG_SELL')) {
+        riskFlags.push('QUANTUM_HOAX_COLLAPSE_CVD_SELL');
+      }
+      if (signal.action === 'SHORT' && (of?.cvdTrend === 'BUY' || of?.cvdTrend === 'STRONG_BUY')) {
+        riskFlags.push('QUANTUM_HOAX_COLLAPSE_CVD_BUY');
+      }
+
+      // 2. Rolling-Window Anti-Overfitting Veto
+      if (rw?.active && rw?.quarantinedPairs?.includes(signal.symbol)) {
+        riskFlags.push('ROLLING_WINDOW_WFE_DEGRADED');
+      }
+
+      // 3. Directional Ban Veto
+      if (directives?.bannedSides && signal.action !== 'HOLD' && directives.bannedSides.includes(signal.action as any)) {
+        riskFlags.push('MACRO_DIRECTIONAL_BAN');
+      }
+    } catch {}
 
     const confirmed = score >= 70 && riskFlags.length === 0;
 
-    const reasoning = role === 'SECOND_OPINION'
-      ? `🛡️ Second Opinion CONFIRMED: Sim Lab (${directives?.regime || 'Online'}) alignment validated against local order structure (score=${score}, clean wicks).`
-      : `Primary quantitative trade validation: score=${score}, ${signal.reasons.join('; ')}`;
+    let localReasoning = '';
+    if (!confirmed && riskFlags.length > 0) {
+      localReasoning = `🛡️ Local Rules VETO: Blocked by institutional guards [${riskFlags.join(', ')}]. Trade rejected.`;
+    } else if (role === 'SECOND_OPINION') {
+      localReasoning = `🛡️ Second Opinion CONFIRMED: Sim Lab (${directives?.regime || 'Online'}) alignment validated against local order structure (score=${score}, clean wicks).`;
+    } else {
+      localReasoning = `Primary quantitative trade validation: score=${score}, ${signal.reasons.join('; ')}`;
+    }
 
     return {
       confirmed,
-      confidenceScore: Math.max(0, Math.min(100, score)),
+      confidenceScore: confirmed ? Math.max(0, Math.min(100, score)) : 30,
       action: confirmed ? signal.action : 'HOLD',
       sentiment: signal.action === 'LONG' ? 'BULLISH' : 'BEARISH',
-      reasoning,
+      reasoning: localReasoning,
       provider: 'local_rules',
       role,
       riskFlags,
+      trapCategory: riskFlags.includes('QUANTUM_HOAX_COLLAPSE_CVD_SELL') ? 'QUANTUM_HOAX_COLLAPSE' : undefined,
     };
   }
 
@@ -1104,6 +1143,8 @@ MISSION & PERSONA:
 • Directional Bans: ${banned} (Any trade matching a banned side is strictly blocked by Layer 4 AI Shield)
 • Global Confidence Floor: ≥${scoreFloor}% (Dynamic Floor: ${dynamicScoreFloor}%)
 • Volatility Cooling: ${coolingActive ? `⚠️ ACTIVE (${coolingReason})` : 'Normal Operations'}
+• Quantum Microstructure Directives: ACTIVE (Event Horizon 0.15%, Rm Wall Retention >= 0.20, Hoax Collapse Veto, Passive Absorption Confirmation)
+• Rolling-Window Walk-Forward Governance: Parameter Island stability [±2, ±2], Common-Window start, Drawdown-penalized score (CAGR + 0.12*Sharpe - 0.35*|MaxDD|)
 • Upcoming Macro Releases: ${nearestNews || 'No immediate high-impact news'}
 
 📰 LIVE STREAMED BREAKING NEWS & GEOPOLITICAL CATALYSTS:

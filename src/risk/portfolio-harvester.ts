@@ -754,16 +754,20 @@ export class PortfolioHarvester {
         recommendation = 'RUNNER';
       }
 
-      // ByKaranteli Liquidity Magnet Proximity Hold: If trade is in profit and within 0.45% of the primary liquidation magnet, let it run to collect full flush!
-      const bkDirectives = (pairDir as any)?.bykaranteli?.executionDirectives;
-      if (recommendation === 'HARVEST' && pnlUsd > 0 && bkDirectives?.primaryMagnetPrice) {
-        const magPrice = bkDirectives.primaryMagnetPrice;
+      // ── Multi-Venue Liquidity Magnet Proximity Hold (Master Data Hub Primary, ByKaranteli Secondary) ──
+      // If trade is in profit and within 0.45% of the primary liquidation magnet, let it run to collect full flush!
+      const hubMagnetPrice = (pairDir as any)?.primaryLiquidityMagnet?.magnetPrice;
+      const bkMagnetPrice = (pairDir as any)?.bykaranteli?.executionDirectives?.primaryMagnetPrice;
+      const activeMagnetPrice = hubMagnetPrice || bkMagnetPrice;
+      const magnetSource = hubMagnetPrice ? 'Master Data Hub Multi-Venue' : 'ByKaranteli Secondary';
+
+      if (recommendation === 'HARVEST' && pnlUsd > 0 && activeMagnetPrice) {
         const currentP = currentPrice || trade.entryPrice;
-        const distToMagnetPct = Math.abs((magPrice - currentP) / currentP) * 100;
-        const isApproachingMagnet = (trade.action === 'SHORT' && magPrice < currentP) || (trade.action === 'LONG' && magPrice > currentP);
+        const distToMagnetPct = Math.abs((activeMagnetPrice - currentP) / currentP) * 100;
+        const isApproachingMagnet = (trade.action === 'SHORT' && activeMagnetPrice < currentP) || (trade.action === 'LONG' && activeMagnetPrice > currentP);
         if (isApproachingMagnet && distToMagnetPct <= 0.45) {
           recommendation = 'HOLD';
-          factors.push(`🧲 LIQUIDITY MAGNET RUNNER: Position is only ${distToMagnetPct.toFixed(2)}% from primary liquidation magnet ($${magPrice}). Letting trade run to capture full flush!`);
+          factors.push(`🧲 LIQUIDITY MAGNET RUNNER (${magnetSource}): Position is only ${distToMagnetPct.toFixed(2)}% from primary liquidation magnet ($${activeMagnetPrice}). Letting trade run to capture full flush!`);
         }
       }
 
@@ -781,8 +785,27 @@ export class PortfolioHarvester {
       const hasOnChainArmor = Boolean((trade.hardStopLoss && trade.hardStopLoss > 0) || isManual || trade.strategyName?.includes('On-Chain'));
       
       // Structure Break Invalidation under Sim Lab Directive:
-      // If Sim Lab Layer 3 detects structural break against the position while in adverse drawdown (pnlPct <= -1.0%), cut immediately!
-      const isStructureBreakCut = !isManual && isLayer3EnabledBySimLab && hasStructureBreak && pnlPct <= -1.0 && score >= (this.config.harvestScoreThreshold || 65);
+      // 1. Entry Retest Grace: First 30m (< 0.5h) allows normal orderblock retests unless catastrophic (pnlPct <= -5.0%)
+      const isInitialGrace = holdHours < 0.50 && pnlPct > -5.0;
+
+      // 2. CVD Absorption Shield: Veto cut if orderflow shows institutional limit buying/selling absorption
+      let isCvdAbsorbing = false;
+      try {
+        const { cvdAnalyzer } = require('../engine/cvd-analyzer');
+        const cvdData = cvdAnalyzer.getLatest(trade.symbol);
+        if (isLong && (cvdData?.trend === 'STRONG_BUY' || cvdData?.trend === 'BUY')) isCvdAbsorbing = true;
+        else if (!isLong && (cvdData?.trend === 'STRONG_SELL' || cvdData?.trend === 'SELL')) isCvdAbsorbing = true;
+      } catch {}
+
+      // Fast Cut on real structural displacement (-1.2% threshold, outside grace window, without CVD absorption)
+      const isStructureBreakCut = !isManual && 
+        isLayer3EnabledBySimLab && 
+        hasStructureBreak && 
+        !isInitialGrace && 
+        !isCvdAbsorbing && 
+        pnlPct <= -1.2 && 
+        score >= (this.config.harvestScoreThreshold || 65);
+
       const isBleedingOut = !hasOnChainArmor && pnlPct <= -15.0 && score >= (this.config.harvestScoreThreshold || 75) && !breakevenLocked;
       const isStagnantBleed = !isManual && holdHours >= 3.5 && pnlPct <= -3.0 && score >= 85 && !breakevenLocked;
 

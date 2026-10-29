@@ -1228,14 +1228,19 @@ export class StandaloneTradingEngine {
       }
     }
 
-    // ── ByKaranteli Liquidity Magnet TP1 Snapping ────────────────────────────
-    const bkSuggestedTp = bkDirectives?.suggestedTp1Price;
-    if (bkSuggestedTp && bkSuggestedTp > 0 && action !== 'HOLD') {
-      const magnetDist = Math.abs(bkSuggestedTp - entry);
-      const isCorrectDirection = (action === 'LONG' && bkSuggestedTp > entry) || (action === 'SHORT' && bkSuggestedTp < entry);
+    // ── Multi-Venue Liquidity Magnet TP1 Snapping (Master Data Hub Primary, ByKaranteli Secondary) ──
+    const hubMagnet = (simPairDir as any)?.primaryLiquidityMagnet;
+    const hubSuggestedTp = hubMagnet?.magnetPrice;
+    const bkSuggestedTp = bkDirectives?.suggestedTp1Price || bkDirectives?.primaryMagnetPrice;
+    const activeSuggestedTp = hubSuggestedTp || bkSuggestedTp;
+    const magnetLabel = hubSuggestedTp ? 'Master Data Hub Multi-Venue' : 'ByKaranteli Secondary';
+
+    if (activeSuggestedTp && activeSuggestedTp > 0 && action !== 'HOLD') {
+      const magnetDist = Math.abs(activeSuggestedTp - entry);
+      const isCorrectDirection = (action === 'LONG' && activeSuggestedTp > entry) || (action === 'SHORT' && activeSuggestedTp < entry);
       if (isCorrectDirection && magnetDist >= slDist * 1.05 && magnetDist <= slDist * 2.5) {
         tp1Dist = magnetDist;
-        reasons.push(`🧲 LIQUIDITY MAGNET TP1: Snapped to high-intensity cluster ($${bkSuggestedTp.toFixed(2)}, ${bkDirectives?.primaryMagnetIntensity || 1.0}x gravity)`);
+        reasons.push(`🧲 LIQUIDITY MAGNET TP1 (${magnetLabel}): Snapped to high-intensity cluster ($${activeSuggestedTp.toFixed(2)})`);
       }
     }
 

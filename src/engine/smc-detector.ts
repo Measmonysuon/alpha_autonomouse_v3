@@ -338,11 +338,34 @@ export function detectStructureShifts(klines: KlineBar[]): {
   const ema20 = closes.slice(-20).reduce((s, c) => s + c, 0) / Math.min(20, closes.length);
   const structuralTrend = last.close > ema20 * 1.002 ? 'BULLISH' : last.close < ema20 * 0.998 ? 'BEARISH' : 'RANGING';
 
+  // Dynamic 14-period ATR calculation for structural breathing cushion (0.20x ATR)
+  let atr = last.close * 0.008;
+  let trSum = 0;
+  const atrLookback = Math.min(14, klines.length - 1);
+  for (let i = klines.length - atrLookback; i < klines.length; i++) {
+    const tr = Math.max(
+      klines[i].high - klines[i].low,
+      Math.abs(klines[i].high - klines[i - 1].close),
+      Math.abs(klines[i].low - klines[i - 1].close)
+    );
+    trSum += tr;
+  }
+  if (atrLookback > 0) atr = trSum / atrLookback;
+  const atrBuffer = atr * 0.20;
+
+  // Wick anatomy analysis (Bear Trap / Fake Breakout vs Real Displacement)
+  const range = last.high - last.low || 1;
+  const lowerWickPct = ((Math.min(last.open, last.close) - last.low) / range) * 100;
+  const upperWickPct = ((last.high - Math.max(last.open, last.close)) / range) * 100;
+  const isLowerAbsorption = lowerWickPct >= 25; // Buyers absorbing aggressive sells at swing low
+  const isUpperAbsorption = upperWickPct >= 25; // Sellers absorbing aggressive buys at swing high
+
   let type: 'BULLISH_BOS' | 'BEARISH_BOS' | 'BULLISH_CHOCH' | 'BEARISH_CHOCH' | 'NONE' = 'NONE';
 
-  if (last.close > swingHigh) {
+  // Only declare structural break if price penetrates swing level beyond the ATR buffer AND does not have an absorption rejection wick
+  if (last.close > (swingHigh + atrBuffer) && !isUpperAbsorption) {
     type = structuralTrend === 'BEARISH' ? 'BULLISH_CHOCH' : 'BULLISH_BOS';
-  } else if (last.close < swingLow) {
+  } else if (last.close < (swingLow - atrBuffer) && !isLowerAbsorption) {
     type = structuralTrend === 'BULLISH' ? 'BEARISH_CHOCH' : 'BEARISH_BOS';
   }
 

@@ -5,6 +5,25 @@ All notable changes to Alpha Autonomous Client V3 will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-10-29
+
+### Added
+- **Calibrated Structural Invalidation & Bear Trap Shield**:
+  - **Dynamic Volatility Cushion**: Incorporates $0.20 \times \text{ATR}$ buffer beyond swing levels in `smc-detector.ts` to filter out minor noise.
+  - **Fake Breakdown & Absorption Wick Veto**: Automatically vetoes defensive structure break cuts in `portfolio-harvester.ts` if lower wick absorption $\ge 25\%$ or CVD buyer absorption is active.
+  - **Entry Retest Grace Window**: Protects newly entered positions from premature defensive shakeouts during the initial 30 minutes unless catastrophic drawdown occurs ($\le -5.0\%$).
+  - **Multi-Stage Slow Bleed Protection**: Retains multi-tier capital preservation via `DEFENSIVE_BLEED_CUT` (drawdowns $> 2.0\%$ across 6 consecutive bars), 2.5-hour stagnation ratchet, and 3.5-hour time stop.
+- **Multi-Venue Master Data Hub Liquidity Magnets**:
+  - Primary institutional liquidity magnets aggregated across multi-venue feeds (Binance, Hyperliquid, Bybit, Decibel).
+  - Preserved ByKaranteli microstructure as secondary cross-validation feed with automated directional alignment verification.
+- **Pair Card Candlestick Rendering & Dual-Grid In-Place Engine**:
+  - **Multi-Grid DOM Resolution**: Replaced single-element ID lookups with `querySelectorAll` to resolve duplicate ID collisions between Overview (`#markets-grid`) and Markets (`#markets-grid-full`) tabs.
+  - **Layout-Safe Canvas Sizing**: Container-width fallback calculations prevent 0-width canvas render drops during display toggles and tab switching.
+  - **Live In-Place Updates**: Added `updateCardCandleInPlace` to continuously refresh RSI, RVOL, SMC badges, and pattern indicators on every 2-second market polling tick without full DOM redraws.
+  - **1-Click Summary Affordance**: Clicking anywhere on the pair card summary box immediately pins/unpins the 15m candlestick chart.
+
+---
+
 ## [3.2.0] - 2026-10-24
 
 ### Added

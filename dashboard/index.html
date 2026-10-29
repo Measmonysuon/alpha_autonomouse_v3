@@ -11450,9 +11450,10 @@
           }
         }).catch(() => {});
       }
-      if (tab === 'dashboard' || tab === 'positions') {
+      if (tab === 'dashboard' || tab === 'positions' || tab === 'markets') {
         setTimeout(() => {
           if (lastPositions && lastPositions.length) renderAllPositionCandles(lastPositions);
+          renderAllActiveMarketCandles();
         }, 60);
       }
     }
@@ -15610,9 +15611,12 @@
       if (!symbol) return [];
       const cacheKey = `${symbol}_${tf}`;
       const cached = window._cachedKlines[cacheKey];
+      const cacheData = Array.isArray(cached) ? cached : cached?.data;
+      const cacheTs = cached?.ts || (Array.isArray(cached) ? Date.now() : 0);
+
       // 1. Return from cache only if still fresh
-      if (cached && cached.data && cached.data.length > 0 && (Date.now() - cached.ts) < KLINE_CACHE_TTL_MS) {
-        return cached.data;
+      if (cacheData && cacheData.length > 0 && (Date.now() - cacheTs) < KLINE_CACHE_TTL_MS) {
+        return cacheData;
       }
       // 2. Check if available in lastState.markets[symbol].candlestick
       if (lastState && lastState.markets && lastState.markets[symbol] && lastState.markets[symbol].candlestick) {
@@ -15689,10 +15693,18 @@
         if (parent) {
           const pRect = parent.getBoundingClientRect();
           W = pRect.width;
-          H = pRect.height || 200;
+          H = pRect.height || 145;
         }
       }
-      if (!W || !H) return;
+      if (!W || !H) {
+        const box = canvas.closest('.market-candle-box') || canvas.closest('.market-card-front');
+        if (box) {
+          const bRect = box.getBoundingClientRect();
+          W = Math.max(260, bRect.width - 24);
+          H = 145;
+        }
+      }
+      if (!W || !H || W <= 0 || H <= 0) return;
 
       const targetW = Math.floor(W * dpr);
       const targetH = Math.floor(H * dpr);
@@ -16191,32 +16203,28 @@
       window._marketCandleState[symbol] = state;
 
       const symSafe = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-      const viewEl = document.getElementById(`mkt-candle-view-${symSafe}`);
-      const summaryEl = document.getElementById(`mkt-summary-${symSafe}`);
-      const hudTitle = document.getElementById(`mkt-hud-title-${symSafe}`);
-      const canvas = document.getElementById(`mkt-cvs-${symSafe}`);
+      
+      // Update ALL matching view / summary / hud elements across both grids (markets-grid & markets-grid-full)
+      document.querySelectorAll(`[id="mkt-candle-view-${symSafe}"]`).forEach(el => el.style.display = 'block');
+      document.querySelectorAll(`[id="mkt-summary-${symSafe}"]`).forEach(el => el.style.display = 'none');
+      document.querySelectorAll(`[id="mkt-hud-title-${symSafe}"]`).forEach(el => {
+        el.innerHTML = `<span>🕯️ ${tf.toUpperCase()} Chart</span> ${state.isPinned ? '<span class="market-pin-badge" onclick="toggleMarketTfPin(\'' + symbol + '\', \'' + tf + '\', event)" style="cursor:pointer;" title="Click to close chart">📌 PINNED (✕)</span>' : '<span style="font-size:8px;color:var(--text3);">(click to pin)</span>'}`;
+      });
+      document.querySelectorAll(`[id="mkt-cvs-${symSafe}"]`).forEach(el => el.setAttribute('data-tf', tf));
 
-      if (viewEl) viewEl.style.display = 'block';
-      if (summaryEl) summaryEl.style.display = 'none';
-      if (hudTitle) {
-        hudTitle.innerHTML = `<span>🕯️ ${tf.toUpperCase()} Chart</span> ${state.isPinned ? '<span class="market-pin-badge">📌 PINNED</span>' : '<span style="font-size:8px;color:var(--text3);">(click to pin)</span>'}`;
-      }
-      if (canvas) {
-        canvas.setAttribute('data-tf', tf);
-      }
-
-      // Update button active classes
-      const box = document.getElementById(`mkt-candle-box-${symSafe}`);
-      if (box) {
+      // Update button active classes across both grids
+      document.querySelectorAll(`[id="mkt-candle-box-${symSafe}"]`).forEach(box => {
         box.querySelectorAll('.market-tf-btn').forEach(btn => {
           const is15 = btn.textContent.includes('15m') && tf === '15m';
           const is1h = btn.textContent.includes('1h') && tf === '1h';
           btn.classList.toggle('active', is15 || is1h);
           btn.classList.toggle('pinned', (is15 || is1h) && state.isPinned);
         });
-      }
+      });
 
-      renderAllActiveMarketCandles();
+      requestAnimationFrame(() => {
+        renderAllActiveMarketCandles();
+      });
     }
 
     function onMarketTfLeave(symbol, event) {
@@ -16228,16 +16236,12 @@
       state.hoverTimeout = setTimeout(() => {
         state.activeTf = null;
         const symSafe = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-        const viewEl = document.getElementById(`mkt-candle-view-${symSafe}`);
-        const summaryEl = document.getElementById(`mkt-summary-${symSafe}`);
-        if (viewEl) viewEl.style.display = 'none';
-        if (summaryEl) summaryEl.style.display = 'block';
-
-        const box = document.getElementById(`mkt-candle-box-${symSafe}`);
-        if (box) {
+        document.querySelectorAll(`[id="mkt-candle-view-${symSafe}"]`).forEach(el => el.style.display = 'none');
+        document.querySelectorAll(`[id="mkt-summary-${symSafe}"]`).forEach(el => el.style.display = 'block');
+        document.querySelectorAll(`[id="mkt-candle-box-${symSafe}"]`).forEach(box => {
           box.querySelectorAll('.market-tf-btn').forEach(btn => btn.classList.remove('active', 'pinned'));
-        }
-      }, 220);
+        });
+      }, 450);
     }
 
     function toggleMarketTfPin(symbol, tf, event) {
@@ -16255,15 +16259,11 @@
         state.activeTf = null;
         window._marketCandleState[symbol] = state;
         const symSafe = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-        const viewEl = document.getElementById(`mkt-candle-view-${symSafe}`);
-        const summaryEl = document.getElementById(`mkt-summary-${symSafe}`);
-        if (viewEl) viewEl.style.display = 'none';
-        if (summaryEl) summaryEl.style.display = 'block';
-
-        const box = document.getElementById(`mkt-candle-box-${symSafe}`);
-        if (box) {
+        document.querySelectorAll(`[id="mkt-candle-view-${symSafe}"]`).forEach(el => el.style.display = 'none');
+        document.querySelectorAll(`[id="mkt-summary-${symSafe}"]`).forEach(el => el.style.display = 'block');
+        document.querySelectorAll(`[id="mkt-candle-box-${symSafe}"]`).forEach(box => {
           box.querySelectorAll('.market-tf-btn').forEach(btn => btn.classList.remove('active', 'pinned'));
-        }
+        });
       } else {
         // Pin this timeframe
         state.isPinned = true;
@@ -16284,7 +16284,8 @@
         // so charts draw instantly when a user expands them
         const cacheKey = `${symbol}_${tf}`;
         const cached = window._cachedKlines[cacheKey];
-        const cacheStale = !cached || !cached.data || (Date.now() - cached.ts) >= KLINE_CACHE_TTL_MS;
+        const cacheData = Array.isArray(cached) ? cached : cached?.data;
+        const cacheStale = !cached || !cacheData || cacheData.length === 0 || (Date.now() - (cached.ts || 0)) >= KLINE_CACHE_TTL_MS;
         if (cacheStale && lastState?.markets?.[symbol]?.candlestick) {
           const cs = lastState.markets[symbol].candlestick;
           const list = (tf === '1h' ? cs.klines1h : cs.klines15m) || [];
@@ -16303,27 +16304,32 @@
 
         const parentBox = canvas.closest('.market-candle-view');
         if (!parentBox || parentBox.style.display === 'none') return;
+        // Check if canvas is in an active visible container
+        if (canvas.offsetWidth === 0 && canvas.offsetHeight === 0 && parentBox.offsetWidth === 0) return;
 
         const symSafe = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-        const hudStats = document.getElementById(`mkt-hud-stats-${symSafe}`);
+        const hudStatsList = document.querySelectorAll(`[id="mkt-hud-stats-${symSafe}"]`);
         const klines = await getKlines(symbol, tf);
         if (!klines || !klines.length) {
-          if (hudStats) hudStats.textContent = 'Awaiting klines…';
+          hudStatsList.forEach(hud => hud.textContent = 'Awaiting klines…');
           return;
         }
 
+        const mktPx = (lastState?.markets?.[symbol]?.markPrice || lastState?.markets?.[symbol]?.price?.currentPrice || 0);
         drawCandlestickCanvas(canvas, klines, {
           rightMargin: 46,
           showVolume: true,
+          currentPrice: mktPx,
           onHoverCandle: (candle, idx) => {
-            if (!hudStats) return;
             const timeStr = new Date(candle.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const chg = candle.c - candle.o;
             const col = chg >= 0 ? '#4ade80' : '#f87171';
-            hudStats.innerHTML = `<span style="color:var(--text3);">${timeStr}</span> | O:<b>${fmtPosPrice(candle.o)}</b> H:<b>${fmtPosPrice(candle.h)}</b> L:<b>${fmtPosPrice(candle.l)}</b> C:<b style="color:${col}">${fmtPosPrice(candle.c)}</b>`;
+            hudStatsList.forEach(hud => {
+              hud.innerHTML = `<span style="color:var(--text3);">${timeStr}</span> | O:<b>${fmtPosPrice(candle.o)}</b> H:<b>${fmtPosPrice(candle.h)}</b> L:<b>${fmtPosPrice(candle.l)}</b> C:<b style="color:${col}">${fmtPosPrice(candle.c)}</b>`;
+            });
           },
           onLeaveCandle: () => {
-            if (hudStats) hudStats.textContent = 'Hover candle for OHLC';
+            hudStatsList.forEach(hud => hud.textContent = 'Hover candle for OHLC');
           }
         });
       });
@@ -18991,7 +18997,7 @@
         <div class="mkt-chart-hud" id="mkt-hud-${symSafe}">
           <div class="mkt-hud-title" id="mkt-hud-title-${symSafe}">
             <span>🕯️ ${activeTf.toUpperCase()} Chart</span>
-            ${cState.isPinned ? '<span class="market-pin-badge">📌 PINNED</span>' : '<span style="font-size:8px;color:var(--text3);">(click to pin)</span>'}
+            ${cState.isPinned ? `<span class="market-pin-badge" onclick="toggleMarketTfPin('${m.symbol}', '${activeTf}', event)" style="cursor:pointer;" title="Click to unpin and close chart">📌 PINNED (✕)</span>` : '<span style="font-size:8px;color:var(--text3);">(click to pin)</span>'}
           </div>
           <div class="mkt-hud-stats" id="mkt-hud-stats-${symSafe}">Hover candle for OHLC</div>
         </div>
@@ -19001,7 +19007,7 @@
       </div>
 
       <!-- COMPACT SUMMARY (shown when chart is collapsed) -->
-      <div class="market-candle-summary" id="mkt-summary-${symSafe}" style="${isOpen ? 'display:none;' : 'display:block;'}">
+      <div class="market-candle-summary" id="mkt-summary-${symSafe}" onclick="toggleMarketTfPin('${m.symbol}', '15m', event)" title="Click to view interactive 15m Candlestick Chart" style="cursor:pointer; ${isOpen ? 'display:none;' : 'display:block;'}">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
           <span style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.25);color:#38bdf8;font-weight:700;padding:3px 8px;border-radius:5px;font-size:10.5px;">15m: ${pat}</span>
           <span style="background:${trend1hBg};border:1px solid ${trend1hBorder};color:${trend1hColor};font-weight:700;padding:3px 8px;border-radius:5px;font-size:10.5px;">1h: ${cs.trend1h || 'RANGE'}</span>
@@ -19881,6 +19887,63 @@
             if (m.low24h) metaValues[3].textContent = fmt(m.low24h);
           }
 
+          // 5b. Live Candlestick Indicators & Summary In-Place Update
+          if (m.candlestick) {
+            const cs = m.candlestick;
+            const tfInfo = card.querySelector('.market-tf-info');
+            if (tfInfo) {
+              const rsiColor = cs.rsi14 > 70 ? '#f87171' : cs.rsi14 < 30 ? '#4ade80' : '#94a3b8';
+              const pullbackTag = cs.pullbackStatus === 'AT_VALUE_BOUNCE'
+                ? `<span style="color:#22c55e;background:rgba(34,197,94,0.15);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;">🎯 BOUNCE</span>`
+                : cs.pullbackStatus === 'OVEREXTENDED'
+                  ? `<span style="color:#f59e0b;background:rgba(245,158,11,0.15);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;">⚠️ STRETCHED</span>`
+                  : '';
+              tfInfo.innerHTML = `
+                <span style="color:${rsiColor};">RSI ${cs.rsi14 ? cs.rsi14.toFixed(1) : '50'}</span>
+                <span style="color:#a78bfa;">RVOL ${cs.rvol ? cs.rvol.toFixed(1) : '1.0'}x</span>
+                ${pullbackTag}
+              `;
+            }
+
+            const candleSummary = card.querySelector('.market-candle-summary');
+            if (candleSummary) {
+              const pat = cs.lastPattern && cs.lastPattern !== 'NONE' && cs.lastPattern !== 'NEUTRAL'
+                ? cs.lastPattern.replace(/_/g, ' ')
+                : (cs.structureTrend === 'BULLISH_STRUCTURE' ? 'Bullish Structure' : cs.structureTrend === 'BEARISH_STRUCTURE' ? 'Bearish Structure' : 'Range Bound');
+              const trend1hColor = cs.trend1h === 'BULLISH' ? '#4ade80' : cs.trend1h === 'BEARISH' ? '#f87171' : '#94a3b8';
+              const trend1hBg = cs.trend1h === 'BULLISH' ? 'rgba(74,222,128,0.12)' : cs.trend1h === 'BEARISH' ? 'rgba(248,113,113,0.12)' : 'rgba(148,163,184,0.1)';
+              const trend1hBorder = cs.trend1h === 'BULLISH' ? 'rgba(74,222,128,0.28)' : cs.trend1h === 'BEARISH' ? 'rgba(248,113,113,0.28)' : 'rgba(148,163,184,0.2)';
+              
+              const topRow = candleSummary.querySelector('div:first-child');
+              if (topRow) {
+                topRow.innerHTML = `
+                  <span style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.25);color:#38bdf8;font-weight:700;padding:3px 8px;border-radius:5px;font-size:10.5px;">15m: ${pat}</span>
+                  <span style="background:${trend1hBg};border:1px solid ${trend1hBorder};color:${trend1hColor};font-weight:700;padding:3px 8px;border-radius:5px;font-size:10.5px;">1h: ${cs.trend1h || 'RANGE'}</span>
+                `;
+              }
+              const smcEl = candleSummary.querySelector('.market-smc-badge, .market-smc-badge-empty');
+              if (smcEl && cs.smc && cs.smc.summary) {
+                const smcText = cs.smc.summary.toUpperCase();
+                const isBull = smcText.includes('SSL SWEEP') || smcText.includes('LOWER WICK') || smcText.includes('OVERSOLD') || smcText.includes('BULLISH') || smcText.includes('SUPPORT') || smcText.includes('BOUNCE');
+                const isBear = smcText.includes('BSL SWEEP') || smcText.includes('UPPER WICK') || smcText.includes('OVERBOUGHT') || smcText.includes('BEARISH') || smcText.includes('RESISTANCE') || smcText.includes('REJECTION');
+                const isWarn = smcText.includes('TRAP') || smcText.includes('EXHAUSTION') || smcText.includes('RISK');
+                const isNeut = smcText.includes('NEUTRAL') || smcText.includes('EQUILIBRIUM');
+                let smcCol = '#818cf8', smcBg = 'rgba(129,140,248,0.10)', smcBorder = 'rgba(129,140,248,0.28)', smcIco = '⚡';
+                if (isBull && !isBear) { smcCol = '#4ade80'; smcBg = 'rgba(74,222,128,0.12)'; smcBorder = 'rgba(74,222,128,0.32)'; smcIco = '🟢'; }
+                else if (isBear && !isBull) { smcCol = '#f87171'; smcBg = 'rgba(248,113,113,0.12)'; smcBorder = 'rgba(248,113,113,0.32)'; smcIco = '🔴'; }
+                else if (isWarn) { smcCol = '#fbbf24'; smcBg = 'rgba(251,191,36,0.12)'; smcBorder = 'rgba(251,191,36,0.32)'; smcIco = '⚠️'; }
+                else if (isNeut) { smcCol = '#94a3b8'; smcBg = 'rgba(148,163,184,0.07)'; smcBorder = 'rgba(148,163,184,0.18)'; smcIco = '⬜'; }
+                
+                smcEl.className = 'market-smc-badge';
+                smcEl.style.background = smcBg;
+                smcEl.style.border = `1px solid ${smcBorder}`;
+                smcEl.style.color = smcCol;
+                smcEl.title = cs.smc.summary;
+                smcEl.innerHTML = `<span style="flex-shrink:0;font-weight:800;">${smcIco} SMC:</span><span style="word-break:break-word;">${cs.smc.summary}</span>`;
+              }
+            }
+          }
+
           // 6. Signal Row & Confidence Progress
           const riskBadge = card.querySelector('.signal-row .risk-badge');
           if (riskBadge && m.riskLevel) {
@@ -20586,8 +20649,8 @@
       if (state && state.markets) {
         for (const sym in state.markets) {
           const cs = state.markets[sym]?.candlestick;
-          if (cs?.klines15m && cs.klines15m.length) window._cachedKlines[`${sym}_15m`] = cs.klines15m;
-          if (cs?.klines1h && cs.klines1h.length) window._cachedKlines[`${sym}_1h`] = cs.klines1h;
+          if (cs?.klines15m && cs.klines15m.length) window._cachedKlines[`${sym}_15m`] = { data: cs.klines15m, ts: Date.now() };
+          if (cs?.klines1h && cs.klines1h.length) window._cachedKlines[`${sym}_1h`] = { data: cs.klines1h, ts: Date.now() };
         }
       }
       try {
