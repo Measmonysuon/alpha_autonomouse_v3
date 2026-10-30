@@ -11,7 +11,7 @@ import dns from 'dns';
 try { dns.setDefaultResultOrder('ipv4first'); } catch {}
 import { config, watchPairs, getDerivedSignerAddress, isClientConfigured, isClientOnboarded } from './config';
 import { logger } from './utils/logger';
-import { standaloneEngine, fetchPublicKlines, KlineBar } from './engine/standalone-engine';
+import { standaloneEngine, fetchPublicKlines, KlineBar, updateBaselinePrice } from './engine/standalone-engine';
 import { localAIBrain } from './ai/brain';
 import { superchargeClient } from './simlab/supercharge-client';
 import { tradeExecutor } from './trades/executor';
@@ -100,23 +100,42 @@ async function runTradingCycle(): Promise<void> {
     await Promise.allSettled(
       batch.map(async (symbol) => {
         try {
-          // 1. Fetch 15m klines (primary — used for signals and chart)
+          // 1. Fetch authoritative live market price from Decibel on-chain MCP or Bybit feed
+          let mcpPrice: any = null;
+          try {
+            mcpPrice = await mcpClient.getPrice(symbol);
+            if (mcpPrice?.markPrice && mcpPrice.markPrice > 0) {
+              updateBaselinePrice(symbol, mcpPrice.markPrice);
+            }
+          } catch (e: any) {
+            logger.debug(`[${symbol}] mcpClient.getPrice fallback: ${e.message}`);
+          }
+
+          // 1b. Fetch 15m klines (primary — used for signals and chart)
           const klines = await fetchPublicKlines(symbol, '15m', 60);
           if (!klines || klines.length < 20) {
             logger.debug(`[${symbol}] Insufficient kline data returned. Skipping.`);
             return;
           }
 
-          // 1b. Refresh 1h klines (cached for 5 minutes per pair)
+          // 1c. Refresh 1h klines (cached for 5 minutes per pair)
           await refresh1hKlinesForPair(symbol);
 
           const existingMkt = agentState.markets[symbol];
-          const liveChange24h = (typeof existingMkt?.change24h === 'number') ? existingMkt.change24h : undefined;
-          const currentPrice = (existingMkt?.markPrice && existingMkt.markPrice > 0)
-            ? existingMkt.markPrice
-            : klines[klines.length - 1].close;
-          if (klines.length > 0 && existingMkt?.markPrice && existingMkt.markPrice > 0) {
-            klines[klines.length - 1].close = existingMkt.markPrice;
+          const liveChange24h = (typeof mcpPrice?.change24h === 'number')
+            ? mcpPrice.change24h
+            : ((typeof existingMkt?.change24h === 'number') ? existingMkt.change24h : undefined);
+
+          // Authoritative current price resolution:
+          // Priority 1: Live Decibel on-chain / Bybit markPrice from MCP
+          // Priority 2: Latest kline close
+          // Priority 3: Existing market markPrice
+          const currentPrice = (mcpPrice?.markPrice && mcpPrice.markPrice > 0)
+            ? mcpPrice.markPrice
+            : (klines.length > 0 ? klines[klines.length - 1].close : (existingMkt?.markPrice || 10));
+
+          if (klines.length > 0 && currentPrice > 0) {
+            klines[klines.length - 1].close = currentPrice;
           }
           livePrices[symbol] = currentPrice;
 
@@ -233,12 +252,12 @@ async function runTradingCycle(): Promise<void> {
           }
 
           const existingMarket = agentState.markets[symbol];
-          const finalMarkPrice = (existingMarket?.markPrice && existingMarket.markPrice > 0) ? existingMarket.markPrice : currentPrice;
-          const finalChange24h = (existingMarket?.change24h !== undefined) ? existingMarket.change24h : change24h;
-          const finalVolume24hUsd = (existingMarket?.volume24hUsd !== undefined && existingMarket.volume24hUsd > 0) ? existingMarket.volume24hUsd : volume24hUsd;
-          const finalHigh24h = (existingMarket?.high24h !== undefined && existingMarket.high24h > 0) ? existingMarket.high24h : high24h;
-          const finalLow24h = (existingMarket?.low24h !== undefined && existingMarket.low24h > 0) ? existingMarket.low24h : low24h;
-          const finalUpdatedAt = Math.max(existingMarket?.updatedAt || 0, Date.now());
+          const finalMarkPrice = currentPrice;
+          const finalChange24h = (mcpPrice?.change24h !== undefined) ? mcpPrice.change24h : ((existingMarket?.change24h !== undefined) ? existingMarket.change24h : change24h);
+          const finalVolume24hUsd = (mcpPrice?.volume24hUsd !== undefined && mcpPrice.volume24hUsd > 0) ? mcpPrice.volume24hUsd : ((existingMarket?.volume24hUsd !== undefined && existingMarket.volume24hUsd > 0) ? existingMarket.volume24hUsd : volume24hUsd);
+          const finalHigh24h = (mcpPrice?.high24h !== undefined && mcpPrice.high24h > 0) ? mcpPrice.high24h : ((existingMarket?.high24h !== undefined && existingMarket.high24h > 0) ? existingMarket.high24h : high24h);
+          const finalLow24h = (mcpPrice?.low24h !== undefined && mcpPrice.low24h > 0) ? mcpPrice.low24h : ((existingMarket?.low24h !== undefined && existingMarket.low24h > 0) ? existingMarket.low24h : low24h);
+          const finalUpdatedAt = Date.now();
 
           agentState.markets[symbol] = {
             symbol,

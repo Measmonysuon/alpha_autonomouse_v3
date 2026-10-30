@@ -161,6 +161,34 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
+    // ── 0c. Rolling-Window Anti-Overfitting Walk-Forward Gate ────────────────
+    try {
+      const { getLastSyncedBundle, getPairRollingDirectives } = require('../pipeline/sim-consumer');
+      const b = getLastSyncedBundle();
+      const rwDirectives = b?.rollingWindowDirectives;
+      const pairRolling = getPairRollingDirectives(signal.symbol);
+
+      if (rwDirectives?.active) {
+        if (rwDirectives?.quarantinedPairs?.includes(signal.symbol) || (pairRolling && pairRolling.wfe < 0.50)) {
+          const wfeVal = pairRolling?.wfe != null ? pairRolling.wfe.toFixed(2) : '< 0.50';
+          const reason = `🛑 Blocked by Rolling-Window Anti-Overfitting Protocol: ${signal.symbol} Walk-Forward Efficiency (WFE ${wfeVal} < 0.50) degraded. Quarantined from live execution.`;
+          logger.warn(`[Risk Guard] ${reason}`);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        }
+
+        // Confluence Gate: Fast dynamic SMA momentum must align with trade direction
+        if (pairRolling && pairRolling.smaAlignment !== 'NEUTRAL') {
+          const isOpposingLong = action === 'LONG' && pairRolling.smaAlignment === 'BEARISH';
+          const isOpposingShort = action === 'SHORT' && pairRolling.smaAlignment === 'BULLISH';
+          if (isOpposingLong || isOpposingShort) {
+            const reason = `🛑 Blocked by Rolling-Window Confluence Sentinel: Dynamic SMA(${pairRolling.fastPeriod}/${pairRolling.slowPeriod}) alignment is ${pairRolling.smaAlignment}, opposing ${action}. Decoupled chop trap avoided.`;
+            logger.warn(`[Risk Guard] ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+        }
+      }
+    } catch {}
+
     const { superchargeClient } = require('../simlab/supercharge-client');
     const isSupercharged = superchargeClient.isActive() || directives.source === 'SIMLAB_SUPERCHARGED';
 
@@ -318,8 +346,13 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    // ── 3. Score Floor & AI Confirmation Check ─────────────────────────────────
-    const scoreFloor = directives.scoreFloor || 75;
+    // ── 3. Dynamic Score Floor & AI Confirmation Check ─────────────────────────
+    let pairGateOverride: number | undefined;
+    try {
+      const { getPairOverrides } = require('../strategy/manager');
+      pairGateOverride = getPairOverrides(signal.symbol)?.minConfidenceGate;
+    } catch {}
+    const scoreFloor = pairGateOverride || directives.scoreFloor || 80;
     if (aiEval.confidenceScore < scoreFloor) {
       const reason = `🛑 Confidence score ${aiEval.confidenceScore} is below active score floor (${scoreFloor}). [${aiEval.provider}]`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
@@ -497,6 +530,16 @@ export class RiskGuard {
       targetAllocUsd = Number((targetAllocUsd * 0.5).toFixed(2));
       logger.info(`⚖️ [Risk Guard] ${signal.symbol} — Counter-trend 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
     }
+
+    // Rolling-Window Transitional Regime sizing dampener (0.5x margin allocation)
+    try {
+      const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
+      const pairRolling = getPairRollingDirectives(signal.symbol);
+      if (pairRolling?.wfeDirective === 'REDUCE_SIZE_HALF') {
+        targetAllocUsd = Number((targetAllocUsd * 0.5).toFixed(2));
+        logger.info(`🔬 [Risk Guard] ${signal.symbol} — Rolling-Window Transitional WFE (${pairRolling.wfe.toFixed(2)}) 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
+      }
+    } catch {}
 
     // Enforce strategy minimum margin floor
     targetAllocUsd = Math.max(targetAllocUsd, stratMinMargin);

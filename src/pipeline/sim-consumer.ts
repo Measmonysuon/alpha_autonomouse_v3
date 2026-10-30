@@ -42,6 +42,26 @@ export interface AlphaBundleResponse {
     reason: string;
     triggeredAt: number;
   }>;
+  rollingWindowDirectives?: {
+    active: boolean;
+    minWfeThreshold: number;
+    quarantinedPairs: string[];
+    governanceMode: 'ENFORCED' | 'ADVISORY';
+    pairParameters?: Record<string, {
+      symbol: string;
+      fastPeriod: number;
+      slowPeriod: number;
+      currentFastSma: number;
+      currentSlowSma: number;
+      smaSpreadPct: number;
+      smaAlignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+      wfe: number;
+      wfeRegime: 'STATIONARY' | 'TRANSITIONAL' | 'OVERFITTING';
+      wfeDirective: 'EXECUTE_FULL' | 'REDUCE_SIZE_HALF' | 'DEFENSE_VETO';
+      isParameterIsland: boolean;
+      robustScore: number;
+    }>;
+  };
   macro: {
     regime: 'TRENDING_BULL' | 'TRENDING_BEAR' | 'RANGING_CHOP' | 'HIGH_VOLATILITY';
     riskMultiplier: number;
@@ -506,4 +526,18 @@ export function stopSimPipelineConsumer(): void {
  */
 export function getLastSyncedBundle(): AlphaBundleResponse | null {
   return lastSyncedBundle;
+}
+
+export function getRollingWindowDirectives() {
+  return lastSyncedBundle?.rollingWindowDirectives;
+}
+
+export function getPairRollingDirectives(symbol: string) {
+  const norm = symbol.toUpperCase().replace(/[-_/]/g, '');
+  const params = lastSyncedBundle?.rollingWindowDirectives?.pairParameters;
+  if (!params) return undefined;
+  for (const [k, v] of Object.entries(params)) {
+    if (k.toUpperCase().replace(/[-_/]/g, '') === norm) return v;
+  }
+  return undefined;
 }

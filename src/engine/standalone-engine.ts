@@ -57,6 +57,13 @@ export interface TechnicalIndicators {
   trend1h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   structureTrend: 'BULLISH_STRUCTURE' | 'BEARISH_STRUCTURE' | 'SIDEWAYS';
   lastPattern: string;
+  // Dynamic Rolling-Window Top Parameter SMA Metrics
+  fastSmaPeriod?: number;
+  slowSmaPeriod?: number;
+  smaFast?: number;
+  smaSlow?: number;
+  smaAlignment?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  confluencePassed?: boolean;
   smcSignal?: 'SWEEP_LOW_REVERSAL' | 'SWEEP_HIGH_REVERSAL' | 'FAIR_VALUE_GAP_TAP' | 'NONE';
   smc?: SMCAnalysis;
   cvdTrend?: 'BUY' | 'SELL' | 'NEUTRAL';
@@ -107,13 +114,13 @@ export interface StrategyDirectives {
 
 export const DEFAULT_STANDALONE_DIRECTIVES: StrategyDirectives = {
   activeStrategy: 'Chop-Resilient 5% Daily LONG Scalper V1',
-  scoreFloor: 75,
+  scoreFloor: 80,
   bullTrapUpperWickPct: 50,
   bannedSides: [],
   regime: 'STANDALONE_TECHNICAL',
   source: 'STANDALONE_LOCAL',
   lastUpdated: Date.now(),
-  notes: 'Autonomous local technical engine active with EMA/RSI/ATR & SMC confluence',
+  notes: 'Autonomous local technical engine active with 80% Conviction Gate & SMC Confluence',
 };
 
 // ─── Technical Indicator Computations ──────────────────────────────────────────
@@ -128,6 +135,19 @@ export function calculateEMA(prices: number[], period: number): number[] {
     emaValues.push(nextEma);
   }
   return emaValues;
+}
+
+export function calculateSMA(prices: number[], period: number): number[] {
+  if (prices.length === 0 || period <= 0) return [];
+  const res: number[] = new Array(prices.length).fill(0);
+  let sum = 0;
+  for (let i = 0; i < prices.length; i++) {
+    sum += prices[i];
+    if (i >= period) sum -= prices[i - period];
+    if (i >= period - 1) res[i] = sum / period;
+    else res[i] = sum / (i + 1);
+  }
+  return res;
 }
 
 export function calculateRSI(closes: number[], period = 14): number[] {
@@ -539,28 +559,28 @@ export function calculateDynamicLeverage(params: {
 // ─── Public Free Kline Fetching ────────────────────────────────────────────────
 
 const BASELINE_PRICES: Record<string, number> = {
-  'APTUSD': 0.77,
-  'BTCUSD': 84850,
-  'ETHUSD': 2501,
-  'SOLUSD': 109.4,
-  'SUIUSD': 0.998,
-  'AVAXUSD': 11.27,
-  'NEARUSD': 4.31,
-  'LINKUSD': 13.03,
-  'DOGEUSD': 0.0935,
-  'XRPUSD': 1.476,
-  'ADAUSD': 0.240,
-  'BNBUSD': 782.5,
-  'TRXUSD': 0.231,
+  'APTUSD': 0.624,
+  'BTCUSD': 77340,
+  'ETHUSD': 2230,
+  'SOLUSD': 96.5,
+  'SUIUSD': 0.884,
+  'AVAXUSD': 8.25,
+  'NEARUSD': 4.25,
+  'LINKUSD': 11.05,
+  'DOGEUSD': 0.0756,
+  'XRPUSD': 1.244,
+  'ADAUSD': 0.192,
+  'BNBUSD': 700.0,
+  'TRXUSD': 0.334,
   'DOTUSD': 3.85,
   'HYPEUSD': 18.50,
   'PEPEUSD': 0.0000078,
   'SHIBUSD': 0.0000125,
   'LTCUSD': 88.4,
   'BCHUSD': 430.0,
-  'UNIUSD': 8.20,
+  'UNIUSD': 6.92,
   'FETUSD': 0.75,
-  'TAOUSD': 310.0,
+  'TAOUSD': 232.0,
   'RENDERUSD': 3.45,
   'ARBUSD': 0.48,
   'OPUSD': 1.15,
@@ -701,9 +721,11 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
     logger.debug(`[${symbol}] OKX ${interval} klines error: ${err.message}. Trying Sim Lab...`);
   }
 
-  // 4. Quaternary: Query Sim Lab Central Brain (Port 4000)
+  // 4. Quaternary: Query Sim Lab Central Brain (Port 4000) or local host
   try {
-    const simUrl = `http://192.168.100.21:4000/api/klines?symbol=${symbol.replace(/USD[T]?$/, '/USD')}&interval=${interval === '1h' ? '1h' : '15m'}&limit=${limit}`;
+    const simBase = process.env.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000';
+    const cleanSym = symbol.replace(/USD[T]?$/, '/USD');
+    const simUrl = `${simBase}/api/klines?symbol=${cleanSym}&interval=${interval === '1h' ? '1h' : '15m'}&limit=${limit}`;
     const res = await axios.get(simUrl, { timeout: 3500 });
     const list = res.data?.klines;
     if (Array.isArray(list) && list.length > 0) {
@@ -780,7 +802,11 @@ export class StandaloneTradingEngine {
   /**
    * Computes comprehensive technical indicators across 15m and 1h intervals
    */
-  public computeIndicators(klines: KlineBar[], klines1h?: KlineBar[]): TechnicalIndicators | null {
+  public computeIndicators(
+    klines: KlineBar[],
+    klines1h?: KlineBar[],
+    dynamicSmaParams?: { fast?: number; slow?: number; symbol?: string }
+  ): TechnicalIndicators | null {
     if (!klines || klines.length < 30) return null;
 
     const closes = klines.map((k) => k.close);
@@ -845,6 +871,21 @@ export class StandaloneTradingEngine {
 
     const rsi14 = rsiSeries[lastIdx];
     const atr14 = atrSeries[lastIdx] || (highs[lastIdx] - lows[lastIdx]);
+
+    // ── Dynamic Rolling-Window Top Parameter SMA calculation ───────────────────
+    const isBtc = dynamicSmaParams?.symbol?.includes('BTC');
+    const fastPeriod = dynamicSmaParams?.fast || (isBtc ? 8 : 9);
+    const slowPeriod = dynamicSmaParams?.slow || (isBtc ? 38 : 41);
+
+    const smaFastSeries = calculateSMA(closes, Math.min(fastPeriod, closes.length));
+    const smaSlowSeries = calculateSMA(closes, Math.min(slowPeriod, closes.length));
+    const smaFast = Number(smaFastSeries[lastIdx].toFixed(2));
+    const smaSlow = Number(smaSlowSeries[lastIdx].toFixed(2));
+    const smaAlignment: TechnicalIndicators['smaAlignment'] =
+      smaFast > smaSlow ? 'BULLISH' : smaFast < smaSlow ? 'BEARISH' : 'NEUTRAL';
+    const confluencePassed =
+      (trend1h === 'BULLISH' && smaAlignment === 'BULLISH') ||
+      (trend1h === 'BEARISH' && smaAlignment === 'BEARISH');
 
     const wick = calculateWickMetrics(opens[lastIdx], highs[lastIdx], lows[lastIdx], closes[lastIdx]);
 
@@ -922,6 +963,12 @@ export class StandaloneTradingEngine {
       trend1h,
       structureTrend,
       lastPattern: wick.pattern,
+      fastSmaPeriod: fastPeriod,
+      slowSmaPeriod: slowPeriod,
+      smaFast,
+      smaSlow,
+      smaAlignment,
+      confluencePassed,
       smcSignal,
       smc,
     };
@@ -946,7 +993,18 @@ export class StandaloneTradingEngine {
     },
   ): StandaloneSignal {
     const timestamp = Date.now();
-    const ind = this.computeIndicators(klines, klines1h);
+    let pairRolling: any = undefined;
+    try {
+      const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
+      pairRolling = getPairRollingDirectives(symbol);
+    } catch {}
+
+    const dynamicSmaParams = {
+      fast: pairRolling?.fastPeriod,
+      slow: pairRolling?.slowPeriod,
+      symbol,
+    };
+    const ind = this.computeIndicators(klines, klines1h, dynamicSmaParams);
     const activeStrategy: StrategyConfig = getStrategyForPair(symbol);
     const pairOverrides = getPairOverrides(symbol);
 
@@ -1114,6 +1172,20 @@ export class StandaloneTradingEngine {
       reasons.push('⚖️ Mixed technical signals — standing by for directional expansion');
     }
 
+    // Dynamic Top 1 Rolling-Window SMA Confluence Veto
+    // The SMA periods are derived dynamically from the rolling-window parameter surface scan per pair.
+    if (ind.smaAlignment && ind.smaAlignment !== 'NEUTRAL') {
+      if (action === 'LONG' && ind.smaAlignment === 'BEARISH') {
+        reasons.push(`🛑 Confluence Veto: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) is BEARISH opposing LONG. Decoupled chop trap avoided.`);
+        action = 'HOLD';
+      } else if (action === 'SHORT' && ind.smaAlignment === 'BULLISH') {
+        reasons.push(`🛑 Confluence Veto: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) is BULLISH opposing SHORT. Decoupled chop trap avoided.`);
+        action = 'HOLD';
+      } else if ((action === 'LONG' && ind.smaAlignment === 'BULLISH') || (action === 'SHORT' && ind.smaAlignment === 'BEARISH')) {
+        reasons.push(`✨ Dynamic SMA Confluence: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) confirms ${action} trend alignment.`);
+      }
+    }
+
     // ── Risk Level ────────────────────────────────────────────────────────────
     const high24h = Math.max(...klines.map((k) => k.high));
     const low24h = Math.min(...klines.map((k) => k.low));
@@ -1262,55 +1334,66 @@ export class StandaloneTradingEngine {
     let confidence = 45;
 
     if (action !== 'HOLD') {
-      // Pillar 1: Base Momentum (0 to 30 pts)
-      let pillar1 = Math.min(20, Math.abs(scoreDiff) * 6);
-      if (riskLevel === 'LOW') pillar1 += 10;
-      else if (riskLevel === 'MEDIUM') pillar1 += 5;
+      // Pillar 1: Base Momentum (0 to 15 pts)
+      let pillar1 = Math.min(10, Math.abs(scoreDiff) * 5);
+      if (riskLevel === 'LOW') pillar1 += 5;
+      else if (riskLevel === 'MEDIUM') pillar1 += 2;
 
-      // Pillar 2: Trend Alignment (0 to 35 pts)
+      // Pillar 2: Trend Alignment (0 to 15 pts)
       let pillar2 = 0;
       const isMtfAligned =
         (action === 'LONG' && ind.structureTrend === 'BULLISH_STRUCTURE' && ind.trend1h === 'BULLISH') ||
         (action === 'SHORT' && ind.structureTrend === 'BEARISH_STRUCTURE' && ind.trend1h === 'BEARISH');
 
       if (isMtfAligned) {
-        pillar2 += 20;
+        pillar2 += 8;
         reasons.push(`⚡ MTF CONFLUENCE: 15m structure and 1h macro trend aligned ${trend}`);
       } else if (
         (action === 'LONG' && ind.structureTrend === 'BULLISH_STRUCTURE') ||
         (action === 'SHORT' && ind.structureTrend === 'BEARISH_STRUCTURE')
       ) {
-        pillar2 += 10;
+        pillar2 += 4;
       }
 
       if (ind.isPullbackBounce) {
-        pillar2 += 15;
+        pillar2 += 5;
         reasons.push(`🎯 VALUE PULLBACK BOUNCE: Retested dynamic value zone with rejection wick`);
       }
 
       if (ind.adx14 >= (activeStrategy.layer1.adxTrendThreshold || 20)) {
-        pillar2 += 5;
+        pillar2 += 2;
         reasons.push(`💪 Strong ADX Trend: ${ind.adx14} >= ${activeStrategy.layer1.adxTrendThreshold || 20}`);
       }
 
-      // Pillar 3: Volume & Order Flow (0 to 35 pts)
+      // Dynamic Top 1 SMA Alignment (+15 pts)
+      let smaBonus = 0;
+      if (ind.smaAlignment && ind.smaAlignment !== 'NEUTRAL') {
+        const isSmaAligned = (action === 'LONG' && ind.smaAlignment === 'BULLISH') ||
+                             (action === 'SHORT' && ind.smaAlignment === 'BEARISH');
+        if (isSmaAligned) {
+          smaBonus = 15;
+          reasons.push(`✨ Dynamic SMA Alignment (+15%): SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) confirms ${action} trend`);
+        }
+      }
+
+      // Pillar 3: Volume & Order Flow (0 to 20 pts)
       let pillar3 = 0;
-      if (coinglassScore >= 2) pillar3 += 15;
+      if (coinglassScore >= 2) pillar3 += 8;
       if (ind.rvol >= 1.3) {
-        pillar3 += 10;
+        pillar3 += 8;
         reasons.push(`🔥 RVOL Spike: ${ind.rvol}x volume surge confirming institutional participation`);
       } else if (ind.rvol >= 1.0) {
-        pillar3 += 5;
+        pillar3 += 4;
       }
       // ByKaranteli Live Whale Tape Confluence (+$1M prints aligned with direction)
       if (bkDirectives?.whaleNetBias24h === action) {
-        pillar3 += 8;
+        pillar3 += 4;
         reasons.push(`🐋 WHALE CONFLUENCE: Live $1M+ whale tape confirms aggressive ${action} dominance (${bkDirectives.whalePrintsCount} prints)`);
       }
 
-      // Tier 1: 72% Technical Cap (Requires SMC Institutional Footprint to cross 80%)
-      const rawTechnical = pillar1 + pillar2 + pillar3;
-      let technicalScore = Math.min(72, rawTechnical);
+      // Tier 1: 65% Technical Cap (Requires SMC Institutional Footprint to cross dynamic 80% gate)
+      const rawTechnical = pillar1 + pillar2 + smaBonus + pillar3;
+      let technicalScore = Math.min(65, rawTechnical);
 
       // ── Hard Gating (Anti-Point Stacking Caps) ─────────────────────────────
       // Gate 1: MTF Trend Conflict Cap (Max 60%)
@@ -1545,9 +1628,9 @@ export class StandaloneTradingEngine {
           }
         }
 
-        // Unlock SMC Confluence Key
+        // Unlock SMC Confluence Key (up to 30 pts)
         if (smcPoints > 0) {
-          smcBonus = Math.min(18, Math.max(8, smcPoints));
+          smcBonus = Math.min(30, Math.max(10, smcPoints));
           reasons.push(`🔑 SMC REQUIRED EXECUTION KEY: +${smcBonus}% bonus unlocked (${smcReasons.join(', ')})`);
         }
       }
@@ -1607,8 +1690,8 @@ export class StandaloneTradingEngine {
       }
     }
 
-    // Gate threshold check (pair override or active strategy)
-    const minGate = pairOverrides?.minConfidenceGate || activeStrategy.layer5?.minConfidenceGate || 75;
+    // Dynamic Gate hierarchy: 1. Pair Override (Agent Brain) -> 2. Sim Lab Directives -> 3. Strategy Profile -> 4. Baseline Default (80)
+    const minGate = pairOverrides?.minConfidenceGate || this.directives.scoreFloor || activeStrategy.layer5?.minConfidenceGate || 80;
     let isTriggered = action !== 'HOLD' && confidence >= minGate;
 
     // Institutional Veto 1: Empirical Pair Quarantine & Pair Ban Check
