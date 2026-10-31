@@ -135,7 +135,10 @@ async function runTradingCycle(): Promise<void> {
             : (klines.length > 0 ? klines[klines.length - 1].close : (existingMkt?.markPrice || 10));
 
           if (klines.length > 0 && currentPrice > 0) {
-            klines[klines.length - 1].close = currentPrice;
+            const lastBar = klines[klines.length - 1];
+            lastBar.close = currentPrice;
+            if (currentPrice > lastBar.high) lastBar.high = currentPrice;
+            if (currentPrice < lastBar.low) lastBar.low = currentPrice;
           }
           livePrices[symbol] = currentPrice;
 

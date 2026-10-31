@@ -296,7 +296,10 @@ export function calculateWickMetrics(open: number, high: number, low: number, cl
   isBottomWickRejection: boolean;
   pattern: string;
 } {
-  const range = high - low;
+  // Ensure bounding invariants when mark prices dynamically pin live candles
+  const effectiveHigh = Math.max(high, open, close);
+  const effectiveLow = Math.min(low, open, close);
+  const range = effectiveHigh - effectiveLow;
   const candleColor: 'GREEN' | 'RED' | 'DOJI' = close > open ? 'GREEN' : close < open ? 'RED' : 'DOJI';
   if (range <= 0) {
     return {
@@ -312,9 +315,9 @@ export function calculateWickMetrics(open: number, high: number, low: number, cl
 
   const bodyTop = Math.max(open, close);
   const bodyBottom = Math.min(open, close);
-  const upperWick = high - bodyTop;
-  const lowerWick = bodyBottom - low;
-  const body = bodyTop - bodyBottom;
+  const upperWick = Math.max(0, effectiveHigh - bodyTop);
+  const lowerWick = Math.max(0, bodyBottom - effectiveLow);
+  const body = Math.max(0, bodyTop - bodyBottom);
 
   const upperWickPct = Number(((upperWick / range) * 100).toFixed(1));
   const lowerWickPct = Number(((lowerWick / range) * 100).toFixed(1));
