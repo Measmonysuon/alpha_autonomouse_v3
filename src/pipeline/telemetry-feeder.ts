@@ -311,7 +311,26 @@ export async function buildTelemetryPayload(
     },
   } as any;
 
-  return payload;
+  return scrubSensitiveFields(payload);
+}
+
+/**
+ * Defensive scrubber: guarantees zero private keys, delegate keys, or passwords leak in telemetry
+ */
+function scrubSensitiveFields(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(scrubSensitiveFields);
+
+  const scrubbed: Record<string, any> = {};
+  const BANNED_KEYS = /^(decibelPrivateKey|decibelDelegateKey|privateKey|delegateKey|adminPassword|apiKey|secret|geminiApiKey|anthropicApiKey|hfToken|seedPhrase)$/i;
+
+  for (const [k, v] of Object.entries(obj)) {
+    if (BANNED_KEYS.test(k)) {
+      continue; // Exclude forbidden credential fields
+    }
+    scrubbed[k] = (v && typeof v === 'object') ? scrubSensitiveFields(v) : v;
+  }
+  return scrubbed;
 }
 
 /**
@@ -427,6 +446,7 @@ export async function pushInstantVeto(
     };
     if (config.CLIENT_API_KEY) {
       headers['Authorization'] = `Bearer ${config.CLIENT_API_KEY}`;
+      headers['x-api-key'] = config.CLIENT_API_KEY;
     }
     simConnectionManager.postTelemetry(instantPayload, headers).catch(() => {});
     logger.info(`📡 [FLEET IMMUNITY BUS] Instant trap veto broadcast to Sim Lab: ${symbol} (${bannedSide}) [${trapCategory}]`);

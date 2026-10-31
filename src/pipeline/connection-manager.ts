@@ -67,7 +67,6 @@ class SimConnectionManager {
       state.primaryUrl,
       config.SIM_TELEMETRY_URL,
       'http://127.0.0.1:4000/api/pipeline/telemetry',
-      'http://192.168.100.21:4000/api/pipeline/telemetry',
       state.fallbackUrl,
     ].filter(Boolean) as string[]));
 

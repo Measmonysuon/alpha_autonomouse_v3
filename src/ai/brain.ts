@@ -656,12 +656,12 @@ export class LocalAIBrain {
         { timeout: 15000 },
       );
     } catch (err: any) {
-      // If remote tunnel fails and not already targeting LAN, attempt LAN fallback directly
-      if (!url.includes('192.168.100.21') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
-        const lanUrl = 'http://192.168.100.21:11434/api/generate';
-        logger.warn(`⚠️ [AI BRAIN] Ollama endpoint (${url}) failed: ${err.message}. Retrying via LAN (${lanUrl})...`);
+      // If remote tunnel fails and not already targeting localhost, attempt local fallback directly
+      if (!url.includes('localhost') && !url.includes('127.0.0.1')) {
+        const localUrl = 'http://127.0.0.1:11434/api/generate';
+        logger.warn(`⚠️ [AI BRAIN] Ollama endpoint (${url}) failed: ${err.message}. Retrying via localhost (${localUrl})...`);
         response = await axios.post(
-          lanUrl,
+          localUrl,
           {
             model: model,
             prompt: prompt,
@@ -1311,10 +1311,10 @@ When the user asks questions about the market, specific tokens (like SUI or BTC)
     try {
       res = await axios.post(url, payload, { timeout: 15000 });
     } catch (err: any) {
-      if (!url.includes('192.168.100.21') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
-        const lanUrl = 'http://192.168.100.21:11434/api/generate';
-        logger.warn(`⚠️ [COPILOT AI] Ollama endpoint (${url}) failed: ${err.message}. Retrying via LAN (${lanUrl})...`);
-        res = await axios.post(lanUrl, payload, { timeout: 15000 });
+      if (!url.includes('localhost') && !url.includes('127.0.0.1')) {
+        const localUrl = 'http://127.0.0.1:11434/api/generate';
+        logger.warn(`⚠️ [COPILOT AI] Ollama endpoint (${url}) failed: ${err.message}. Retrying via localhost (${localUrl})...`);
+        res = await axios.post(localUrl, payload, { timeout: 15000 });
       } else {
         throw err;
       }

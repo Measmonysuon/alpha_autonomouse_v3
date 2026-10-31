@@ -5,7 +5,16 @@ All notable changes to Alpha Autonomous Client V3 will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.3.0] - 2026-10-29
+## [3.3.0] - 2026-10-31
+
+### Security & Bug Fixes
+- **Inbound Endpoint Hardening**: Removed unauthenticated `/api/fleet/immunity-lock` route from `api-server.ts` to prevent unauthorized external pair locks and enforce strict pull-only consumer data flow.
+- **Topology Isolation**: Eliminated hardcoded private LAN IP (`192.168.100.21`) across failover candidates in `connection-manager.ts`, `supercharge-client.ts`, `api-server.ts`, and `ai/brain.ts`, ensuring secure deployment on cloud/VPS environments.
+- **Telemetry Harmonization & Zero-Leakage Privacy**:
+  - Implemented recursive credential scrubbing (`scrubSensitiveFields`) on outbound telemetry payloads to guarantee private keys, delegate keys, and AI keys are never transmitted.
+  - Aligned outbound telemetry intervals in `supercharge-client.ts` to `config.SIM_TELEMETRY_INTERVAL_MS` to prevent server request flooding.
+  - Attached standard `Authorization: Bearer` and `x-api-key` headers when an API key is configured while maintaining backward-compatible zero-friction ingest.
+- **Node Key Hot-Swap Guardrails**: Gated dynamic node key updates behind bundle freshness timestamp validation and key format sanitization.
 
 ### Added
 - **Calibrated Structural Invalidation & Bear Trap Shield**:

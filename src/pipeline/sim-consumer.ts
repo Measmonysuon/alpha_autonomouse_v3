@@ -268,16 +268,6 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
 
     const bundle: AlphaBundleResponse = result.data.bundle || result.data;
 
-    // ── Dynamic Fleet Node Key Synchronization ──────────────────────────────
-    const incomingGateway = (result.data as any)?.nodeGateway || (bundle as any)?.nodeGateway;
-    if (incomingGateway) {
-      if (incomingGateway.activeNodeKey) {
-        hotSwapNodeKey(incomingGateway.activeNodeKey);
-      } else if (incomingGateway.fallbackToProxy) {
-        triggerNodeKeyFailover(undefined, 'Central Alpha server directed builder proxy fallback');
-      }
-    }
-
     // ── 1. Timestamp Freshness Guard (maxTtlMs, default 45s) ───────────────────
     if (bundle.timestamp && typeof bundle.timestamp === 'number') {
       const ageMs = Math.abs(Date.now() - bundle.timestamp);
@@ -287,6 +277,16 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
           `⚠️ [SIM PIPELINE] Stale alpha bundle received (${(ageMs / 1000).toFixed(1)}s old > ${(maxAllowedAgeMs / 1000).toFixed(0)}s limit). Ignoring payload.`
         );
         return null;
+      }
+    }
+
+    // ── Dynamic Fleet Node Key Synchronization (Fresh Bundle Verified) ─────────
+    const incomingGateway = (result.data as any)?.nodeGateway || (bundle as any)?.nodeGateway;
+    if (incomingGateway) {
+      if (incomingGateway.activeNodeKey && typeof incomingGateway.activeNodeKey === 'string' && incomingGateway.activeNodeKey.trim().length >= 10) {
+        hotSwapNodeKey(incomingGateway.activeNodeKey.trim());
+      } else if (incomingGateway.fallbackToProxy) {
+        triggerNodeKeyFailover(undefined, 'Central Alpha server directed builder proxy fallback');
       }
     }
 

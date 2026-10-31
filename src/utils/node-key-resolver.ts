@@ -261,7 +261,7 @@ export function triggerNodeKeyFailover(failedKey?: string, reason?: string): voi
 export function hotSwapNodeKey(newKey: string): boolean {
   if (!newKey || typeof newKey !== 'string') return false;
   const cleanKey = newKey.trim();
-  if (cleanKey.length < 5) return false;
+  if (cleanKey.length < 10 || !/^[A-Za-z0-9_-]+$/.test(cleanKey)) return false;
 
   // If operator/server explicitly pushes a key, remove from local blacklist
   BLACKLISTED_KEYS.delete(cleanKey);

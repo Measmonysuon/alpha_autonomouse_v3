@@ -729,7 +729,16 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
     const simBase = process.env.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000';
     const cleanSym = symbol.replace(/USD[T]?$/, '/USD');
     const simUrl = `${simBase}/api/klines?symbol=${cleanSym}&interval=${interval === '1h' ? '1h' : '15m'}&limit=${limit}`;
-    const res = await axios.get(simUrl, { timeout: 3500 });
+    const klineHeaders: Record<string, string> = {
+      Accept: 'application/json',
+      'x-client-id': config.CLIENT_ID || 'v3-client',
+    };
+    const apiKey = config.CLIENT_API_KEY || config.SIMLAB_KEY || '';
+    if (apiKey) {
+      klineHeaders['Authorization'] = `Bearer ${apiKey}`;
+      klineHeaders['x-api-key'] = apiKey;
+    }
+    const res = await axios.get(simUrl, { headers: klineHeaders, timeout: 3500 });
     const list = res.data?.klines;
     if (Array.isArray(list) && list.length > 0) {
       const bars: KlineBar[] = list.map((k: any) => ({

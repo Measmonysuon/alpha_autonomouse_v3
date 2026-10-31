@@ -716,10 +716,11 @@ export class SimLabSuperchargeClient {
     // Initial immediate heartbeat telemetry
     this.sendHeartbeat().catch(() => {});
 
-    // Every 6,000 ms continuous pipeline stream
+    // Configured telemetry interval stream (default 30s)
+    const intervalMs = Math.max(10000, Number(config.SIM_TELEMETRY_INTERVAL_MS) || 30000);
     this.heartbeatTimer = setInterval(async () => {
       await this.sendHeartbeat().catch(() => {});
-    }, 6000);
+    }, intervalMs);
   }
 
   private startHeartbeat(): void {
@@ -938,22 +939,30 @@ export class SimLabSuperchargeClient {
       this.serverUrl,
       config.SIMLAB_SERVER_URL,
       'http://127.0.0.1:4000',
-      'http://192.168.100.21:4000',
       'https://simlab.measmony.me',
     ].filter(Boolean) as string[])).map((u) => u.replace(/\/+$/, ''));
 
     let telemetryPosted = false;
     let bundleSynced = false;
 
-    // 1. Post to Sim Lab Pipeline Telemetry endpoint (Feature 5: Continuous Telemetry Heartbeat)
+    // 1. Post to Sim Lab Pipeline Telemetry endpoint (Continuous Telemetry Heartbeat)
     if (this.featureFlags.syncTelemetry) {
+      const telemHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-client-id': config.CLIENT_ID || 'v3-client',
+      };
+      if (this.rawToken) {
+        telemHeaders['Authorization'] = `Bearer ${this.rawToken}`;
+        telemHeaders['x-api-key'] = this.rawToken;
+      }
+      if (this.secret) {
+        telemHeaders['X-SimLab-Client-Auth'] = this.secret;
+      }
+
       for (const candUrl of candidates) {
         try {
           await axios.post(`${candUrl}/api/pipeline/telemetry`, payload, {
-            headers: {
-              'Content-Type': 'application/json',
-              ...(this.secret ? { 'X-SimLab-Client-Auth': this.secret } : {}),
-            },
+            headers: telemHeaders,
             timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
           });
           telemetryPosted = true;
@@ -964,10 +973,7 @@ export class SimLabSuperchargeClient {
         } catch {
           try {
             await axios.post(`${candUrl}/api/clients/heartbeat`, payload, {
-              headers: {
-                'Content-Type': 'application/json',
-                ...(this.secret ? { 'X-SimLab-Client-Auth': this.secret } : {}),
-              },
+              headers: telemHeaders,
               timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
             });
             telemetryPosted = true;

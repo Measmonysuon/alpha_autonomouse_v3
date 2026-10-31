@@ -871,8 +871,8 @@ export const DEFAULT_SIMLAB_CANDIDATE_URLS: string[] = [
   'https://simlab.measmony.me',
   'https://alphaforge.measmony.me',
   'https://alphaauto.measmony.me',
-  'http://192.168.100.21:4000',
   'http://localhost:4000',
+  'http://127.0.0.1:4000',
 ];
 
 /**

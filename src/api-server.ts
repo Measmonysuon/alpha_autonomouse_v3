@@ -688,33 +688,6 @@ export function startApiServer(): http.Server {
       return;
     }
 
-    // ── 2c. Real-Time Fleet Immunity Veto Bus Ingestion ───────────────────────
-    if (pathname === '/api/fleet/immunity-lock' && req.method === 'POST') {
-      let bodyStr = '';
-      req.on('data', chunk => { bodyStr += chunk; });
-      req.on('end', () => {
-        try {
-          const body = JSON.parse(bodyStr || '{}');
-          if (body.symbol) {
-            riskGuard.triggerL4TrapCoolOff(
-              body.symbol,
-              body.bannedSide || 'BOTH',
-              'SHARED_FLEET_IMMUNITY',
-              body.reason || `Instant fleet veto from ${body.triggeredByDesk || 'Sim Lab'}`,
-              body.durationMinutes || 15
-            );
-            logger.info(`⚡ [FLEET IMMUNITY BUS] Instant push received: ${body.symbol} (${body.bannedSide || 'BOTH'}) locked for ${body.durationMinutes || 15}m`);
-          }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, symbol: body.symbol }));
-        } catch (e: any) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: e.message }));
-        }
-      });
-      return;
-    }
-
     // ── 2c. Preview / Derive Signer Address from Delegate Key ────────────────
     if ((pathname === '/api/setup/derive-signer' || pathname === '/api/signer/derive') && req.method === 'POST') {
       const body = await parseBody(req);
@@ -3263,7 +3236,6 @@ function triggerBackgroundOnChainSync(): void {
         const candidateUrls = Array.from(new Set([
           `${simBase}/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
           `http://127.0.0.1:4000/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
-          `http://192.168.100.21:4000/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
           `http://127.0.0.1:8005/api/kronos/forecast?symbol=${encodeURIComponent(symbol)}&pred_len=${predLen}`,
         ]));
 
