@@ -15,6 +15,7 @@ data/*.db*
 data/*.bak*
 data/data/
 data/candles/
+data/historical-replay/
 
 # ─── Releases & Archives ────────────────────────────────────────
 release/

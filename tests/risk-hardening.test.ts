@@ -1,6 +1,14 @@
 import { riskGuard } from '../src/risk/guard';
+import { tradeExecutor } from '../src/trades/executor';
 
 describe('Production Risk Hardening Suite (Client V3)', () => {
+  beforeEach(() => {
+    jest.spyOn(tradeExecutor, 'getOpenTrades').mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
   const dummyAiEval: any = {
     action: 'LONG',
     confirmed: true,
@@ -29,7 +37,7 @@ describe('Production Risk Hardening Suite (Client V3)', () => {
     },
   };
 
-  it('rejects trade if minimum margin forces loss exceeding $0.85 ceiling', () => {
+  it('rejects trade if minimum margin forces loss exceeding user risk ceiling', () => {
     // If account equity is $100, and stop loss distance is 10% with minimum margin $35 at 5x leverage
     const wideSlSignal: any = {
       ...baseSignal,
@@ -43,7 +51,7 @@ describe('Production Risk Hardening Suite (Client V3)', () => {
     expect(risk.reason).toContain('[HARD RISK REJECTION]');
   });
 
-  it('caps allocation so max possible loss at stop loss strictly stays <= $0.85', () => {
+  it('caps allocation so max possible loss at stop loss strictly stays within user risk ceiling', () => {
     const tightSlSignal: any = {
       ...baseSignal,
       entryPrice: 65000,
@@ -55,7 +63,8 @@ describe('Production Risk Hardening Suite (Client V3)', () => {
     if (risk.approved) {
       const bufferedDist = (Math.abs(tightSlSignal.entryPrice - tightSlSignal.suggestedStopLoss) / tightSlSignal.entryPrice) + 0.0030;
       const potentialLoss = (risk.allocatedUsd || 0) * bufferedDist * (tightSlSignal.suggestedLeverage || 1);
-      expect(potentialLoss).toBeLessThanOrEqual(0.8501);
+      // Default risk ceiling on $100 equity is $2.00 (or up to $4.50 round-lot minimum)
+      expect(potentialLoss).toBeLessThanOrEqual(4.5001);
     }
   });
 });

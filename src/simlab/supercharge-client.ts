@@ -1,7 +1,7 @@
 /**
  * Sim Lab AI Cloud Supercharge Plugin
  * 
- * Optional plug-and-play connector to Sim Lab (cloud https://simlab.measmony.me or localhost:4000).
+ * Optional plug-and-play connector to Sim Lab (cloud or localhost:4000).
  * Decodes base64url token `simlab_live_...`, pairs client with Sim Lab, syncs live macro
  * directives, and feeds 8-second telemetry back to Fleet Command.
  * 
@@ -22,10 +22,11 @@ import {
   updateStrategySyncConfig,
   clearSimStrategyDirectives,
 } from '../strategy/manager';
+import { isSimConsumerRunning } from '../pipeline/sim-consumer';
 
 export interface SimLabTokenPayload {
   v: number;        // version (e.g. 1)
-  s: string;        // serverUrl (e.g. "https://simlab.measmony.me" or "http://127.0.0.1:4000")
+  s: string;        // serverUrl (e.g. "https://simlab.example.com" or "http://127.0.0.1:4000")
   k: string;        // keyId
   sec: string;      // secret token
 }
@@ -93,13 +94,13 @@ export class SimLabSuperchargeClient {
       this.rawToken = config.SIMLAB_KEY ? config.SIMLAB_KEY.trim() : '';
     }
 
-    // Default to Jetson or configured URL if none set
-    if (!this.serverUrl || (this.serverUrl.includes('measmony.me') && config.SIMLAB_SERVER_URL)) {
-      this.serverUrl = (config.SIMLAB_SERVER_URL || 'https://simlab.measmony.me').replace(/\/+$/, '');
+    // Default to configured URL or local Sim Lab
+    if (!this.serverUrl) {
+      this.serverUrl = (config.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
     }
 
     if (!this.rawToken) {
-      logger.info(`📡 [SIM LAB TELEMETRY] Continuous pipeline target: ${this.serverUrl} (Streaming real on-chain data)`);
+      logger.info(`🛡️ [STANDALONE MODE] No SIMLAB_KEY configured. Running in local standalone mode.`);
     } else if (this.rawToken.startsWith('simlab_live_')) {
       const decoded = this.decodeToken(this.rawToken);
       if (decoded) {
@@ -110,11 +111,9 @@ export class SimLabSuperchargeClient {
         this.secret = decoded.sec;
         this.isEnabled = true;
         logger.info(`⚡ [SIM LAB] Supercharge Key detected for ${this.serverUrl} (Key ID: ${this.keyId})`);
+        this.startPipelineTelemetry();
       }
     }
-
-    // Always initialize background real on-chain telemetry pipeline
-    this.startPipelineTelemetry();
   }
 
   private loadPersistentConfig(): void {
@@ -126,7 +125,7 @@ export class SimLabSuperchargeClient {
         const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
         if (parsed.simlab) {
           const candidateUrl = parsed.simlab.url ? String(parsed.simlab.url).trim().replace(/\/+$/, '') : '';
-          if (config.SIMLAB_SERVER_URL && (candidateUrl.includes('measmony.me') || !candidateUrl)) {
+          if (config.SIMLAB_SERVER_URL) {
             this.serverUrl = config.SIMLAB_SERVER_URL.replace(/\/+$/, '');
           } else if (candidateUrl) {
             this.serverUrl = candidateUrl;
@@ -140,7 +139,7 @@ export class SimLabSuperchargeClient {
     } catch {}
 
     if (!this.serverUrl) {
-      this.serverUrl = (config.SIMLAB_SERVER_URL || 'https://simlab.measmony.me').replace(/\/+$/, '');
+      this.serverUrl = (config.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
     }
   }
 
@@ -201,7 +200,7 @@ export class SimLabSuperchargeClient {
   }
 
   public async pingTest(targetUrl?: string, apiKey?: string): Promise<{ success: boolean; url: string; status?: string; uptime?: number; regime?: string; message?: string }> {
-    const cleanUrl = (targetUrl || this.serverUrl || 'https://simlab.measmony.me').trim().replace(/\/+$/, '');
+    const cleanUrl = (targetUrl || this.serverUrl || config.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000').trim().replace(/\/+$/, '');
     const key = (apiKey !== undefined ? apiKey : this.rawToken).trim();
     if (!key) {
       return {
@@ -278,7 +277,7 @@ export class SimLabSuperchargeClient {
       this.serverUrl = customUrl.trim().replace(/\/+$/, '');
     }
     if (!this.serverUrl) {
-      this.serverUrl = (config.SIMLAB_SERVER_URL || 'https://simlab.measmony.me').replace(/\/+$/, '');
+      this.serverUrl = (config.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
     }
 
     if (clean.startsWith('simlab_live_')) {
@@ -343,7 +342,7 @@ export class SimLabSuperchargeClient {
     if (!decoded) return false;
 
     this.rawToken = cleanToken;
-    this.serverUrl = (config.SIMLAB_SERVER_URL || decoded.s || 'https://simlab.measmony.me').replace(/\/+$/, '');
+    this.serverUrl = (config.SIMLAB_SERVER_URL || decoded.s || 'http://127.0.0.1:4000').replace(/\/+$/, '');
     this.keyId = decoded.k;
     this.secret = decoded.sec;
     this.isEnabled = true;
@@ -359,7 +358,7 @@ export class SimLabSuperchargeClient {
   }
 
   public getServerUrl(): string {
-    return this.serverUrl || 'https://simlab.measmony.me';
+    return this.serverUrl || config.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000';
   }
 
   /**
@@ -598,8 +597,12 @@ export class SimLabSuperchargeClient {
 
     // ── Feature 3: Pair Directional Bans & Cooldowns ─────────────────────────────
     if (this.featureFlags.syncDirectionalBans) {
-      // Prefer explicit bannedSide field, fall back to marketBias
-      const rawBanned = bundle.macroIntelligence?.bannedSide || bundle.macro?.bannedSide;
+      // Prefer explicit bannedSide / emergencyHardBanSide / netflow bannedSide
+      const rawBanned = bundle.macroIntelligence?.bannedSide || 
+                        bundle.macro?.emergencyHardBanSide || 
+                        bundle.macro?.bannedSide || 
+                        bundle.netflow?.bannedSide ||
+                        (Array.isArray(bundle.macro?.bannedSides) && bundle.macro.bannedSides.length > 0 ? bundle.macro.bannedSides[0] : undefined);
       const marketBias = bundle.macro?.marketBias;
       if (rawBanned) {
         const side = String(rawBanned).toUpperCase();
@@ -622,7 +625,7 @@ export class SimLabSuperchargeClient {
       if (stratName) {
         sanitized.activeStrategy = String(stratName);
       }
-      const clientMaxLev = config.MAX_LEVERAGE || 5;
+      const clientMaxLev = config.MAX_LEVERAGE || 15;
       const clientMaxAlloc = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 35;
       const safeLeverage = typeof bundle.strategy.leverage === 'number'
         ? Math.min(bundle.strategy.leverage, clientMaxLev)
@@ -660,10 +663,28 @@ export class SimLabSuperchargeClient {
 
       if (bundle.pairDirectives && typeof bundle.pairDirectives === 'object') {
         const sanitizedPairDirectives: Record<string, any> = {};
+        const rwParams = (bundle.rollingWindowDirectives?.pairParameters || {}) as Record<string, any>;
         for (const [sym, dir] of Object.entries(bundle.pairDirectives as Record<string, any>)) {
           if (dir && typeof dir === 'object') {
+            const norm = sym.toUpperCase().replace(/[-_/]/g, '');
+            let rw: any = rwParams[sym] || rwParams[sym.replace('/', '')];
+            if (!rw) {
+              for (const [rk, rv] of Object.entries(rwParams)) {
+                if (rk.toUpperCase().replace(/[-_/]/g, '') === norm) { rw = rv; break; }
+              }
+            }
             sanitizedPairDirectives[sym] = {
               ...dir,
+              ...(rw ? {
+                fastPeriod: rw.fastPeriod,
+                slowPeriod: rw.slowPeriod,
+                currentFastSma: rw.currentFastSma,
+                currentSlowSma: rw.currentSlowSma,
+                smaSpreadPct: rw.smaSpreadPct,
+                smaAlignment: rw.smaAlignment,
+                wfe: rw.wfe,
+                robustScore: rw.robustScore,
+              } : {}),
               ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, clientMaxLev) } : {}),
             };
           }
@@ -733,7 +754,7 @@ export class SimLabSuperchargeClient {
    * open positions, execution trade fills, portfolio metrics, and active strategy state.
    */
   public async sendHeartbeat(telemetryData?: any): Promise<void> {
-    if (!this.serverUrl) return;
+    if (!this.serverUrl || (config.OPERATING_MODE === 'STANDALONE' && !this.isEnabled)) return;
 
     // 0. Auto-Reconnect Recovery: If disconnected but previously enabled, auto-probe Sim Lab
     if (!this.isConnected && this.isEnabled && this.rawToken && (this.consecutiveFailures % 2 === 0)) {
@@ -915,8 +936,8 @@ export class SimLabSuperchargeClient {
       paperTrading: config.PAPER_TRADING,
       budgetUsd: config.BUDGET_USD,
       budgetCeilingUsd: config.BUDGET_USD,
-      maxLeverage: config.MAX_LEVERAGE || 5,
-      maxLeverageCap: config.MAX_LEVERAGE || 5,
+      maxLeverage: config.MAX_LEVERAGE || 15,
+      maxLeverageCap: config.MAX_LEVERAGE || 15,
       maxPositionUsd: (config as any).MAX_POSITION_USD || 60,
       maxAllocPct: config.MAX_ALLOC_PCT || 35,
       maxCapitalCeilingPct: 100,
@@ -924,8 +945,8 @@ export class SimLabSuperchargeClient {
       tradingSettings: {
         budgetCeilingUsd: config.BUDGET_USD,
         budgetUsd: config.BUDGET_USD,
-        maxLeverage: config.MAX_LEVERAGE || 5,
-        maxLeverageCap: config.MAX_LEVERAGE || 5,
+        maxLeverage: config.MAX_LEVERAGE || 15,
+        maxLeverageCap: config.MAX_LEVERAGE || 15,
         maxPositionUsd: (config as any).MAX_POSITION_USD || 60,
         maxAllocPct: config.MAX_ALLOC_PCT || 35,
         lockLocalRiskLimits: true,
@@ -939,7 +960,6 @@ export class SimLabSuperchargeClient {
       this.serverUrl,
       config.SIMLAB_SERVER_URL,
       'http://127.0.0.1:4000',
-      'https://simlab.measmony.me',
     ].filter(Boolean) as string[])).map((u) => u.replace(/\/+$/, ''));
 
     let telemetryPosted = false;
@@ -963,10 +983,10 @@ export class SimLabSuperchargeClient {
         try {
           await axios.post(`${candUrl}/api/pipeline/telemetry`, payload, {
             headers: telemHeaders,
-            timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
+            timeout: 3500,
           });
           telemetryPosted = true;
-          if (this.serverUrl !== candUrl && !candUrl.includes('measmony.me')) {
+          if (this.serverUrl !== candUrl) {
             this.serverUrl = candUrl;
           }
           break;
@@ -974,10 +994,10 @@ export class SimLabSuperchargeClient {
           try {
             await axios.post(`${candUrl}/api/clients/heartbeat`, payload, {
               headers: telemHeaders,
-              timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
+              timeout: 3500,
             });
             telemetryPosted = true;
-            if (this.serverUrl !== candUrl && !candUrl.includes('measmony.me')) {
+            if (this.serverUrl !== candUrl) {
               this.serverUrl = candUrl;
             }
             break;
@@ -986,8 +1006,8 @@ export class SimLabSuperchargeClient {
       }
     }
 
-    // 2. Ingest bundle directives if connected or enabled
-    if (this.isConnected && (this.featureFlags.syncMacroRegime || this.featureFlags.syncDirectionalBans || this.featureFlags.syncStrategyStudio)) {
+    // 2. Ingest bundle directives if connected or enabled (bypass if sim-consumer is already active to prevent duplicate sync feeds)
+    if (config.OPERATING_MODE !== 'STANDALONE' && !isSimConsumerRunning() && this.isConnected && (this.featureFlags.syncMacroRegime || this.featureFlags.syncDirectionalBans || this.featureFlags.syncStrategyStudio)) {
       const authHeaders: Record<string, string> = {};
       if (this.rawToken) {
         authHeaders['Authorization'] = `Bearer ${this.rawToken}`;
@@ -999,12 +1019,12 @@ export class SimLabSuperchargeClient {
         try {
           const bundleRes = await axios.get(`${candUrl}/api/pipeline/alpha-bundle`, {
             headers: authHeaders,
-            timeout: candUrl.includes('measmony.me') ? 6000 : 3500,
+            timeout: 3500,
           });
           if (bundleRes?.data) {
             this.applyBundleDirectives(bundleRes.data);
             bundleSynced = true;
-            if (this.serverUrl !== candUrl && !candUrl.includes('measmony.me')) {
+            if (this.serverUrl !== candUrl) {
               this.serverUrl = candUrl;
             }
             break;

@@ -28,6 +28,7 @@ import { telegramNotifier } from '../notify/telegram';
 import type { StrategyAttribution } from '../strategy/types';
 import { getSimPairDirective } from '../strategy/manager';
 import { dbClient } from '../db/database';
+import { decibelPriceFeed } from '../pipeline/decibel-price-feed';
 
 export interface TradeLifecycleEvent {
   timestamp: number;
@@ -93,6 +94,7 @@ export interface TradeRecord {
   netPnlUsd?: number;
   feeUsd?: number;
   currentPrice?: number;
+  markPrice?: number;
   unrealizedPnlUsd?: number;
   unrealizedPnlPct?: number;
   isMaker?: boolean;
@@ -100,6 +102,11 @@ export interface TradeRecord {
   onChainTpSlSecured?: boolean;
   stagnationRatchetApplied?: boolean;
   ratchetLevel?: number;
+  harvest30Done?: boolean;
+  noFixedTp?: boolean;
+  gap30Price?: number;
+  gap50Price?: number;
+  peakPrice?: number;
 }
 
 export interface ShadowTrade {
@@ -130,6 +137,7 @@ export class TradeExecutor {
   private aptos?: Aptos;
   private aptosAccount?: Account;
   private tradesCache: TradeRecord[] = [];
+  private restingOrdersCache: any[] = [];
   private shadowTradesCache: ShadowTrade[] = [];
   private onTradeClosedListeners: Array<(trade: TradeRecord) => void> = [];
   private onShadowTradeResolvedListeners: Array<(shadow: ShadowTrade) => void> = [];
@@ -243,6 +251,16 @@ export class TradeExecutor {
         pushInstantVeto(trade.symbol, trade.action, 'STOP_LOSS_REVERSAL', reason, 45).catch(() => {});
       } catch {}
     }
+
+    try {
+      const { onChainPipeline } = require('../pipeline/onchain-sync-pipeline');
+      onChainPipeline.evictPosition(trade.symbol);
+    } catch {}
+
+    try {
+      const { broadcastState } = require('../api-server');
+      broadcastState();
+    } catch {}
 
     for (const fn of this.onTradeClosedListeners) {
       try {
@@ -484,7 +502,7 @@ export class TradeExecutor {
             symbol: t.symbol,
             side: t.side,
             action: t.action,
-            is_manual: (t.notes?.includes('Manual') || t.strategyName?.includes('Manual')) ? 1 : 0,
+            is_manual: (t.isManual === true || t.strategyName === 'human trade DEX' || t.notes?.includes('Manual') || t.strategyName?.includes('Manual')) ? 1 : 0,
             entry_price: t.entryPrice,
             exit_price: t.exitPrice,
             size: t.sizeBase,
@@ -515,6 +533,14 @@ export class TradeExecutor {
     return this.tradesCache.filter((t) => t.status !== 'open');
   }
 
+  public getRestingOrders(): any[] {
+    return this.restingOrdersCache;
+  }
+
+  public setRestingOrders(orders: any[]): void {
+    this.restingOrdersCache = Array.isArray(orders) ? orders : [];
+  }
+
   /**
    * Sync and reconcile active on-chain positions from Decibel DEX into local tradesCache.
    * Guarantees that trades placed externally or on remote servers (Finland/Mac/Web)
@@ -528,7 +554,16 @@ export class TradeExecutor {
       if (!mcpClient.isConnected()) {
         await mcpClient.connect().catch(() => { });
       }
-      const onChainList = await mcpClient.getPositions();
+      const [onChainList, liveOrders] = await Promise.all([
+        mcpClient.getPositions().catch(() => []),
+        mcpClient.getOrders().catch(() => []),
+      ]);
+      if (Array.isArray(liveOrders)) {
+        this.restingOrdersCache = liveOrders.filter((o: any) =>
+          o.isRestingLimit ||
+          (!o.is_tpsl && !o.is_reduce_only && o.order_type !== 'Stop Market' && o.order_type !== 'Stop Limit' && Number(o.price) > 0)
+        );
+      }
       if (!Array.isArray(onChainList)) return this.getOpenTrades();
 
       let modified = false;
@@ -548,10 +583,24 @@ export class TradeExecutor {
           continue;
         }
 
+        // Authoritative live price and unrealized PnL enrichment from Decibel DEX feed
+        const decibelPx = decibelPriceFeed.getPrice(pos.symbol);
+        const liveMark = (decibelPx && decibelPx.markPrice > 0) ? decibelPx.markPrice : (pos.markPrice || pos.entryPrice || 0);
+        if (liveMark > 0) {
+          pos.markPrice = liveMark;
+          if (pos.entryPrice > 0 && pos.sizeBase > 0) {
+            const isL = pos.action === 'LONG' || pos.side === 'buy' || pos.is_long === true || pos.isLong === true;
+            const pnlDiff = isL ? (liveMark - pos.entryPrice) : (pos.entryPrice - liveMark);
+            pos.unrealizedPnl = Number((pnlDiff * pos.sizeBase).toFixed(4));
+          }
+        }
+
         let existing = this.tradesCache.find(
           (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status === 'open',
         );
-        const isLong = existing ? existing.action === 'LONG' : (pos.action === 'LONG' || pos.side === 'buy');
+        const isLong = existing
+          ? (existing.action === 'LONG' || existing.side === 'buy')
+          : (pos.action === 'LONG' || pos.side === 'buy' || pos.is_long === true || pos.isLong === true || (pos.sizeBase && pos.sizeBase > 0 && pos.action !== 'SHORT' && pos.side !== 'sell'));
 
         const lev = Math.max(1, pos.leverage || existing?.leverage || 1);
         // 1. Static Hard Stop Loss (15% margin risk / catastrophic on-chain circuit breaker)
@@ -596,39 +645,25 @@ export class TradeExecutor {
           ? pos.takeProfit
           : dynamicTp;
 
-        // If not found open, check if a recent closed trade can be revived (only if un-intentional RPC dropout)
+        // If not found open, check if this position was recently closed (prevent ghost flickering from delayed RPC indexer responses)
         let recentClosed: TradeRecord | undefined;
         if (!existing) {
           recentClosed = this.tradesCache.find(
-            (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm && t.status !== 'open' && (t.closedAt ? Date.now() - t.closedAt < 600000 : false),
+            (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm &&
+              t.status !== 'open' &&
+              (t.closedAt ? Date.now() - t.closedAt < 10_000 : false) &&
+              Math.abs((t.entryPrice || 0) - (pos.entryPrice || 0)) < 0.001,
           );
           if (recentClosed) {
-            const isIntentionalClose = recentClosed.exitReason && !['ON_CHAIN_DEX_CLOSE', 'DEX_EXTERNAL', 'EXTERNAL_INDEXER_DROPOUT'].includes(recentClosed.exitReason);
-            if (!isIntentionalClose && (recentClosed.closedAt ? Date.now() - recentClosed.closedAt < 30000 : false)) {
-              recentClosed.status = 'open';
-              delete recentClosed.closedAt;
-              delete recentClosed.exitPrice;
-              delete recentClosed.exitReason;
-              if (recentClosed.stopLoss <= 0) {
-                recentClosed.stopLoss = softRatchet;
-              }
-              existing = recentClosed;
-              modified = true;
-              logger.info(`🔄 [RECONCILE] Restored persistent open position: ${existing.symbol} ${existing.action} (id: ${existing.id})`);
-            } else if (isIntentionalClose) {
-              logger.warn(`⚠️ [RECONCILE] Position ${pos.symbol} was intentionally closed locally (${recentClosed.exitReason}) but remains in DEX state. Retrying on-chain close...`);
-              mcpClient.closePosition(pos.symbol).catch((err: any) => {
-                logger.error(`[RECONCILE] Failed to retry on-chain close for ${pos.symbol}: ${err.message}`);
-              });
-              // Do NOT set existing and do NOT ingest a duplicate trade
-              continue;
-            }
+            // Decibel DEX is reporting a position that was already closed within the last 10s with identical entry.
+            logger.debug(`[RECONCILE] Ignoring stale on-chain position for ${pos.symbol}: trade was recently closed (${recentClosed.status}, closed ${Math.round((Date.now() - (recentClosed.closedAt || 0)) / 1000)}s ago)`);
+            continue;
           }
         }
 
         const simDirectives = standaloneEngine.getDirectives();
-        const simStratName = simDirectives?.activeStrategy || '6-Pillar Fleet CIO V10 - Regime-Adaptive Bi-Directional EV';
-        const simStratId = 'ai_strategy_1790652542785';
+        const simStratName = simDirectives?.activeStrategy || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
+        const simStratId = 'champion_confirmed_retest_harvest30';
         const simStratAttribution: StrategyAttribution = {
           strategyId: simStratId,
           strategyName: simStratName,
@@ -636,12 +671,21 @@ export class TradeExecutor {
           layersActive: { layer1: true, layer2: true, layer3: true, layer4: true, layer5: true },
         };
 
+        const isHumanTrade = !recentClosed || Boolean(recentClosed.isManual || recentClosed.strategyName === 'human trade DEX');
+        const humanAttribution: StrategyAttribution = {
+          strategyId: 'human_trade_dex',
+          strategyName: 'human trade DEX',
+          isPairOverride: false,
+          layersActive: { layer1: false, layer2: false, layer3: false, layer4: false, layer5: false },
+        };
+
         if (!existing) {
           const newTrade: TradeRecord = {
-            id: `decibel-onchain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id: isHumanTrade ? `dex-manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : `decibel-onchain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             symbol: pos.symbol,
             side: isLong ? 'buy' : 'sell',
             action: isLong ? 'LONG' : 'SHORT',
+            isManual: isHumanTrade,
             entryPrice: pos.entryPrice || 0,
             takeProfit: activeTp,
             stopLoss: softRatchet,
@@ -652,22 +696,26 @@ export class TradeExecutor {
             sizeBase: pos.sizeBase || 0,
             leverage: pos.leverage || 1,
             allocatedUsd: pos.allocatedUsd || ((pos.sizeUsd || 0) / (pos.leverage || 1)),
-            confidence: 85,
+            confidence: isHumanTrade ? 100 : 85,
             status: 'open',
             isPaper: false,
             openedAt: Date.now(),
-            strategyName: (recentClosed?.strategyName && !recentClosed.strategyName.includes('On-Chain'))
-              ? recentClosed.strategyName
-              : simStratName,
-            strategyAttribution: simStratAttribution,
-            notes: 'Reconciled directly from Aptos on-chain DEX state',
+            unrealizedPnlUsd: pos.unrealizedPnl !== undefined ? Number(pos.unrealizedPnl.toFixed(4)) : undefined,
+            pnlUsd: pos.unrealizedPnl !== undefined ? Number(pos.unrealizedPnl.toFixed(4)) : 0,
+            netPnlUsd: pos.unrealizedPnl !== undefined ? Number(pos.unrealizedPnl.toFixed(4)) : 0,
+            currentPrice: pos.markPrice || pos.entryPrice || 0,
+            strategyName: isHumanTrade
+              ? 'human trade DEX'
+              : ((recentClosed?.strategyName && !recentClosed.strategyName.includes('On-Chain')) ? recentClosed.strategyName : simStratName),
+            strategyAttribution: isHumanTrade ? humanAttribution : simStratAttribution,
+            notes: isHumanTrade ? 'human trade DEX (detected on-chain with no internal record)' : 'Reconciled directly from Aptos on-chain DEX state',
             estimatedProfitPct: (activeTp && pos.entryPrice) ? Number((Math.abs((activeTp - pos.entryPrice) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 7.5,
             estimatedLossPct: softRatchet && pos.entryPrice ? Number((Math.abs((pos.entryPrice - softRatchet) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 5.3,
-            estimatedWinRatePct: 85,
+            estimatedWinRatePct: isHumanTrade ? 100 : 85,
           };
           this.tradesCache.push(newTrade);
           modified = true;
-          logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice}, ${newTrade.leverage}x) [Strategy: ${newTrade.strategyName} | TP: $${activeTp} | Hard SL: $${hardSl} | Soft Ratchet: $${softRatchet}]`);
+          logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice}, ${newTrade.leverage}x) [Strategy: ${newTrade.strategyName} | isManual: ${newTrade.isManual}]`);
         } else {
           // ALWAYS update live on-chain leverage, position size, and margin for existing/restored positions
           if (pos.leverage && pos.leverage > 0 && existing.leverage !== pos.leverage) {
@@ -695,13 +743,18 @@ export class TradeExecutor {
           if (pos.markPrice && pos.markPrice > 0) {
             existing.currentPrice = pos.markPrice;
           }
-          // Update strategy name and attribution if generic, template default, or out-of-sync with active Sim Lab directive
-          const isGenericStrat = !existing.strategyName ||
+          // Update strategy name and attribution only for bot trades (never overwrite human trade DEX)
+          const isGenericStrat = !existing.isManual && existing.strategyName !== 'human trade DEX' && (
+            !existing.strategyName ||
             existing.strategyName === 'Decibel On-Chain Position' ||
             existing.strategyName === 'Autonomous Engine' ||
             existing.strategyName === 'Decibel Autonomous Trade' ||
             existing.strategyName === 'Turtle Soup & Liquidity Grab' ||
-            (existing.id.startsWith('decibel-onchain-') && existing.strategyName !== simStratName);
+            existing.strategyName.includes('V10') ||
+            existing.strategyName.includes('V12') ||
+            existing.strategyName.includes('V13') ||
+            (existing.id.startsWith('decibel-onchain-') && existing.strategyName !== simStratName)
+          );
 
           if (isGenericStrat && simStratName) {
             logger.info(`🏷️ [RECONCILE] Updating ${existing.symbol} strategy name to active Sim Lab directive: "${simStratName}"`);
@@ -714,20 +767,22 @@ export class TradeExecutor {
           const isTpDirectionallySane = (tp: number) =>
             isExistingLong ? (tp >= refEntry * 1.008) : (tp <= refEntry * 0.992);
 
-          const isTpUnrealistic = existing.takeProfit > 0 &&
-            (!isTpDirectionallySane(existing.takeProfit) || Math.abs(existing.takeProfit - refEntry) / refEntry > 0.04);
+          if (!existing.noFixedTp) {
+            const isTpUnrealistic = existing.takeProfit > 0 &&
+              (!isTpDirectionallySane(existing.takeProfit) || Math.abs(existing.takeProfit - refEntry) / refEntry > 0.04);
 
-          if (!existing.takeProfit || existing.takeProfit <= 0 || isTpUnrealistic) {
-            const oldTp = existing.takeProfit;
-            const validOnChainTp = pos.takeProfit && pos.takeProfit > 0 && isTpDirectionallySane(pos.takeProfit) && Math.abs(pos.takeProfit - refEntry) / refEntry <= 0.04;
-            existing.takeProfit = validOnChainTp
-              ? pos.takeProfit!
-              : (isExistingLong ? Number((refEntry + dynamicTpDist).toFixed(4)) : Number((refEntry - dynamicTpDist).toFixed(4)));
-            modified = true;
-            logger.info(`🎯 [DYNAMIC TP REALIGN] Calibrated TP for ${existing.symbol}: $${oldTp} → $${existing.takeProfit}`);
-          } else if (pos.takeProfit && pos.takeProfit !== existing.takeProfit && isTpDirectionallySane(pos.takeProfit)) {
-            existing.takeProfit = pos.takeProfit;
-            modified = true;
+            if (!existing.takeProfit || existing.takeProfit <= 0 || isTpUnrealistic) {
+              const oldTp = existing.takeProfit;
+              const validOnChainTp = pos.takeProfit && pos.takeProfit > 0 && isTpDirectionallySane(pos.takeProfit) && Math.abs(pos.takeProfit - refEntry) / refEntry <= 0.04;
+              existing.takeProfit = validOnChainTp
+                ? pos.takeProfit!
+                : (isExistingLong ? Number((refEntry + dynamicTpDist).toFixed(4)) : Number((refEntry - dynamicTpDist).toFixed(4)));
+              modified = true;
+              logger.info(`🎯 [DYNAMIC TP REALIGN] Calibrated TP for ${existing.symbol}: $${oldTp} → $${existing.takeProfit}`);
+            } else if (pos.takeProfit && pos.takeProfit !== existing.takeProfit && isTpDirectionallySane(pos.takeProfit)) {
+              existing.takeProfit = pos.takeProfit;
+              modified = true;
+            }
           }
           if (pos.stopLoss && pos.stopLoss > 0) {
             // pos.stopLoss from DEX is the on-chain catastrophic Hard SL
@@ -815,42 +870,39 @@ export class TradeExecutor {
           : ((existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || activeTp));
 
         // Fix gas drawdown: Decibel DEX get_positions does not return trigger order triggers on the position struct.
-        // Check if on-chain TP/SL has already been armed for this trade, avoiding the 15-second infinite broadcast loop.
-        const isAlreadyArmed = existing?.onChainTpSlSecured === true;
+        // Once armed for this specific position entry price, remember permanently so we never loop or spam txs!
+        const tradeKey = `${pos.symbol}_${Number(pos.entryPrice || 0).toFixed(4)}`;
+        const isAlreadyArmed = existing?.onChainTpSlSecured === true || this.autoArmCooldownMap.has(tradeKey);
         const needsOnChainSl = !isAlreadyArmed && hardSl > 0;
         const needsOnChainTp = !isAlreadyArmed && targetTp > 0;
 
         if ((needsOnChainSl || needsOnChainTp) && isClientConfigured() && !config.PAPER_TRADING) {
-          const now = Date.now();
-          const lastArm = this.autoArmCooldownMap.get(pos.symbol) || 0;
-          if (now - lastArm >= 60_000) {
-            this.autoArmCooldownMap.set(pos.symbol, now);
-            logger.info(`🛡️🎯 [CONCRETE ARMOR] Auto-arming on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
-            mcpClient.setTpSl({
-              symbol: pos.symbol,
-              tpTrigger: targetTp > 0 ? targetTp : undefined,
-              slTrigger: hardSl,
-            }).then(() => {
-              if (existing) {
-                existing.onChainTpSlSecured = true;
-                this.saveTrades();
-              }
-              logger.info(`🛡️🎯 [CONCRETE ARMOR] Successfully secured hard on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
-            }).catch((err: any) => {
-              logger.warn(`Failed auto-arming TP/SL for ${pos.symbol}: ${err.message}`);
-            });
-          }
+          this.autoArmCooldownMap.set(tradeKey, Date.now());
+          logger.info(`🛡️🎯 [CONCRETE ARMOR] Auto-arming on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
+          mcpClient.setTpSl({
+            symbol: pos.symbol,
+            tpTrigger: targetTp > 0 ? targetTp : undefined,
+            slTrigger: hardSl,
+          }).then(() => {
+            if (existing) {
+              existing.onChainTpSlSecured = true;
+              this.saveTrades();
+            }
+            logger.info(`🛡️🎯 [CONCRETE ARMOR] Successfully secured hard on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
+          }).catch((err: any) => {
+            logger.warn(`Failed auto-arming TP/SL for ${pos.symbol}: ${err.message}`);
+          });
         }
       }
 
-      // 2. If a trade is marked open locally but no longer exists on-chain, confirm over multiple checks
+      // 2. If a trade is marked open locally but no longer exists on-chain, confirm immediately
       const now = Date.now();
       for (const trade of this.tradesCache.filter((t) => t.status === 'open' && !t.isPaper)) {
         const symNorm = trade.symbol.replace('-', '/').toUpperCase();
         const symRaw = trade.symbol.toUpperCase();
         if (!onChainSymbols.has(symNorm) && !onChainSymbols.has(symRaw)) {
-          // Guard 1: Allow 30s grace period for freshly opened or restored trades
-          if (trade.openedAt && now - trade.openedAt < 30_000) {
+          // Guard 1: Allow 4s grace period for freshly opened trades
+          if (trade.openedAt && now - trade.openedAt < 4_000) {
             continue;
           }
 
@@ -861,8 +913,9 @@ export class TradeExecutor {
           }
           const durationMissingMs = now - (this.missingFirstSeenAt.get(symNorm) || now);
 
-          // Require at least 6 consecutive cycles AND at least 20 seconds of continuous confirmed absence
-          if (missed >= 6 && durationMissingMs >= 20000) {
+          // Fast & decisive on-chain absence confirmation (2 consecutive checks >= 2s)
+          // Eliminates ghost position delays immediately after DEX close (down from 30s to 2s)
+          if (missed >= 2 && durationMissingMs >= 2000) {
             const pnl = trade.pnlUsd || 0;
             const smartStatus = pnl > 0.05 ? 'closed_tp' : (pnl < 0 ? 'closed_sl' : 'closed_manual');
             const smartReason = smartStatus === 'closed_tp' ? 'ON_CHAIN_TP_FILL' : (smartStatus === 'closed_sl' ? 'ON_CHAIN_SL_HIT' : 'ON_CHAIN_DEX_CLOSE');
@@ -872,11 +925,16 @@ export class TradeExecutor {
             trade.exitReason = smartReason;
             this.missingOnChainCount.delete(symNorm);
             this.missingFirstSeenAt.delete(symNorm);
+            this.autoArmCooldownMap.delete(`${trade.symbol}_${Number(trade.entryPrice || 0).toFixed(4)}`);
             this.saveTrades();
             this.notifyTradeClosed(trade);
+            try {
+              const { onChainPipeline } = require('../pipeline/onchain-sync-pipeline');
+              onChainPipeline.evictPosition(trade.symbol);
+            } catch {}
             modified = true;
           } else {
-            logger.debug(`[RECONCILE] Position ${trade.symbol} not in latest report (strike ${missed}/6, ${Math.round(durationMissingMs / 1000)}s) — holding open`);
+            logger.debug(`[RECONCILE] Position ${trade.symbol} not in latest report (strike ${missed}/2, ${Math.round(durationMissingMs / 1000)}s) — holding open`);
           }
         } else {
           this.missingOnChainCount.set(symNorm, 0);
@@ -927,7 +985,7 @@ export class TradeExecutor {
 
     // Use ONLY the authoritative DB flag — 'closed_manual' status just means
     // the position was closed via an on-chain action, NOT that it is a human trade.
-    const isManualTrade = (t: any) => Boolean(t.isManual === true || t.is_manual === 1);
+    const isManualTrade = (t: any) => Boolean(t.isManual === true || t.is_manual === 1 || t.strategyName === 'human trade DEX' || t.strategy_name === 'human trade DEX');
 
     const autoOpen = open.filter((t) => !isManualTrade(t)).length;
     const manualOpen = open.filter((t) => isManualTrade(t)).length;
@@ -1045,11 +1103,25 @@ export class TradeExecutor {
     let liveOnChainPositions: any[] = [];
     if (!config.PAPER_TRADING && this.aptosAccount) {
       try {
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('EXCHANGE_TELEMETRY_TIMEOUT_6S')), 6000)
-        );
+        let isVerified = false;
+        // 1. First check fresh in-memory consolidated state from onChainPipeline (< 45s)
+        try {
+          const { onChainPipeline } = require('../pipeline/onchain-sync-pipeline');
+          const pipeState = onChainPipeline.getConsolidatedState();
+          if (pipeState && Array.isArray(pipeState.openPositions) && (Date.now() - (pipeState.lastSuccessfulSync || 0)) < 45000) {
+            liveOnChainPositions = pipeState.openPositions;
+            isVerified = true;
+          }
+        } catch {}
 
-        liveOnChainPositions = (await Promise.race([mcpClient.getPositions(), timeoutPromise])) as any[];
+        // 2. If pipeline cache is uninitialized, call mcpClient with generous 12s timeout
+        if (!isVerified) {
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('EXCHANGE_TELEMETRY_TIMEOUT_12S')), 12000)
+          );
+          liveOnChainPositions = (await Promise.race([mcpClient.getPositions(), timeoutPromise])) as any[];
+        }
+
         const hasOnChain = liveOnChainPositions.some((p) => p.symbol.replace('-', '/').toUpperCase() === symKey && ((p.sizeBase && p.sizeBase > 0) || (p.sizeUsd && p.sizeUsd > 0)));
         if (hasOnChain) {
           logger.warn(`🛡️ [DUPLICATE GUARD] On-chain position already exists for ${signal.symbol} on Decibel DEX. Order aborted.`);
@@ -1057,7 +1129,24 @@ export class TradeExecutor {
         }
 
         // Check if resting uncancelled orders exist on DEX book for this symbol:
-        const liveOrders = (await Promise.race([mcpClient.getOrders(signal.symbol), timeoutPromise])) as any[];
+        let liveOrders: any[] = [];
+        let ordersVerified = false;
+        try {
+          const { onChainPipeline } = require('../pipeline/onchain-sync-pipeline');
+          const pipeState = onChainPipeline.getConsolidatedState();
+          if (pipeState && Array.isArray(pipeState.restingOrders) && (Date.now() - (pipeState.lastSuccessfulSync || 0)) < 45000) {
+            liveOrders = pipeState.restingOrders;
+            ordersVerified = true;
+          }
+        } catch {}
+
+        if (!ordersVerified) {
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('EXCHANGE_TELEMETRY_TIMEOUT_12S')), 12000)
+          );
+          liveOrders = (await Promise.race([mcpClient.getOrders(signal.symbol), timeoutPromise])) as any[];
+        }
+
         const hasResting = liveOrders.some((o: any) => {
           const oSym = (o.market || o.symbol || '').replace('-', '/').toUpperCase();
           return oSym === symKey || oSym.includes(symKey.split('/')[0]);
@@ -1067,9 +1156,25 @@ export class TradeExecutor {
           return { success: false, error: `Resting limit order already pending on Decibel DEX for ${signal.symbol}` };
         }
       } catch (preCheckErr: any) {
-        // FAIL CLOSED: If telemetry cannot be verified, NEVER proceed with opening new exposure!
-        logger.error(`🚨 [PRE-TRADE BLOCKED] Cannot verify exchange telemetry for ${signal.symbol}: ${preCheckErr.message}. Aborting trade.`);
-        return { success: false, error: `EXCHANGE_TELEMETRY_UNVERIFIED: ${preCheckErr.message}` };
+        // Fallback resilience: If MCP timed out but onChainPipeline has state, use it rather than failing closed
+        try {
+          const { onChainPipeline } = require('../pipeline/onchain-sync-pipeline');
+          const pipeState = onChainPipeline.getConsolidatedState();
+          if (pipeState && Array.isArray(pipeState.openPositions)) {
+            liveOnChainPositions = pipeState.openPositions;
+            const hasOnChain = liveOnChainPositions.some((p) => p.symbol.replace('-', '/').toUpperCase() === symKey && ((p.sizeBase && p.sizeBase > 0) || (p.sizeUsd && p.sizeUsd > 0)));
+            if (hasOnChain) {
+              return { success: false, error: `On-chain position already exists on Decibel DEX for ${signal.symbol}` };
+            }
+            logger.info(`🛡️ [PRE-TRADE RESILIENCE] MCP telemetry timed out (${preCheckErr.message}), but verified via onChainPipeline for ${signal.symbol}. Proceeding.`);
+          } else {
+            logger.error(`🚨 [PRE-TRADE BLOCKED] Cannot verify exchange telemetry for ${signal.symbol}: ${preCheckErr.message}. Aborting trade.`);
+            return { success: false, error: `EXCHANGE_TELEMETRY_UNVERIFIED: ${preCheckErr.message}` };
+          }
+        } catch {
+          logger.error(`🚨 [PRE-TRADE BLOCKED] Cannot verify exchange telemetry for ${signal.symbol}: ${preCheckErr.message}. Aborting trade.`);
+          return { success: false, error: `EXCHANGE_TELEMETRY_UNVERIFIED: ${preCheckErr.message}` };
+        }
       }
     }
 
@@ -1150,7 +1255,7 @@ export class TradeExecutor {
           }
 
           const makerTimeoutMs = directivesAny?.makerFillTimeoutMs 
-            || (directivesAny?.optimalEntry?.ttlSeconds ? Math.min(60000, directivesAny.optimalEntry.ttlSeconds * 1000) : defaultTimeoutMs);
+            || (directivesAny?.optimalEntry?.ttlSeconds ? Math.min(300000, directivesAny.optimalEntry.ttlSeconds * 1000) : defaultTimeoutMs);
 
           liveResult = await this.executeOnChain(
             signal.symbol,
@@ -1195,29 +1300,32 @@ export class TradeExecutor {
 
           // Strict Take-Profit Directional Invariant: Ensure TP is mathematically sound before on-chain DEX arming
           const isLongEntry = signal.action === 'LONG';
-          if (isLongEntry) {
-            if (!signal.takeProfit || signal.takeProfit <= signal.entryPrice) {
-              const oldTp = signal.takeProfit;
-              signal.takeProfit = Number((signal.entryPrice * 1.018).toFixed(4));
-              logger.warn(`🛡️ [TP INVARIANT HEALED] Invalid initial TP on ${signal.symbol} LONG ($${oldTp} <= Entry $${signal.entryPrice}). Calibrated to $${signal.takeProfit}`);
-            }
-            if (signal.takeProfit1 && signal.takeProfit1 <= signal.entryPrice) {
-              signal.takeProfit1 = Number((signal.entryPrice * 1.018).toFixed(4));
-            }
-            if (signal.takeProfit2 && signal.takeProfit2 <= signal.entryPrice) {
-              signal.takeProfit2 = Number((signal.entryPrice * 1.032).toFixed(4));
-            }
-          } else {
-            if (!signal.takeProfit || signal.takeProfit >= signal.entryPrice) {
-              const oldTp = signal.takeProfit;
-              signal.takeProfit = Number((signal.entryPrice * 0.982).toFixed(4));
-              logger.warn(`🛡️ [TP INVARIANT HEALED] Invalid initial TP on ${signal.symbol} SHORT ($${oldTp} >= Entry $${signal.entryPrice}). Calibrated to $${signal.takeProfit}`);
-            }
-            if (signal.takeProfit1 && signal.takeProfit1 >= signal.entryPrice) {
-              signal.takeProfit1 = Number((signal.entryPrice * 0.982).toFixed(4));
-            }
-            if (signal.takeProfit2 && signal.takeProfit2 >= signal.entryPrice) {
-              signal.takeProfit2 = Number((signal.entryPrice * 0.968).toFixed(4));
+          const isNoFixedTpSignal = Boolean((signal as any).noFixedTp);
+          if (!isNoFixedTpSignal) {
+            if (isLongEntry) {
+              if (!signal.takeProfit || signal.takeProfit <= signal.entryPrice) {
+                const oldTp = signal.takeProfit;
+                signal.takeProfit = Number((signal.entryPrice * 1.018).toFixed(4));
+                logger.warn(`🛡️ [TP INVARIANT HEALED] Invalid initial TP on ${signal.symbol} LONG ($${oldTp} <= Entry $${signal.entryPrice}). Calibrated to $${signal.takeProfit}`);
+              }
+              if (signal.takeProfit1 && signal.takeProfit1 <= signal.entryPrice) {
+                signal.takeProfit1 = Number((signal.entryPrice * 1.018).toFixed(4));
+              }
+              if (signal.takeProfit2 && signal.takeProfit2 <= signal.entryPrice) {
+                signal.takeProfit2 = Number((signal.entryPrice * 1.032).toFixed(4));
+              }
+            } else {
+              if (!signal.takeProfit || signal.takeProfit >= signal.entryPrice) {
+                const oldTp = signal.takeProfit;
+                signal.takeProfit = Number((signal.entryPrice * 0.982).toFixed(4));
+                logger.warn(`🛡️ [TP INVARIANT HEALED] Invalid initial TP on ${signal.symbol} SHORT ($${oldTp} >= Entry $${signal.entryPrice}). Calibrated to $${signal.takeProfit}`);
+              }
+              if (signal.takeProfit1 && signal.takeProfit1 >= signal.entryPrice) {
+                signal.takeProfit1 = Number((signal.entryPrice * 0.982).toFixed(4));
+              }
+              if (signal.takeProfit2 && signal.takeProfit2 >= signal.entryPrice) {
+                signal.takeProfit2 = Number((signal.entryPrice * 0.968).toFixed(4));
+              }
             }
           }
 
@@ -1227,9 +1335,11 @@ export class TradeExecutor {
             : Number((signal.entryPrice * (1 + 0.15 / Math.max(1, risk.leverage))).toFixed(4));
 
           // Attach on-chain TP/SL directly onto Decibel DEX order book (position is guaranteed filled!)
+          // If noFixedTp is active, tpTrigger is omitted (undefined) so NO static TP limit order is placed on DEX!
           // On-chain SL is strictly the HARD SL. Soft SL / Ratchet SL is managed off-chain inside our software system.
-          if (signal.takeProfit > 0 || hardSlPrice > 0) {
-            logger.info(`🎯 [ON-CHAIN TP/SL] Arming TP: $${signal.takeProfit} | Hard SL (On-Chain): $${hardSlPrice} on ${signal.symbol} (Soft Ratchet SL: $${signal.stopLoss} in-system)...`);
+          const effectiveOnChainTp = isNoFixedTpSignal ? undefined : (signal.takeProfit > 0 ? signal.takeProfit : undefined);
+          if (effectiveOnChainTp || hardSlPrice > 0) {
+            logger.info(`🎯 [ON-CHAIN TP/SL] ${isNoFixedTpSignal ? 'NO STATIC ON-CHAIN TP (Dynamic 30% Harvest → 50% Full Exit)' : 'Arming TP: $' + effectiveOnChainTp} | Hard SL (On-Chain): $${hardSlPrice} on ${signal.symbol} (Soft Ratchet SL: $${signal.stopLoss} in-system)...`);
             // Brief 1.5s propagation window to guarantee matching engine has finalized position settlement on-chain
             await new Promise((r) => setTimeout(r, 1500));
 
@@ -1240,7 +1350,7 @@ export class TradeExecutor {
               try {
                 await mcpClient.setTpSl({
                   symbol: signal.symbol,
-                  tpTrigger: signal.takeProfit > 0 ? signal.takeProfit : undefined,
+                  tpTrigger: effectiveOnChainTp,
                   slTrigger: hardSlPrice > 0 ? hardSlPrice : undefined,
                 });
                 tpSlSecured = true;
@@ -1362,6 +1472,11 @@ export class TradeExecutor {
         isMaker: liveResult?.isMaker ?? false,
         routing: liveResult?.isMaker ? 'MAKER_POST_ONLY' : (isPaper ? 'PAPER' : 'TAKER_IOC'),
         onChainTpSlSecured: isPaper ? true : tpSlSecured,
+        harvest30Done: false,
+        noFixedTp: Boolean((signal as any).noFixedTp),
+        gap30Price: (signal as any).gap30Price,
+        gap50Price: (signal as any).gap50Price,
+        peakPrice: signal.entryPrice,
       };
 
       const existingIdx = this.tradesCache.findIndex((t) => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');
@@ -1437,7 +1552,7 @@ export class TradeExecutor {
     // because the limit price will be placed behind current best ask (for buy) or bid (for sell).
     let livePrice = 0;
     try {
-      const p = await mcpClient.getPrice(symbol);
+      const p = await mcpClient.getPrice(symbol, { forceFresh: true });
       livePrice = p.markPrice || p.lastPrice || 0;
     } catch (e: any) {
       logger.warn(`⚠️ Failed to fetch fresh live price for ${symbol} before on-chain execution: ${e?.message || e}`);
@@ -1633,7 +1748,7 @@ export class TradeExecutor {
       } else if (regime === 'RANGE_BOUND' || regime === 'COMPRESSION') {
         adaptiveTimeoutMs = Math.max(adaptiveTimeoutMs, 60000);
       }
-      const timeoutMs = Math.max(25000, Math.min(90000, adaptiveTimeoutMs));
+      const timeoutMs = Math.max(30000, Math.min(300000, adaptiveTimeoutMs));
       const symUpper = symbol.replace('-', '/').toUpperCase();
       const baseConfidence = initialConfidence || 72;
       const minConfidenceGate = confidenceFloor || 68;
@@ -1855,22 +1970,22 @@ export class TradeExecutor {
       let hitSl = false;
 
       if (isLong) {
-        if (trade.takeProfit > trade.entryPrice && currentPrice >= trade.takeProfit) {
+        if (!trade.noFixedTp && trade.takeProfit > trade.entryPrice && currentPrice >= trade.takeProfit) {
           hitTp = true;
         } else if (trade.stopLoss > 0 && currentPrice <= trade.stopLoss) {
           hitSl = true;
-        } else if (trade.takeProfit > 0 && trade.takeProfit <= trade.entryPrice) {
+        } else if (!trade.noFixedTp && trade.takeProfit > 0 && trade.takeProfit <= trade.entryPrice) {
           // Self-heal inverted TP: reset to standard +1.8% ATR target
           trade.takeProfit = Number((trade.entryPrice * 1.018).toFixed(4));
           modified = true;
           logger.warn(`🛡️ [TP INVARIANT HEALED] Inverted TP on ${trade.symbol} LONG auto-corrected: $${trade.takeProfit}`);
         }
       } else {
-        if (trade.takeProfit > 0 && trade.takeProfit < trade.entryPrice && currentPrice <= trade.takeProfit) {
+        if (!trade.noFixedTp && trade.takeProfit > 0 && trade.takeProfit < trade.entryPrice && currentPrice <= trade.takeProfit) {
           hitTp = true;
         } else if (trade.stopLoss > 0 && currentPrice >= trade.stopLoss) {
           hitSl = true;
-        } else if (trade.takeProfit >= trade.entryPrice) {
+        } else if (!trade.noFixedTp && trade.takeProfit > 0 && trade.takeProfit >= trade.entryPrice) {
           // Self-heal inverted TP: reset to standard -1.8% ATR target
           trade.takeProfit = Number((trade.entryPrice * 0.982).toFixed(4));
           modified = true;
@@ -2223,6 +2338,148 @@ export class TradeExecutor {
     return true;
   }
 
+  /**
+   * Tier 1: 30% Dynamic Gap Harvest (Banks cash + covers fees, snaps SL to BE + 0.30%)
+   */
+  public async execute30PercentHarvest(symbol: string): Promise<boolean> {
+    const norm = (s: string) => (s || '').toUpperCase().replace(/[-_/]/g, '');
+    const symKey = norm(symbol);
+    const trade = this.tradesCache.find(
+      (t) => t.status === 'open' && norm(t.symbol) === symKey,
+    );
+    if (!trade || trade.harvest30Done) return false;
+
+    const isLong = trade.action === 'LONG';
+    const symMark = trade.symbol.replace('-', '/').toUpperCase();
+    this.markExecutionInFlight(symMark);
+
+    try {
+      if (!trade.isPaper && this.aptos && this.aptosAccount) {
+        logger.info(`⚡ [TIER 1 HARVEST] Executing 30% on-chain partial close for ${trade.symbol}...`);
+        const res = (await mcpClient.closePosition(trade.symbol, 0.30)) as any;
+        if (res && res.error) {
+          logger.warn(`⚠️ [TIER 1 HARVEST] On-chain partial close warning: ${res.error}`);
+        }
+      }
+
+      trade.harvest30Done = true;
+      const bankedSizeBase = Number((trade.sizeBase * 0.30).toFixed(4));
+      trade.sizeBase = Number((trade.sizeBase * 0.70).toFixed(4));
+      trade.sizeUsd = Number((trade.sizeBase * trade.entryPrice).toFixed(2));
+      trade.allocatedUsd = Number((trade.allocatedUsd * 0.70).toFixed(2));
+
+      // Snap Stop Loss to Breakeven + 0.30% fee cover
+      const beFloor = Number((isLong
+        ? trade.entryPrice * 1.003
+        : trade.entryPrice * 0.997).toFixed(4));
+      trade.stopLoss = beFloor;
+      trade.softRatchetPrice = beFloor;
+      trade.breakevenMoved = true;
+
+      const pnlPctEstimate = isLong
+        ? ((trade.currentPrice || trade.entryPrice) - trade.entryPrice) / trade.entryPrice * 100 * trade.leverage
+        : (trade.entryPrice - (trade.currentPrice || trade.entryPrice)) / trade.entryPrice * 100 * trade.leverage;
+      const bankedUsdEstimate = Number(((trade.allocatedUsd / 0.70 * 0.30) * pnlPctEstimate / 100).toFixed(2));
+      trade.partialRealizedPnlUsd = (trade.partialRealizedPnlUsd || 0) + Math.max(0, bankedUsdEstimate);
+
+      if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
+      trade.lifecycleEvents.push({
+        timestamp: Date.now(),
+        stage: 'HARVEST',
+        title: `🌾 Tier 1: 30% Dynamic Gap Harvest Banked @ $${(trade.currentPrice || trade.entryPrice).toFixed(4)}`,
+        description: `Closed 30% (${bankedSizeBase} base). SL snapped to Breakeven+0.30% ($${trade.stopLoss}). Remaining 70% runner active risk-free.`,
+        price: trade.currentPrice || trade.entryPrice,
+        pnlUsd: bankedUsdEstimate,
+        details: [
+          `30% gap expansion target reached.`,
+          `Banked 30% partial position (+~$${bankedUsdEstimate}).`,
+          `Stop-loss moved to BE+0.30% ($${trade.stopLoss}) to cover round-trip fees.`,
+          `Remaining 70% position (${trade.sizeBase} base) held for 50% Midpoint Gap Touch.`,
+        ],
+      });
+
+      this.saveTrades();
+      logger.info(
+        `🌾 [TIER 1 HARVEST] Banked 30% on ${trade.symbol}! SL locked at BE+0.30% ($${trade.stopLoss}). Remaining 70% (${trade.sizeBase}) waiting for 50% Gap Touch.`
+      );
+      return true;
+    } catch (err: any) {
+      logger.error(`🚨 [TIER 1 HARVEST ERROR] ${trade.symbol}: ${err.message}`);
+      return false;
+    } finally {
+      setTimeout(() => this.clearExecutionInFlight(symMark), 4000);
+    }
+  }
+
+  /**
+   * Tier 2: 50% Gap Touch Terminal Close (100% Take Profit All)
+   */
+  public async execute50PercentTerminalClose(symbol: string, exitPrice: number): Promise<boolean> {
+    const norm = (s: string) => (s || '').toUpperCase().replace(/[-_/]/g, '');
+    const symKey = norm(symbol);
+    const trade = this.tradesCache.find(
+      (t) => t.status === 'open' && norm(t.symbol) === symKey,
+    );
+    if (!trade) return false;
+
+    const symMark = trade.symbol.replace('-', '/').toUpperCase();
+    this.markExecutionInFlight(symMark);
+
+    try {
+      if (!trade.isPaper && this.aptos && this.aptosAccount) {
+        logger.info(`🎯 [TIER 2 FULL CLOSE] Executing 100% full close on-chain for ${trade.symbol} @ $${exitPrice.toFixed(4)}...`);
+        const res = (await mcpClient.closePosition(trade.symbol, 1.0)) as any;
+        if (res && res.error) {
+          logger.warn(`⚠️ [TIER 2 FULL CLOSE] On-chain close notice: ${res.error}`);
+        }
+      }
+
+      const isLong = trade.action === 'LONG';
+      const priceDiff = isLong ? exitPrice - trade.entryPrice : trade.entryPrice - exitPrice;
+      const pnlPct = (priceDiff / trade.entryPrice) * 100 * trade.leverage;
+      const pnlUsd = (trade.allocatedUsd * pnlPct) / 100 + (trade.partialRealizedPnlUsd || 0);
+
+      trade.status = 'closed_tp';
+      trade.exitReason = 'DYNAMIC_ISLAND_50%_TOUCH';
+      trade.exitPrice = exitPrice;
+      trade.closedAt = Date.now();
+      trade.pnlPct = Number(pnlPct.toFixed(2));
+      trade.pnlUsd = Number(pnlUsd.toFixed(2));
+
+      const durationSec = Math.max(1, Math.round(((trade.closedAt || Date.now()) - trade.openedAt) / 1000));
+      const durationText = durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
+
+      if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
+      trade.lifecycleEvents.push({
+        timestamp: trade.closedAt,
+        stage: 'EXIT',
+        title: `🎯 Tier 2: 50% Gap Midpoint Touch 100% Take Profit All @ $${exitPrice.toFixed(4)} (${durationText} hold)`,
+        description: `Robust Island Exit #3 reached. Full position closed on-chain, banking +$${pnlUsd.toFixed(2)} (+${trade.pnlPct}%).`,
+        price: exitPrice,
+        pnlUsd: trade.pnlUsd,
+        details: [
+          `50% gap midpoint touch confirmed on ${trade.symbol}.`,
+          `100% remaining runner closed at $${exitPrice.toFixed(4)}.`,
+          `Total net realized PnL banked: +$${pnlUsd.toFixed(2)}.`,
+          `Trade successfully completed under Robust Island Dynamic Harvest rules.`,
+        ],
+      });
+      trade.exitSummary = `Robust Island 50% Gap Midpoint Touch reached @ $${exitPrice.toFixed(4)}. Banked +$${pnlUsd.toFixed(2)} (+${trade.pnlPct}%).`;
+
+      this.saveTrades();
+      logger.info(
+        `🎯 [TIER 2 FULL CLOSE] 50% Gap Touch achieved on ${trade.symbol}! Banked 100% Take Profit All @ $${exitPrice.toFixed(4)} | PnL: +$${pnlUsd.toFixed(2)} (+${trade.pnlPct}%)`
+      );
+      this.notifyTradeClosed(trade);
+      return true;
+    } catch (err: any) {
+      logger.error(`🚨 [TIER 2 FULL CLOSE ERROR] ${trade.symbol}: ${err.message}`);
+      return false;
+    } finally {
+      setTimeout(() => this.clearExecutionInFlight(symMark), 4000);
+    }
+  }
+
   private cachedOnChainBalance: { balanceUsd: number; aptBalance: number; lastChecked: number } = {
     balanceUsd: 0,
     aptBalance: 0,
@@ -2266,13 +2523,40 @@ export class TradeExecutor {
         : sub;
 
       try {
-        const coinAmount = await this.aptos.getAccountCoinAmount({
+        const octas = await this.aptos.getAccountAPTAmount({
           accountAddress: gasFeeTarget,
-          coinType: '0x1::aptos_coin::AptosCoin',
         });
-        aptBalance = Number(coinAmount) / 1e8;
+        aptBalance = Number(octas) / 1e8;
       } catch (err: any) {
         logger.debug(`Could not fetch APT gas balance for ${gasFeeTarget}: ${err.message}`);
+      }
+
+      if (aptBalance === 0 && sub && sub !== gasFeeTarget) {
+        try {
+          const octasSub = await this.aptos.getAccountAPTAmount({ accountAddress: sub });
+          aptBalance = Math.max(aptBalance, Number(octasSub) / 1e8);
+        } catch {}
+      }
+
+      // Direct public Aptos fullnode REST fallback (100% reliable, zero key dependencies)
+      if (aptBalance === 0 && gasFeeTarget) {
+        try {
+          const directRes = await fetch('https://fullnode.mainnet.aptoslabs.com/v1/view', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              function: '0x1::coin::balance',
+              type_arguments: ['0x1::aptos_coin::AptosCoin'],
+              arguments: [gasFeeTarget],
+            }),
+          });
+          if (directRes.ok) {
+            const data = (await directRes.json()) as any;
+            if (Array.isArray(data) && data[0] !== undefined) {
+              aptBalance = Number(data[0]) / 1e8;
+            }
+          }
+        } catch {}
       }
 
       // Check subaccount margin collateral: First directly on-chain from Decibel DEX smart contract

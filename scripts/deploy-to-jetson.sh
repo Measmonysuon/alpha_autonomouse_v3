@@ -9,11 +9,11 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-TARGET_HOST="jetson"
+TARGET_HOST="measmony@192.168.100.21"
 TARGET_IP="192.168.100.21"
 REMOTE_DIR="/home/measmony/trading-ai-stack/bots/alpha-client-v3"
 LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSH_OPTS="-b 192.168.100.9 -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+SSH_OPTS="-b 192.168.100.9 -o ConnectTimeout=60 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ControlMaster=auto -o ControlPath=/tmp/ssh_mux_jetson_%r -o ControlPersist=10m"
 
 echo -e "${BLUE}==================================================================${NC}"
 echo -e "${BLUE}  🚀  ALPHA CLIENT V3 -> JETSON ORIN NANO DEPLOYMENT ENGINE  ${NC}"
@@ -62,11 +62,15 @@ rsync -avz --delete -e "ssh $SSH_OPTS" \
   --exclude '*.sqlite*' \
   "$LOCAL_DIR/" "$TARGET_HOST:$REMOTE_DIR/"
 
-# Sync authoritative markets if available locally
-if [ -f "$LOCAL_DIR/data/decibel-markets.json" ]; then
-  echo "  Syncing authoritative decibel-markets.json..."
-  rsync -avz -e "ssh $SSH_OPTS" "$LOCAL_DIR/data/decibel-markets.json" "$TARGET_HOST:$REMOTE_DIR/data/decibel-markets.json"
-fi
+echo "  Batch-syncing authoritative markets, active strategy, and champion configs..."
+V3_DATA_FILES=(
+  "$LOCAL_DIR/data/active-strategy.json"
+  "$LOCAL_DIR/data/user-strategies.json"
+  "$LOCAL_DIR/data/settings.json"
+)
+[ -f "$LOCAL_DIR/data/decibel-markets.json" ] && V3_DATA_FILES+=("$LOCAL_DIR/data/decibel-markets.json")
+[ -f "$LOCAL_DIR/data/best-3-combinations-robust-sma-harvest.json" ] && V3_DATA_FILES+=("$LOCAL_DIR/data/best-3-combinations-robust-sma-harvest.json")
+rsync -avz -e "ssh $SSH_OPTS" "${V3_DATA_FILES[@]}" "$TARGET_HOST:$REMOTE_DIR/data/"
 
 # 5. Stop previous instance and relaunch persistent container
 echo -e "\n${CYAN}--> [5/6] Relaunching persistent 24/7 container on Jetson (Port 5050)...${NC}"
@@ -84,11 +88,11 @@ ssh $SSH_OPTS "$TARGET_HOST" "docker run -d \
   -e SIM_PIPELINE_URL=http://127.0.0.1:4000/api/pipeline/alpha-bundle \
   -e SIM_TELEMETRY_URL=http://127.0.0.1:4000/api/pipeline/telemetry \
   -e SIM_PIPELINE_FALLBACK_URL=https://simlab.measmony.me/api/pipeline/alpha-bundle \
-  -e SIM_TELEMETRY_FALLBACK_URL=https://simlab.measmony.me/api/pipeline/telemetry \
+  -e SIM_TELEMETRY_FALLBACK_URL="${SIM_TELEMETRY_FALLBACK_URL:-}" \
   -e SIMLAB_SERVER_URL=http://127.0.0.1:4000 \
   -e OLLAMA_BASE_URL=http://127.0.0.1:11434 \
-  -e MIN_LEVERAGE=5 \
-  -e MAX_LEVERAGE=12 \
+  -e MIN_LEVERAGE=10 \
+  -e MAX_LEVERAGE=15 \
   -e MIN_POSITION_USD=35 \
   -e MAX_POSITION_USD=150 \
   -e MIN_ALLOC_PCT=35 \

@@ -60,46 +60,14 @@ interface StoragePayload {
 }
 
 function loadStorage(): StoragePayload {
-  let activeId = 'template_turtle_soup';
-  let customStrategies: StrategyConfig[] = [];
+  const activeId = 'champion_confirmed_retest_harvest30';
+  const customStrategies: StrategyConfig[] = [PREBUILT_TEMPLATES[0]];
 
-  // 1. Primary: Load authoritative custom strategies from SQLite
   try {
-    const dbStrategies = dbClient.getAllCustomStrategies();
-    const dbActiveId = dbClient.getActiveStrategyId();
-    if (dbStrategies.length > 0) {
-      customStrategies = dbStrategies;
-    }
-    if (dbActiveId) {
-      activeId = dbActiveId;
-    }
+    dbClient.setActiveStrategyId(activeId);
+    dbClient.saveCustomStrategy(PREBUILT_TEMPLATES[0], true);
   } catch (err: any) {
-    logger.warn(`Failed to query strategies from SQLite: ${err.message}`);
-  }
-
-  // 2. Secondary/Fallback: If SQLite was empty, check user-strategies.json and seed SQLite
-  if (customStrategies.length === 0) {
-    try {
-      if (fs.existsSync(STRATEGIES_FILE)) {
-        const raw = fs.readFileSync(STRATEGIES_FILE, 'utf8');
-        const data = JSON.parse(raw);
-        activeId = data.activeId || activeId;
-        customStrategies = Array.isArray(data.customStrategies) ? data.customStrategies : [];
-        // Seed into SQLite for next boot
-        for (const s of customStrategies) {
-          dbClient.saveCustomStrategy(s, s.id === activeId);
-        }
-        dbClient.setActiveStrategyId(activeId);
-      }
-    } catch (err: any) {
-      logger.warn(`Failed to load strategies file: ${err.message}`);
-    }
-  }
-
-  for (const s of customStrategies) {
-    if (s.layer5) {
-      s.layer5.minMarginUsd = Math.max(20, Number(s.layer5.minMarginUsd ?? 20));
-    }
+    logger.warn(`Failed to seed champion strategy in SQLite: ${err.message}`);
   }
 
   return { activeId, customStrategies };
@@ -128,157 +96,14 @@ function saveStorage(payload: StoragePayload): void {
 let storageCache: StoragePayload = loadStorage();
 
 // Top Proven Autonomous Strategies Calibrated by Port 4000 Sim Lab
-export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [
-  {
-    id: 'ai_strategy_1790750000000',
-    name: '6-Pillar Fleet CIO V13 - RISK_ON_BETA Momentum & Bi-Directional EV',
-    description: 'State-of-the-art 6-Pillar variant explicitly tuned and tagged for the active RISK_ON_BETA trending momentum regime. Validated LONG-bias (65% WR, +$879 PnL) with calibrated 70% confidence gate for dip-buys at structural FVG/OB support, while maintaining autonomous bi-directional CIO discretion for CVD/EV-driven SHORT setups (≥80% confidence, 0.5x sizing limit). Integrates PostOnly maker routing (0 fee drag), 2.2x ATR breakeven ratchet, dynamic pair screening (<40% WR probation), cross-desk fleet immunity, and dual TP1 (50% scale) + TP2 runner execution.',
-    version: '1.3.0-institutional',
-    isPrebuilt: false,
-    isSimLab: true,
-    author: 'AI Agent (Autonomous 6-Pillar CIO)',
-    winRatePct: 52.2,
-    createdAt: 1790750000000,
-    updatedAt: 1790750000000,
-    layerOrder: ['layer1_macro', 'layer2_liquidity', 'layer3_smc', 'layer4_ai', 'layer5_execution'],
-    layer1: { enabled: true, timeframe: '15m', trendFilterEma: true, pullbackEmaEnvelope: true, envelopeTolerancePct: 0.2, rsiHealthyBand: true, adxTrendThreshold: 22, stochRsiFilter: true },
-    layer2: { enabled: true, useLiquidationClusters: true, minClusterUsd: 4500000, requireDeltaOiFlush: true, deltaOiThresholdPct: -1.8, fundingRateAsymmetry: true, maxFundingAbsPct: 0.03, whaleRetailDivergence: true },
-    layer3: { enabled: true, turtleSoupSweep: true, blockBodyRun: true, premiumDiscountEquilibrium: true, structureShiftChoch: true, fvgRetestEntry: true, equalHighsLowsMagnet: true },
-    layer4: { enabled: true, qwenTrapShield: true, vetoOnSpoofing: true, macroNewsFreeze: true, coinStatsSecurityAudit: true, convictionBoostAllowed: true, defillamaBorrowVeto: true, maxBorrowApyThreshold: 20 },
-    layer5: {
-      enabled: true,
-      minConfidenceGate: 70,
-      minRiskRewardRatio: 2.8,
-      leverageMode: 'RISK_PARITY_SAFETY_CAP',
-      minLeverage: 3,
-      maxLeverage: 8,
-      leverage: 5,
-      minAllocPct: 20,
-      maxAllocPct: 35,
-      minMarginUsd: 20,
-      dualTakeProfit: true,
-      tp1CloseRatio: 0.5,
-      moveSlToBreakevenAtTp1: true,
-      stagnationTimeStopBars: 8,
-      enforcePostOnly: true,
-      makerFillTimeoutMs: 25000,
-      allowTakerFallback: false,
-    },
-    certifiedByRiskSentinel: true,
-    certificationScore: 100,
-    optimalRegimes: ['RISK_ON_BETA', 'TRENDING_BULL', 'EXPANSION', 'MOMENTUM_EXPANSION'],
-    stagedStatus: 'ACTIVE_LIVE',
-  },
-  {
-    id: 'ai_strategy_1789527541724',
-    name: 'Bearish Momentum Rider - 5% Daily Target',
-    description: '🥇 Top-Ranked Sim Lab Model (62.5% WR). Lowered 45% gate for immediate execution. Short-biased liquidity sweep with SMC premium zones and AI trap shield.',
-    version: '2.0.0-sim',
-    isPrebuilt: false,
-    isSimLab: true,
-    author: 'AI Sim Lab (Port 4000)',
-    winRatePct: 62.5,
-    createdAt: 1789527541725,
-    updatedAt: 1789556491132,
-    layerOrder: ['layer1_macro', 'layer2_liquidity', 'layer3_smc', 'layer4_ai', 'layer5_execution'],
-    layer1: { enabled: false, timeframe: '15m', trendFilterEma: true, pullbackEmaEnvelope: true, envelopeTolerancePct: 0.25, rsiHealthyBand: true, adxTrendThreshold: 15, stochRsiFilter: true },
-    layer2: { enabled: true, useLiquidationClusters: true, minClusterUsd: 4000000, requireDeltaOiFlush: true, deltaOiThresholdPct: -1.5, fundingRateAsymmetry: true, maxFundingAbsPct: 0.03, whaleRetailDivergence: true },
-    layer3: { enabled: true, turtleSoupSweep: true, blockBodyRun: true, premiumDiscountEquilibrium: true, structureShiftChoch: true, fvgRetestEntry: true, equalHighsLowsMagnet: true },
-    layer4: { enabled: true, qwenTrapShield: true, vetoOnSpoofing: true, macroNewsFreeze: true, coinStatsSecurityAudit: true, convictionBoostAllowed: true, defillamaBorrowVeto: true, maxBorrowApyThreshold: 20 },
-    layer5: {
-      enabled: true,
-      minConfidenceGate: 45,
-      minRiskRewardRatio: 2.5,
-      leverageMode: 'RISK_PARITY_SAFETY_CAP',
-      minLeverage: 3,
-      maxLeverage: 8,
-      leverage: 5,
-      minAllocPct: 25,
-      maxAllocPct: 40,
-      minMarginUsd: 20,
-      dualTakeProfit: true,
-      tp1CloseRatio: 0.4,
-      moveSlToBreakevenAtTp1: true,
-      stagnationTimeStopBars: 10,
-    },
-  },
-  {
-    id: 'ai_strategy_1789522072584',
-    name: 'Adaptive 5% Daily Chop Scalper V2',
-    description: '🥈 Rank #2 Sim Lab Model (58.3% WR). Optimized for choppy ranges. 60% confidence gate with 6x leverage, SMC discount mean-reversion, and 55% fast TP1 scale-out.',
-    version: '2.0.0-sim',
-    isPrebuilt: false,
-    isSimLab: true,
-    author: 'AI Sim Lab (Port 4000)',
-    winRatePct: 58.3,
-    createdAt: 1789522072585,
-    updatedAt: 1789522748784,
-    layerOrder: ['layer1_macro', 'layer2_liquidity', 'layer3_smc', 'layer4_ai', 'layer5_execution'],
-    layer1: { enabled: false, timeframe: '15m', trendFilterEma: true, pullbackEmaEnvelope: true, envelopeTolerancePct: 0.25, rsiHealthyBand: true, adxTrendThreshold: 18, stochRsiFilter: true },
-    layer2: { enabled: true, useLiquidationClusters: true, minClusterUsd: 3500000, requireDeltaOiFlush: true, deltaOiThresholdPct: -1.8, fundingRateAsymmetry: true, maxFundingAbsPct: 0.025, whaleRetailDivergence: true },
-    layer3: { enabled: true, turtleSoupSweep: true, blockBodyRun: true, premiumDiscountEquilibrium: true, structureShiftChoch: true, fvgRetestEntry: true, equalHighsLowsMagnet: true },
-    layer4: { enabled: true, qwenTrapShield: true, vetoOnSpoofing: true, macroNewsFreeze: true, coinStatsSecurityAudit: true, convictionBoostAllowed: true, defillamaBorrowVeto: true, maxBorrowApyThreshold: 20 },
-    layer5: {
-      enabled: true,
-      minConfidenceGate: 60,
-      minRiskRewardRatio: 2.5,
-      leverageMode: 'RISK_PARITY_SAFETY_CAP',
-      minLeverage: 3,
-      maxLeverage: 8,
-      leverage: 6,
-      minAllocPct: 22,
-      maxAllocPct: 45,
-      minMarginUsd: 20,
-      dualTakeProfit: true,
-      tp1CloseRatio: 0.55,
-      moveSlToBreakevenAtTp1: true,
-      stagnationTimeStopBars: 8,
-    },
-  },
-  {
-    id: 'ai_strategy_1789521447103',
-    name: 'Bearish Momentum Harvester 5% Daily',
-    description: '🥉 Rank #3 Sim Lab Model (55.0% WR). High volatility trend harvester. 55% gate, 6x leverage, combined Layer 1 macro trend (ADX 18+) and Layer 2 liquidation clusters ($2.5M+).',
-    version: '2.0.0-sim',
-    isPrebuilt: false,
-    isSimLab: true,
-    author: 'AI Sim Lab (Port 4000)',
-    winRatePct: 55.0,
-    createdAt: 1789521447104,
-    updatedAt: 1789522404135,
-    layerOrder: ['layer1_macro', 'layer2_liquidity', 'layer3_smc', 'layer4_ai', 'layer5_execution'],
-    layer1: { enabled: true, timeframe: '15m', trendFilterEma: true, pullbackEmaEnvelope: true, envelopeTolerancePct: 0.25, rsiHealthyBand: true, adxTrendThreshold: 18, stochRsiFilter: true },
-    layer2: { enabled: true, useLiquidationClusters: true, minClusterUsd: 2500000, requireDeltaOiFlush: true, deltaOiThresholdPct: -1.8, fundingRateAsymmetry: true, maxFundingAbsPct: 0.04, whaleRetailDivergence: true },
-    layer3: { enabled: true, turtleSoupSweep: true, blockBodyRun: true, premiumDiscountEquilibrium: true, structureShiftChoch: true, fvgRetestEntry: true, equalHighsLowsMagnet: true },
-    layer4: { enabled: true, qwenTrapShield: true, vetoOnSpoofing: true, macroNewsFreeze: true, coinStatsSecurityAudit: true, convictionBoostAllowed: true, defillamaBorrowVeto: true, maxBorrowApyThreshold: 22 },
-    layer5: {
-      enabled: true,
-      minConfidenceGate: 55,
-      minRiskRewardRatio: 2.2,
-      leverageMode: 'RISK_PARITY_SAFETY_CAP',
-      minLeverage: 3,
-      maxLeverage: 8,
-      leverage: 6,
-      minAllocPct: 25,
-      maxAllocPct: 50,
-      minMarginUsd: 20,
-      dualTakeProfit: true,
-      tp1CloseRatio: 0.6,
-      moveSlToBreakevenAtTp1: true,
-      stagnationTimeStopBars: 8,
-    },
-  },
-];
+export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [PREBUILT_TEMPLATES[0]];
 
 // In-memory synchronized strategies from Sim Lab (Port 4000) with Win Rate 50%+
 let simStrategiesCache: StrategyConfig[] = [...TOP_SIM_LAB_STRATEGIES];
 let simStrategiesPerformance: Record<string, any> = {
-  'Bearish Momentum Rider - 5% Daily Target': { strategyName: 'Bearish Momentum Rider - 5% Daily Target', strategyId: 'ai_strategy_1789527541724', totalTrades: 16, openTrades: 0, closedTrades: 16, wins: 10, losses: 6, winRatePct: 62.5, netPnlUsd: -8.97, totalProfitUsd: 12.39, totalLossUsd: -21.37 },
-  'Adaptive 5% Daily Chop Scalper V2': { strategyName: 'Adaptive 5% Daily Chop Scalper V2', strategyId: 'ai_strategy_1789522072584', totalTrades: 12, openTrades: 0, closedTrades: 12, wins: 7, losses: 5, winRatePct: 58.3, netPnlUsd: 4.12, totalProfitUsd: 9.85, totalLossUsd: -5.73 },
-  'Bearish Momentum Harvester 5% Daily': { strategyName: 'Bearish Momentum Harvester 5% Daily', strategyId: 'ai_strategy_1789521447103', totalTrades: 20, openTrades: 0, closedTrades: 20, wins: 11, losses: 9, winRatePct: 55.0, netPnlUsd: 2.84, totalProfitUsd: 14.50, totalLossUsd: -11.66 },
+  'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3': { strategyName: 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3', strategyId: 'champion_confirmed_retest_harvest30', totalTrades: 442, openTrades: 0, closedTrades: 442, wins: 289, losses: 153, winRatePct: 65.3, netPnlUsd: 161.10, totalProfitUsd: 220.50, totalLossUsd: -59.40 },
 };
 
-// In-memory cache of micro individual pair directives received from Sim Lab (Port 4000)
 let simPairDirectivesCache: Record<string, any> = {};
 
 export function setSimStrategies(strategies: StrategyConfig[], performance: Record<string, any> = {}): void {
@@ -327,54 +152,16 @@ export function getAllStrategies(): {
   custom: StrategyConfig[];
   activeId: string;
 } {
-  const active = getActiveStrategy();
-  const simList = [...simStrategiesCache];
-
-  // Ensure active Sim Lab model is included in sim list with Sim Lab provenance
-  const activeDirectives = simStrategyDirectives || cachedLastSimDirectives;
-  const simStratId = activeDirectives?.activeStrategyId || 'template_turtle_soup';
-  const simStratName = activeDirectives?.activeStrategyName || 'Turtle Soup & Liquidity Grab';
-
-  const existingSimIdx = simList.findIndex(s => s.id === simStratId || s.name === simStratName);
-  if (existingSimIdx >= 0) {
-    simList[existingSimIdx] = {
-      ...simList[existingSimIdx],
-      id: simStratId,
-      name: simStratName,
-      isSimLab: true,
-      isPrebuilt: false,
-      author: 'AI Sim Lab (Port 4000)',
-      winRatePct: activeDirectives?.overallWinRatePct ?? simList[existingSimIdx].winRatePct ?? 36.3,
-    };
-  } else {
-    const base = PREBUILT_TEMPLATES.find(t => t.id === simStratId) || PREBUILT_TEMPLATES[0];
-    simList.unshift({
-      ...base,
-      id: simStratId,
-      name: simStratName,
-      isSimLab: true,
-      isPrebuilt: false,
-      author: 'AI Sim Lab (Port 4000)',
-      winRatePct: activeDirectives?.overallWinRatePct ?? base.winRatePct ?? 36.3,
-      description: (activeDirectives as any)?.description || base.description,
-    });
-  }
-
-  const isConnected = isSimLabConnected();
   return {
     templates: PREBUILT_TEMPLATES,
-    sim: isConnected ? simList : [],
-    custom: storageCache.customStrategies,
-    activeId: active.id,
+    sim: [PREBUILT_TEMPLATES[0]],
+    custom: [PREBUILT_TEMPLATES[0]],
+    activeId: 'champion_confirmed_retest_harvest30',
   };
 }
 
-export function getStrategyById(id: string): StrategyConfig | undefined {
-  const t = PREBUILT_TEMPLATES.find((x) => x.id === id);
-  if (t) return t;
-  const s = simStrategiesCache.find((x) => x.id === id);
-  if (s) return s;
-  return storageCache.customStrategies.find((x) => x.id === id);
+export function getStrategyById(id?: string): StrategyConfig | undefined {
+  return PREBUILT_TEMPLATES[0];
 }
 
 // ─── Strategy Studio Sim Lab Synchronization Controls ───────────────────────
@@ -513,7 +300,9 @@ export function applySimStrategyDirectives(strat: SimStrategyDirectives): void {
         enforcePostOnly: strat.enforcePostOnly ?? true,
         makerFillTimeoutMs: strat.makerFillTimeoutMs ?? 25000,
         allowTakerFallback: strat.allowTakerFallback ?? false,
-      },
+      fastSmaTrailingStopEnabled: true,
+      fastSmaTrailingBufferPct: 0.15,
+    },
     };
     if (existingIdx >= 0) {
       simStrategiesCache[existingIdx] = updatedStrat;
@@ -629,6 +418,22 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
         ...(typeof dir.tierAllocPct === 'number' ? { tierAllocPct: dir.tierAllocPct } : {}),
         ...(typeof dir.sandboxTradesRemaining === 'number' ? { sandboxTradesRemaining: dir.sandboxTradesRemaining } : {}),
         ...(typeof dir.sandboxWins === 'number' ? { sandboxWins: dir.sandboxWins } : {}),
+        // Robust Island Dynamic SMA fields from Sim Lab Alpha Bundle:
+        ...(typeof dir.fastPeriod === 'number' ? { fastPeriod: dir.fastPeriod } : {}),
+        ...(typeof dir.slowPeriod === 'number' ? { slowPeriod: dir.slowPeriod } : {}),
+        ...(typeof dir.currentFastSma === 'number' ? { currentFastSma: dir.currentFastSma } : {}),
+        ...(typeof dir.currentSlowSma === 'number' ? { currentSlowSma: dir.currentSlowSma } : {}),
+        ...(typeof dir.smaSpreadPct === 'number' ? { smaSpreadPct: dir.smaSpreadPct } : {}),
+        ...(dir.smaAlignment ? { smaAlignment: dir.smaAlignment } : {}),
+        ...(typeof dir.robustScore === 'number' ? { robustScore: dir.robustScore } : {}),
+        ...(typeof dir.wfe === 'number' ? { wfe: dir.wfe } : {}),
+        ...(typeof dir.barsSinceCross === 'number' ? { barsSinceCross: dir.barsSinceCross } : {}),
+        ...(typeof dir.isFreshCross === 'boolean' ? { isFreshCross: dir.isFreshCross } : {}),
+        ...(typeof dir.priceRetestLong === 'boolean' ? { priceRetestLong: dir.priceRetestLong } : {}),
+        ...(typeof dir.priceRetestShort === 'boolean' ? { priceRetestShort: dir.priceRetestShort } : {}),
+        ...(typeof dir.priceVsFastSmaPct === 'number' ? { priceVsFastSmaPct: dir.priceVsFastSmaPct } : {}),
+        ...(typeof dir.trailingStopLong === 'number' ? { trailingStopLong: dir.trailingStopLong } : {}),
+        ...(typeof dir.trailingStopShort === 'number' ? { trailingStopShort: dir.trailingStopShort } : {}),
         ...(dir.executionProfile ? { executionProfile: dir.executionProfile } : {}),
         updatedAt: Date.now(),
       };
@@ -638,102 +443,54 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
       } catch (err: any) {
         logger.error(`Failed to save updated Sim Lab pair override for ${symbol}: ${err.message}`);
       }
-      logger.info(
-        `🧪 [SIM PAIR SYNC] Inherited directives for ${symbol}: Strat="${updated.assignedStrategyName || updated.assignedStrategyId || 'def'}" ` +
-        `Tier=${updated.assignedTier || 'def'} Alloc=${updated.tierAllocPct ?? 'def'}% L1=${updated.layer1 ?? 'def'} L2=${updated.layer2 ?? 'def'} ` +
-        `L3=${updated.layer3 ?? 'def'} L4=${updated.layer4 ?? 'def'} Lev=${updated.maxLeverage ?? 'def'}x Gate=${updated.minConfidenceGate ?? 'def'}%`
-      );
+      const isChanged = !current.updatedAt ||
+        current.maxLeverage !== updated.maxLeverage ||
+        current.minConfidenceGate !== updated.minConfidenceGate ||
+        current.assignedStrategyId !== updated.assignedStrategyId ||
+        current.assignedTier !== updated.assignedTier ||
+        current.tierAllocPct !== updated.tierAllocPct ||
+        current.slMultiplier !== updated.slMultiplier;
+
+      if (isChanged) {
+        logger.info(
+          `🧪 [SIM PAIR SYNC] Calibrated ${symbol}: Strat="${updated.assignedStrategyName || updated.assignedStrategyId || 'def'}" ` +
+          `Tier=${updated.assignedTier || 'def'} Alloc=${updated.tierAllocPct ?? 'def'}% Lev=${updated.maxLeverage ?? 'def'}x Gate=${updated.minConfidenceGate ?? 'def'}%`
+        );
+      }
     }
   }
 }
 
 export function getActiveStrategy(): StrategyConfig {
-  const isConnected = isSimLabConnected();
-  // 1. When Connected to Sim Lab AND Global Sim Lab Sync is enabled, automatically execute Sim Lab's live active strategy (overriding standalone)
-  if (isConnected && activeStrategySyncConfig.syncGlobalStrategy && (simStrategyDirectives || cachedLastSimDirectives)) {
-    const activeDirectives = simStrategyDirectives || cachedLastSimDirectives!;
-    const simId = activeDirectives.activeStrategyId || 'template_turtle_soup';
-    const simBase = getStrategyById(simId) || PREBUILT_TEMPLATES.find(t => t.id === simId) || PREBUILT_TEMPLATES[0];
+  const userLev = config.MAX_LEVERAGE || 10;
+  const safeLev = Math.max(10, Math.min(15, userLev));
+  const userMinAlloc = config.MIN_ALLOC_PCT || 20;
+  const userMaxAlloc = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 40;
 
-    const maxLev = config.MAX_LEVERAGE || 5;
-    const maxAlloc = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 35;
-    const flags = getFeatureFlags();
-    const syncInd = flags.syncIndicators;
-
-    const resolvedDesc = activeDirectives.strategyDescription || activeDirectives.description || (activeDirectives.fullStrategy?.description) || simBase.description;
-
-    return {
-      ...simBase,
-      ...(activeDirectives.fullStrategy || {}),
-      id: simId,
-      name: activeDirectives.activeStrategyName || simBase.name,
-      description: resolvedDesc,
-      isSimLab: true,
-      winRatePct: activeDirectives.overallWinRatePct ?? simBase.winRatePct,
-      layer1: {
-        ...simBase.layer1,
-        ...(syncInd && activeDirectives.layer1 && typeof activeDirectives.layer1 === 'object' ? activeDirectives.layer1 : {}),
-      },
-      layer2: {
-        ...simBase.layer2,
-        ...(syncInd && activeDirectives.layer2 && typeof activeDirectives.layer2 === 'object' ? activeDirectives.layer2 : {}),
-      },
-      layer3: {
-        ...simBase.layer3,
-        ...(syncInd && activeDirectives.layer3 && typeof activeDirectives.layer3 === 'object' ? activeDirectives.layer3 : {}),
-      },
-      layer4: {
-        ...simBase.layer4,
-        ...(syncInd && activeDirectives.layer4 && typeof activeDirectives.layer4 === 'object' ? activeDirectives.layer4 : {}),
-      },
-      layer5: {
-        ...simBase.layer5,
-        enabled: true, // IMMUTABLE INVARIANT: Layer 5 Risk Guard & SL is permanently locked ON
-        minConfidenceGate: typeof activeDirectives.minConfidenceGate === 'number'
-          ? Math.max(50, Math.min(95, Math.round(activeDirectives.minConfidenceGate)))
-          : simBase.layer5.minConfidenceGate,
-        leverage: typeof activeDirectives.leverage === 'number'
-          ? Math.min(activeDirectives.leverage, maxLev)
-          : Math.min(simBase.layer5.leverage, maxLev),
-        maxAllocPct: typeof activeDirectives.maxAllocPct === 'number'
-          ? Math.min(activeDirectives.maxAllocPct, maxAlloc)
-          : Math.min(simBase.layer5.maxAllocPct, maxAlloc),
-        minAllocPct: typeof activeDirectives.minAllocPct === 'number'
-          ? Math.max(5, Math.min(activeDirectives.minAllocPct, maxAlloc))
-          : simBase.layer5.minAllocPct,
-        minMarginUsd: Math.max(20, Number(activeDirectives.minMarginUsd ?? simBase.layer5?.minMarginUsd ?? 20)),
-        minRiskRewardRatio: typeof activeDirectives.minRiskRewardRatio === 'number'
-          ? Math.max(1.5, activeDirectives.minRiskRewardRatio)
-          : simBase.layer5.minRiskRewardRatio,
-        tp1CloseRatio: typeof activeDirectives.tp1CloseRatio === 'number'
-          ? Math.max(0.1, Math.min(0.9, activeDirectives.tp1CloseRatio))
-          : simBase.layer5.tp1CloseRatio,
-        stagnationTimeStopBars: typeof activeDirectives.stagnationTimeStopBars === 'number'
-          ? Math.max(2, Math.round(activeDirectives.stagnationTimeStopBars))
-          : simBase.layer5.stagnationTimeStopBars,
-        enforcePostOnly: typeof activeDirectives.enforcePostOnly === 'boolean'
-          ? activeDirectives.enforcePostOnly
-          : (simBase.layer5.enforcePostOnly ?? true),
-        makerFillTimeoutMs: typeof activeDirectives.makerFillTimeoutMs === 'number'
-          ? activeDirectives.makerFillTimeoutMs
-          : (simBase.layer5.makerFillTimeoutMs ?? 25000),
-        allowTakerFallback: typeof activeDirectives.allowTakerFallback === 'boolean'
-          ? activeDirectives.allowTakerFallback
-          : (simBase.layer5.allowTakerFallback ?? false),
-      },
-    };
-  }
-
-  // 2. Standalone Mode: Return user selected/custom standalone strategy
-  const base = getStrategyById(storageCache.activeId) || PREBUILT_TEMPLATES[0];
+  const base = PREBUILT_TEMPLATES[0];
   return {
     ...base,
+    id: 'champion_confirmed_retest_harvest30',
+    targetAssets: ['SOL/USD', 'ETH/USD'],
     layer5: {
       ...base.layer5,
-      minMarginUsd: Math.max(20, Number(base.layer5?.minMarginUsd ?? 20)),
-      enforcePostOnly: base.layer5.enforcePostOnly ?? true,
-      makerFillTimeoutMs: base.layer5.makerFillTimeoutMs ?? 25000,
-      allowTakerFallback: base.layer5.allowTakerFallback ?? false,
+      enabled: true,
+      leverage: safeLev,
+      minLeverage: 10,
+      maxLeverage: 15,
+      minAllocPct: userMinAlloc,
+      maxAllocPct: userMaxAlloc,
+      enforcePostOnly: true,
+      makerFillTimeoutMs: 300000,
+      allowTakerFallback: false,
+      fastSmaTrailingStopEnabled: true,
+      fastSmaTrailingBufferPct: 0.15,
+      breakevenFeeBufferPct: 0.30,
+      dynamicTakeProfit1R: 1.25,
+      dynamicTakeProfit2R: 2.50,
+      stagnationProfitHarvestR: 0.50,
+      dynamicGapLambda: 0.30,
+      dynamicGapExitLambda: 0.50,
     },
   };
 }
@@ -757,8 +514,8 @@ export function getActiveStrategyOriginInfo(): StrategyOriginInfo {
   }
 
   const simDirectives = simStrategyDirectives || cachedLastSimDirectives;
-  const simStratId = simDirectives?.activeStrategyId || 'template_turtle_soup';
-  const simStratName = simDirectives?.activeStrategyName || 'Turtle Soup & Liquidity Grab';
+  const simStratId = simDirectives?.activeStrategyId || 'champion_confirmed_retest_harvest30';
+  const simStratName = simDirectives?.activeStrategyName || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
   const simGate = simDirectives?.minConfidenceGate || 80;
   const simWinRate = simDirectives?.overallWinRatePct ?? 36.3;
 
@@ -947,6 +704,8 @@ export function getStrategyForPair(symbol: string): StrategyConfig {
       leverage: typeof overrides.maxLeverage === 'number' ? Math.min(base.layer5.leverage, overrides.maxLeverage) : base.layer5.leverage,
       minAllocPct: typeof overrides.tierAllocPct === 'number' ? Math.max(10, overrides.tierAllocPct - 10) : base.layer5.minAllocPct,
       maxAllocPct: typeof overrides.tierAllocPct === 'number' ? overrides.tierAllocPct : base.layer5.maxAllocPct,
+      fastSmaTrailingStopEnabled: true,
+      fastSmaTrailingBufferPct: 0.15,
     },
   };
 }
@@ -1001,7 +760,7 @@ export function applyPairPreset(symbol: string, preset: 'MAJOR_TREND' | 'HIGH_BE
     const norm = (symbol || '').toUpperCase();
     const simDir = simPairDirectivesCache[norm] || simPairDirectivesCache[symbol];
     const simStrat = simStrategyDirectives;
-    const safeMaxLev = config.MAX_LEVERAGE || 5;
+    const safeMaxLev = config.MAX_LEVERAGE || 15;
 
     updated = {
       layer0_kronos: simDir?.layer0_kronos !== undefined ? simDir.layer0_kronos : true,
@@ -1036,9 +795,10 @@ export function setPairRiskOverrides(
 ): PairLayerOverrides {
   const norm = (symbol || '').toUpperCase();
   const current = pairOverridesCache[norm] || pairOverridesCache[symbol] || {};
+  const safeLev = typeof maxLeverage === 'number' ? Math.max(10, Math.min(15, maxLeverage)) : undefined;
   const updated: PairLayerOverrides = {
     ...current,
-    ...(typeof maxLeverage === 'number' ? { maxLeverage } : {}),
+    ...(typeof safeLev === 'number' ? { maxLeverage: safeLev } : {}),
     ...(typeof slMultiplier === 'number' ? { slMultiplier } : {}),
     ...(typeof minConfidenceGate === 'number' ? { minConfidenceGate } : {}),
     preset: 'MANUAL', // Operator manual pin: protects this pair against automated background sync overwrite
@@ -1301,7 +1061,7 @@ export function deleteCustomStrategy(id: string): boolean {
   storageCache.customStrategies = storageCache.customStrategies.filter((s) => s.id !== id);
   if (storageCache.customStrategies.length < initialLen) {
     if (storageCache.activeId === id && !simStrategiesCache.some((s) => s.id === id)) {
-      storageCache.activeId = 'template_turtle_soup';
+      storageCache.activeId = 'champion_confirmed_retest_harvest30';
     }
     dbClient.deleteCustomStrategy(id);
     saveStorage(storageCache);

@@ -13,7 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
-import { config } from '../config';
+import { config, SETTINGS_FILE_PATH } from '../config';
 import { logger } from '../utils/logger';
 import { TradeRecord } from '../trades/executor';
 
@@ -24,8 +24,6 @@ export interface TelegramConfig {
   chatId: string;
   enabled: boolean;
 }
-
-const SETTINGS_FILE_PATH = path.resolve(process.cwd(), 'data/settings.json');
 
 export class TelegramNotifier {
   private botToken = '';
@@ -66,16 +64,36 @@ export class TelegramNotifier {
     }
   }
 
-  public updateSettings(botToken?: string, chatId?: string, enabled = true): void {
-    if (botToken !== undefined && botToken.trim() !== '') {
-      this.botToken = botToken.trim();
+  public updateSettings(
+    botTokenOrOpts?: string | { botToken?: string; chatId?: string; enabled?: boolean },
+    chatId?: string,
+    enabled?: boolean
+  ): void {
+    let tokenArg = typeof botTokenOrOpts === 'string' ? botTokenOrOpts : undefined;
+    let chatArg = chatId;
+    let enabledArg = enabled;
+
+    if (typeof botTokenOrOpts === 'object' && botTokenOrOpts !== null) {
+      tokenArg = botTokenOrOpts.botToken;
+      chatArg = botTokenOrOpts.chatId;
+      enabledArg = botTokenOrOpts.enabled;
+    }
+
+    const cleanToken = (tokenArg || '').trim();
+    if (tokenArg !== undefined && cleanToken !== '' && !cleanToken.includes('••••') && cleanToken.length > 5) {
+      this.botToken = cleanToken;
       config.TELEGRAM_BOT_TOKEN = this.botToken;
     }
-    if (chatId !== undefined && chatId !== null) {
-      this.chatId = chatId.trim();
+    const cleanChat = (chatArg !== undefined && chatArg !== null) ? String(chatArg).trim() : '';
+    if (chatArg !== undefined && cleanChat !== '' && !cleanChat.includes('••••')) {
+      this.chatId = cleanChat;
       config.TELEGRAM_CHAT_ID = this.chatId;
     }
-    this.enabled = Boolean(this.botToken && this.chatId && enabled);
+    if (enabledArg !== undefined) {
+      this.enabled = Boolean(this.botToken && this.chatId && enabledArg);
+    } else {
+      this.enabled = Boolean(this.botToken && this.chatId && this.enabled);
+    }
 
     // Save to data/settings.json
     try {
@@ -183,6 +201,19 @@ export class TelegramNotifier {
     const sideIcon = isLong ? '🟢 <b>LONG</b>' : '🔴 <b>SHORT</b>';
     const paperTag = trade.isPaper ? ' <i>[PAPER SIMULATION]</i>' : ' <i>[LIVE MAINNET]</i>';
 
+    let robustSmaLine = '';
+    let trailingLine = '';
+    try {
+      const { getActiveStrategy } = require('../strategy/manager');
+      const strat = getActiveStrategy();
+      if (strat?.layer1?.fastSmaRetestEnabled) {
+        robustSmaLine = `\n<b>Robust Island SMA:</b> <code>Fast(${strat.layer1.fastPeriod || 9})/Slow(${strat.layer1.slowPeriod || 21}) Retest Gate</code>`;
+      }
+      if (strat?.layer5?.fastSmaTrailingStopEnabled) {
+        trailingLine = `\n<b>HarvestMaster SL:</b> <code>Fast SMA Dynamic Trail (±${strat.layer5.fastSmaTrailingBufferPct || 0.15}%)</code>`;
+      }
+    } catch {}
+
     const msg = `
 🚀 <b>TRADE OPENED${paperTag}</b>
 ━━━━━━━━━━━━━━━━━━
@@ -190,7 +221,7 @@ export class TelegramNotifier {
 <b>Direction:</b> ${sideIcon} (${trade.leverage}x)
 <b>Entry Price:</b> <code>$${trade.entryPrice}</code>
 <b>Take Profit:</b> <code>$${trade.takeProfit.toFixed(4)}</code> (2.5x ATR)
-<b>Stop Loss:</b> <code>$${trade.stopLoss.toFixed(4)}</code> (1.5x ATR)
+<b>Stop Loss:</b> <code>$${trade.stopLoss.toFixed(4)}</code> (1.5x ATR)${robustSmaLine}${trailingLine}
 <b>Allocated:</b> <code>$${trade.allocatedUsd.toFixed(2)} USD</code>
 <b>Position Size:</b> <code>$${trade.sizeUsd.toFixed(2)} USD</code>
 <b>Confidence:</b> <code>${trade.confidence}/100</code>
@@ -201,7 +232,11 @@ export class TelegramNotifier {
 
   public async notifyTradeClosed(trade: TradeRecord): Promise<void> {
     const isWin = (trade.pnlUsd ?? 0) > 0;
-    const headerIcon = isWin ? '🎯 <b>TAKE PROFIT HIT</b>' : '🛑 <b>STOP LOSS TRIGGERED</b>';
+    const reason = ((trade as any).exitReason || (trade as any).lastRatchetReason || '').toUpperCase();
+    let headerIcon = isWin ? '🎯 <b>TAKE PROFIT HIT</b>' : '🛑 <b>STOP LOSS TRIGGERED</b>';
+    if (reason.includes('FAST SMA') || reason.includes('HARVEST MASTER') || reason.includes('TRAIL')) {
+      headerIcon = '🌾 <b>HARVESTMASTER FAST SMA TRAIL HIT</b>';
+    }
     const pnlSign = (trade.pnlUsd ?? 0) >= 0 ? '+' : '';
     const paperTag = trade.isPaper ? ' <i>[PAPER]</i>' : ' <i>[LIVE]</i>';
 
@@ -213,18 +248,26 @@ ${headerIcon}${paperTag}
 <b>Realized PnL:</b> <b>${pnlSign}$${trade.pnlUsd?.toFixed(2)} USD</b> (${pnlSign}${trade.pnlPct}%)
 <b>Entry Price:</b> <code>$${trade.entryPrice}</code>
 <b>Strategy:</b> <code>${trade.strategyName || 'Standalone'}</code>
+${(trade as any).exitReason ? `<b>Exit Reason:</b> <code>${(trade as any).exitReason}</code>\n` : ''}
 `;
     await this.sendMessage(msg);
   }
 
   public async notifySimLabSupercharge(directives: any): Promise<void> {
     const banned = directives.bannedSides?.length > 0 ? `[${directives.bannedSides.join(', ')}]` : 'None';
+    const fastSmaInfo = directives.layer1?.fastSmaRetestEnabled
+      ? `\n<b>Robust Island SMA:</b> <code>Fast(${directives.layer1.fastPeriod || 9})/Slow(${directives.layer1.slowPeriod || 21}) Retest (±${directives.layer1.fastSmaRetestTolerancePct || 0.35}%)</code>`
+      : '';
+    const trailInfo = directives.layer5?.fastSmaTrailingStopEnabled
+      ? `\n<b>HarvestMaster Trail:</b> <code>Fast SMA Dynamic Buffer ${directives.layer5.fastSmaTrailingBufferPct || 0.15}%</code>`
+      : '';
+
     const msg = `
-⚡ <b>SIM LAB SUPERCHARGED</b>
+⚡ <b>SIM LAB STRATEGY DIRECTIVE UPDATED</b>
 ━━━━━━━━━━━━━━━━━━
-<b>Active Strategy:</b> <code>${directives.activeStrategy}</code>
+<b>Active Strategy:</b> <code>${directives.activeStrategy || directives.activeStrategyName}</code>
 <b>Macro Regime:</b> <code>${directives.regime}</code>
-<b>Score Floor:</b> <code>${directives.scoreFloor}</code>
+<b>Score Floor:</b> <code>${directives.scoreFloor}%</code>${fastSmaInfo}${trailInfo}
 <b>Wick Tolerance:</b> <code>${directives.bullTrapUpperWickPct}%</code>
 <b>Directional Bans:</b> <b>${banned}</b>
 `;

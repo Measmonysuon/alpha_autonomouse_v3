@@ -15,7 +15,7 @@ import { logger } from '../utils/logger';
 import { applySimStrategyDirectives, applySimPairDirectives } from '../strategy/manager';
 import { standaloneEngine } from '../engine/standalone-engine';
 import { applySimHarvesterCalibration } from '../risk/portfolio-harvester';
-import { simConnectionManager } from './connection-manager';
+import { simConnectionManager, formatPipelineUrl } from './connection-manager';
 import { superchargeClient } from '../simlab/supercharge-client';
 import { hotSwapNodeKey, triggerNodeKeyFailover } from '../utils/node-key-resolver';
 
@@ -60,6 +60,16 @@ export interface AlphaBundleResponse {
       wfeDirective: 'EXECUTE_FULL' | 'REDUCE_SIZE_HALF' | 'DEFENSE_VETO';
       isParameterIsland: boolean;
       robustScore: number;
+      barsSinceCross?: number;
+      isFreshCross?: boolean;
+      priceRetestLong?: boolean;
+      priceRetestShort?: boolean;
+      trailingStopLong?: number;
+      trailingStopShort?: number;
+      priceVsFastSmaPct?: number;
+      exit3FastSma?: number;
+      exit3SlowSma?: number;
+      exit3GapDist?: number;
     }>;
   };
   macro: {
@@ -75,7 +85,9 @@ export interface AlphaBundleResponse {
     emergencyHardBanSide?: 'LONG' | 'SHORT' | null;
     counterTrendHurdleSide?: 'LONG' | 'SHORT' | null;
     counterTrendHurdleScore?: number;
+    netflow?: any;
   };
+  netflow?: any;
   strategy?: {
     activeStrategyId: string;
     activeStrategyName: string;
@@ -229,11 +241,17 @@ export function isSimPipelineActive(): boolean {
   return isConsumerRunning && connectionState === 'CONNECTED' && Boolean(lastSyncedBundle && (Date.now() - lastSyncTimestamp < 120000));
 }
 
+export function isSimConsumerRunning(): boolean {
+  return isConsumerRunning;
+}
+
 /**
  * Fetch and apply the latest Alpha Bundle from the central Alpha Server
  */
 export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
-  if (!isConsumerRunning || !superchargeClient.isActive()) {
+  // STRICT STANDALONE ENFORCEMENT:
+  // Standalone mode MUST NEVER receive, query, or ingest any Alpha Bundle from Sim Lab.
+  if (config.OPERATING_MODE === 'STANDALONE' || !isConsumerRunning || !superchargeClient.isActive()) {
     return null;
   }
   try {
@@ -323,7 +341,7 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
     }
 
     // ── 3. Financial Guardrails (Live Mainnet Safety) ──────────────────────────
-    const maxLeverageLimit = config.MAX_LEVERAGE || 5;
+    const maxLeverageLimit = config.MAX_LEVERAGE || 15;
     const maxAllocLimit = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 35;
 
     const safeLeverage = bundle.strategy?.leverage
@@ -373,6 +391,19 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
     if (flags.syncDirectionalBans && bundle.macro?.emergencyHardBanSide) {
       bannedSides.push(bundle.macro.emergencyHardBanSide);
     }
+    if (flags.syncDirectionalBans && Array.isArray(bundle.macro?.bannedSides)) {
+      for (const bs of bundle.macro.bannedSides) {
+        if ((bs === 'LONG' || bs === 'SHORT') && !bannedSides.includes(bs)) {
+          bannedSides.push(bs);
+        }
+      }
+    }
+    if (flags.syncDirectionalBans && bundle.netflow?.bannedSide && bundle.netflow.bannedSide !== 'NONE') {
+      const nbs = bundle.netflow.bannedSide;
+      if ((nbs === 'LONG' || nbs === 'SHORT') && !bannedSides.includes(nbs)) {
+        bannedSides.push(nbs);
+      }
+    }
 
     const engineUpdates: any = {};
     if (flags.syncStrategyStudio && bundle.strategy) {
@@ -400,10 +431,40 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
     // confidence gate overrides, bull-trap sensitivity calibration.
     if (flags.syncStrategyStudio && bundle.pairDirectives && typeof bundle.pairDirectives === 'object') {
       const sanitizedPairDirectives: Record<string, any> = {};
+      const rwParams = (bundle.rollingWindowDirectives?.pairParameters || {}) as Record<string, any>;
       for (const [sym, dir] of Object.entries(bundle.pairDirectives as Record<string, any>)) {
         if (dir && typeof dir === 'object') {
+          const norm = sym.toUpperCase().replace(/[-_/]/g, '');
+          let rw: any = rwParams[sym] || rwParams[sym.replace('/', '')];
+          if (!rw) {
+            for (const [rk, rv] of Object.entries(rwParams)) {
+              if (rk.toUpperCase().replace(/[-_/]/g, '') === norm) { rw = rv; break; }
+            }
+          }
           sanitizedPairDirectives[sym] = {
             ...dir,
+            ...(rw ? {
+              fastPeriod: rw.fastPeriod,
+              slowPeriod: rw.slowPeriod,
+              currentFastSma: rw.currentFastSma,
+              currentSlowSma: rw.currentSlowSma,
+              smaSpreadPct: rw.smaSpreadPct,
+              smaAlignment: rw.smaAlignment,
+              wfe: rw.wfe,
+              robustScore: rw.robustScore,
+              barsSinceCross: rw.barsSinceCross,
+              isFreshCross: rw.isFreshCross,
+              priceRetestLong: rw.priceRetestLong,
+              priceRetestShort: rw.priceRetestShort,
+              trailingStopLong: rw.trailingStopLong,
+              trailingStopShort: rw.trailingStopShort,
+              priceVsFastSmaPct: rw.priceVsFastSmaPct,
+              exit3FastSma: (rw as any).exit3FastSma,
+              exit3SlowSma: (rw as any).exit3SlowSma,
+              exit3GapDist: (rw as any).exit3GapDist,
+              gap30Price: (rw as any).exit3Target30 ?? (dir as any)?.gap30Price,
+              gap50Price: (rw as any).exit3Target50 ?? (dir as any)?.gap50Price,
+            } : {}),
             ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, maxLeverageLimit) } : {}),
           };
         }
@@ -433,13 +494,14 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
 
     const regime = bundle.macro?.regime || 'ACTIVE';
     const harvesterGate = bundle.harvester?.vulnerabilityHarvestThreshold ?? 'N/A';
+    const pairCount = Object.keys(bundle.pairDirectives || {}).length;
     if (wasRetrying) {
       logger.info(
-        `✅ [SIM PIPELINE] Reconnected to Sim Lab! Source: ${urlUsed} (Regime: ${regime}, Harvester Gate: ${harvesterGate})`
+        `✅ [SIM PIPELINE] Reconnected to Sim Lab! Source: ${formatPipelineUrl(urlUsed)} (Regime: ${regime}, Harvester Gate: ${harvesterGate}, Pairs: ${pairCount})`
       );
     } else {
       logger.info(
-        `📥 [SIM PIPELINE] Alpha bundle synced from ${urlUsed} (Regime: ${regime}, Harvester Gate: ${harvesterGate})`
+        `📥 [ALPHA BUNDLE] Synced from ${formatPipelineUrl(urlUsed)} (Regime: ${regime}, Harvester Gate: ${harvesterGate}, Pairs: ${pairCount})`
       );
     }
 
@@ -470,6 +532,12 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
  *  - State machine: CONNECTED | RETRYING | DISCONNECTED exposed via getConnectionState().
  */
 export function startSimPipelineConsumer(): void {
+  // STRICT STANDALONE ENFORCEMENT:
+  // If in STANDALONE mode, consumer must never start polling for alpha bundles.
+  if (config.OPERATING_MODE === 'STANDALONE' || !superchargeClient.isActive()) {
+    logger.info('🛡️ [STANDALONE MODE] Operating locally. Alpha bundle ingestion disabled.');
+    return;
+  }
   if (isConsumerRunning) return; // Guard against double-start
   isConsumerRunning = true;
   retryDelayMs = RETRY_BASE_MS;

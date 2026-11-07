@@ -264,7 +264,16 @@ export class PortfolioHarvester {
       if (!currentPrice || currentPrice <= 0) {
         continue;
       }
+      trade.currentPrice = currentPrice;
       const isLong = trade.action === 'LONG';
+      if (!trade.peakPrice) {
+        trade.peakPrice = trade.entryPrice;
+      }
+      if (isLong) {
+        if (currentPrice > trade.peakPrice) trade.peakPrice = currentPrice;
+      } else {
+        if (currentPrice < trade.peakPrice) trade.peakPrice = currentPrice;
+      }
       const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
       const pnlPct = trade.entryPrice > 0 ? (priceDiff / trade.entryPrice) * 100 * trade.leverage : 0;
       const pnlUsd = (trade.allocatedUsd * pnlPct) / 100;
@@ -299,10 +308,15 @@ export class PortfolioHarvester {
       const stopDistance = Math.abs(trade.entryPrice - initialSl);
       const riskRMultiple = stopDistance > 0 ? (Math.abs(currentPrice - trade.entryPrice) / stopDistance) : 0;
 
-      // Autonomous Anti-Hunt R: Check per-pair Sim Lab directive first, fallback to Harvester config
+      // Autonomous Anti-Hunt R: Check per-pair Sim Lab directive first, fallback to active strategy layer5 and Harvester config
       const pairDir = this.config.syncMode === 'SIM_LAB_SYNC' ? getSimPairDirective(trade.symbol) : null;
-      const targetR = pairDir?.accelerateBreakevenR || this.config.accelerateBreakevenR || 1.35;
-      const feeBufferPct = (this.config.breakevenFeeBufferPct ?? 0.75);
+      let activeStratL5: any = null;
+      try {
+        const { getActiveStrategy } = require('../strategy/manager');
+        activeStratL5 = getActiveStrategy()?.layer5;
+      } catch {}
+      const targetR = activeStratL5?.dynamicTakeProfit1R || pairDir?.accelerateBreakevenR || this.config.accelerateBreakevenR || 1.35;
+      const feeBufferPct = (activeStratL5?.breakevenFeeBufferPct ?? (this.config.breakevenFeeBufferPct ?? 0.75));
 
       // Dynamic Trailing SL: Accelerate to breakeven if profit >= targetR or pnlPct >= minHarvestPct
       let breakevenLocked = false;
@@ -336,6 +350,68 @@ export class PortfolioHarvester {
         }
         tradeExecutor.notifyTradeClosed(trade);
         continue;
+      }
+
+      // ── Robust Island Dynamic Amber Band Gap Harvest (Tier 1: 30% Scale-Out -> Tier 2: 50% Full Exit) ──
+      const normSym = trade.symbol.toUpperCase().replace(/[-_/]/g, '');
+      const isTargetAsset = normSym.includes('SOL') || normSym.includes('ETH');
+      const isRobustHarvestTrade = Boolean(trade.noFixedTp || (isTargetAsset && activeStratL5?.noFixedTp));
+
+      if (isRobustHarvestTrade && currentPrice > 0) {
+        // Enforce peak price tracking on active trade
+        if (!trade.peakPrice) trade.peakPrice = trade.entryPrice;
+        if (isLong) {
+          if (currentPrice > trade.peakPrice) trade.peakPrice = currentPrice;
+        } else {
+          if (currentPrice < trade.peakPrice) trade.peakPrice = currentPrice;
+        }
+
+        // Must achieve at least +0.20% peak gain before any reversal harvest can fire
+        const hadProfit = isLong
+          ? (trade.peakPrice >= trade.entryPrice * 1.002)
+          : (trade.peakPrice <= trade.entryPrice * 0.998);
+
+        let gap30 = trade.gap30Price;
+        let gap50 = trade.gap50Price;
+
+        // Continuously refresh dynamic Amber Band SMAs from live telemetry
+        try {
+          const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
+          const pairRolling = getPairRollingDirectives(trade.symbol);
+          if (pairRolling?.currentFastSma && pairRolling?.currentSlowSma) {
+            const innerSma = pairRolling.exit3FastSma ?? pairRolling.currentFastSma;
+            const longerSma = pairRolling.exit3SlowSma ?? pairRolling.currentSlowSma;
+            gap30 = Number((0.70 * innerSma + 0.30 * longerSma).toFixed(4));
+            gap50 = Number((0.50 * innerSma + 0.50 * longerSma).toFixed(4));
+            trade.gap30Price = gap30;
+            trade.gap50Price = gap50;
+          }
+        } catch {}
+
+        if (gap30 && gap50) {
+          // Tier 1: Price reverses/retraces back down (LONG) or up (SHORT) into Amber Band (30% Gap Level) after profit expansion
+          const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
+          if (isTier1Reached && hadProfit && !trade.harvest30Done) {
+            logger.info(
+              `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to 30% Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing 30% partial close & locking BE+0.30%!`,
+            );
+            tradeExecutor.execute30PercentHarvest(trade.symbol).catch((err: any) => {
+              logger.error(`execute30PercentHarvest failed: ${err.message}`);
+            });
+          }
+
+          // Tier 2: Price reverses further to 50% Gap Midpoint Touch -> 100% Terminal Take Profit All!
+          const isTier2Reached = isLong ? (currentPrice <= gap50) : (currentPrice >= gap50);
+          if (isTier2Reached && (trade.harvest30Done || hadProfit)) {
+            logger.info(
+              `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached 50% Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing 100% Full Take Profit Close!`,
+            );
+            tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
+              logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
+            });
+            continue;
+          }
+        }
       }
 
       // INITIAL SOFT STOP LOSS HIT TRIGGER (pre-breakeven):
@@ -407,8 +483,9 @@ export class PortfolioHarvester {
       // Only stretch TP on confirmed runaway runners that have already banked TP1 or achieved >= 8% leveraged profit.
       // Strict Guards:
       //  1. Never stretch on Dual TP trades (must respect fast exit targets).
-      //  2. Clamp stretched TP to within a realistic ceiling (max 3.5% from entry price) to avoid squishing chart candles and fighting with reconciliation.
-      const isScalpOrFixed = trade.isDualTp;
+      //  2. Never stretch on noFixedTp trades (harvest managed dynamically by gap expansion).
+      //  3. Clamp stretched TP to within a realistic ceiling (max 3.5% from entry price) to avoid squishing chart candles and fighting with reconciliation.
+      const isScalpOrFixed = trade.isDualTp || trade.noFixedTp;
       if (!isScalpOrFixed && pnlPct >= 8.0 && (trade.tp1Hit || riskRMultiple >= 1.5) && pairDir) {
         const coneP95 = pairDir.dynamicProtection?.coneP95Resistance || (pairDir as any).kronosForecast?.dynamicProtection?.coneP95Resistance;
         const coneP05 = pairDir.dynamicProtection?.coneP05Support || (pairDir as any).kronosForecast?.dynamicProtection?.coneP05Support;
@@ -487,6 +564,12 @@ export class PortfolioHarvester {
       const dynamicMinUsd = Math.max(0.20, Number(((marginAllocated * dynamicMinHarvestPct) / 100).toFixed(2)));
 
       // 5. Strict AND Invariant: No hardcoded dollar overrides
+      // Robust Island Champion trades (Exit #3) are governed 100% purely by Amber Band L30/L50.
+      // Bypass generic portfolio profit harvest to prevent premature exits and let runners breathe.
+      if (isRobustHarvestTrade) {
+        continue;
+      }
+
       const shouldHarvest = this.config.enabled &&
         pnlPct >= dynamicMinHarvestPct &&
         pnlUsd >= dynamicMinUsd;
@@ -555,15 +638,34 @@ export class PortfolioHarvester {
             ? Math.min(maxLongSl, rawLockedFloor)
             : Math.max(minShortSl, rawLockedFloor)).toFixed(4));
 
-          if (isLong && trade.stopLoss < lockedProfitFloor - 0.0001 && lockedProfitFloor < currentPrice) {
-            trade.stopLoss = lockedProfitFloor;
-            trade.softRatchetPrice = lockedProfitFloor;
+          let finalLockedFloor = lockedProfitFloor;
+
+          // Robust Island Fast SMA Trailing Stop tightening (Precomputed in Sim Lab Alpha Bundle)
+          try {
+            const { getActiveStrategy } = require('../strategy/manager');
+            const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
+            const activeStrat = getActiveStrategy();
+            if (activeStrat?.layer5?.fastSmaTrailingStopEnabled) {
+              const pairRolling = getPairRollingDirectives(trade.symbol);
+              if (pairRolling) {
+                if (isLong && typeof pairRolling.trailingStopLong === 'number' && pairRolling.trailingStopLong > trade.entryPrice && pairRolling.trailingStopLong < currentPrice) {
+                  finalLockedFloor = Math.max(finalLockedFloor, pairRolling.trailingStopLong);
+                } else if (!isLong && typeof pairRolling.trailingStopShort === 'number' && pairRolling.trailingStopShort < trade.entryPrice && pairRolling.trailingStopShort > currentPrice) {
+                  finalLockedFloor = Math.min(finalLockedFloor, pairRolling.trailingStopShort);
+                }
+              }
+            }
+          } catch {}
+
+          if (isLong && trade.stopLoss < finalLockedFloor - 0.0001 && finalLockedFloor < currentPrice) {
+            trade.stopLoss = finalLockedFloor;
+            trade.softRatchetPrice = finalLockedFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
             logger.info(`🌾 [PROFIT HARVEST: ADAPTIVE TRAIL] ${trade.symbol} LONG soft trailing stop ratcheted to lock ${(profitLockRatio * 100).toFixed(0)}% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% | Buffer: ${(slBufferPct * 100).toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);
-          } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > lockedProfitFloor + 0.0001) && lockedProfitFloor > currentPrice) {
-            trade.stopLoss = lockedProfitFloor;
-            trade.softRatchetPrice = lockedProfitFloor;
+          } else if (!isLong && (trade.stopLoss === 0 || trade.stopLoss > finalLockedFloor + 0.0001) && finalLockedFloor > currentPrice) {
+            trade.stopLoss = finalLockedFloor;
+            trade.softRatchetPrice = finalLockedFloor;
             breakevenLocked = true;
             tradeExecutor.saveTrades();
             logger.info(`🌾 [PROFIT HARVEST: ADAPTIVE TRAIL] ${trade.symbol} SHORT soft trailing stop ratcheted to lock ${(profitLockRatio * 100).toFixed(0)}% gain ($${trade.stopLoss}) | PnL: +${pnlPct.toFixed(2)}% | Buffer: ${(slBufferPct * 100).toFixed(2)}% (Soft SL on-system, On-Chain Hard SL remains $${trade.hardStopLoss})`);

@@ -87,7 +87,7 @@ function createCleanDataDir(targetDir) {
         decibelNetwork: 'mainnet',
         ai: { provider: 'gemini', geminiApiKey: '', ollamaBaseUrl: 'http://localhost:11434' },
         budgetUsd: 30,
-        trading: { budgetUsd: 30, paperTrading: false },
+        trading: { budgetUsd: 30, paperTrading: true },
         isConfigured: false,
         onboarded: false,
         updatedAt: 0,
@@ -102,12 +102,12 @@ function createCleanDataDir(targetDir) {
     JSON.stringify({ trades: [], shadowTrades: [], lastUpdated: 0 }, null, 2),
     'utf8'
   );
-  if (fs.existsSync(path.join(ROOT_DIR, 'data', 'decibel-markets.json'))) {
-    fs.copyFileSync(
-      path.join(ROOT_DIR, 'data', 'decibel-markets.json'),
-      path.join(dataDir, 'decibel-markets.json')
-    );
-  }
+  ['decibel-markets.json', 'user-strategies.json', 'active-strategy.json', 'strategy-sync-config.json', 'macro-calendar.json', 'settings.example.json'].forEach((file) => {
+    const src = path.join(ROOT_DIR, 'data', file);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, path.join(dataDir, file));
+    }
+  });
 }
 
 // ── 3. Build macOS Package ───────────────────────────────────────────────────

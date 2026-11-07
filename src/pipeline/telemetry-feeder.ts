@@ -14,7 +14,8 @@ import { logger } from '../utils/logger';
 import { tradeExecutor, TradeRecord, ShadowTrade } from '../trades/executor';
 import { portfolioHarvester } from '../risk/portfolio-harvester';
 import { getSimPairDirective } from '../strategy/manager';
-import { simConnectionManager } from './connection-manager';
+import { simConnectionManager, formatPipelineUrl } from './connection-manager';
+import { getNodeHealthState } from '../utils/node-key-resolver';
 
 export interface ClientTelemetryPayload {
   timestamp: number;
@@ -115,7 +116,7 @@ export async function buildTelemetryPayload(
   const timeoutPromise = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
     Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
 
-  await timeoutPromise(tradeExecutor.syncOnChainPositions().catch(() => {}), 1500, undefined);
+  await timeoutPromise(tradeExecutor.syncOnChainPositions().catch(() => { }), 1500, undefined);
   const closedTrades = tradeExecutor.getClosedTrades();
   const openTrades = tradeExecutor.getOpenTrades();
   const stats = tradeExecutor.getStats();
@@ -248,7 +249,7 @@ export async function buildTelemetryPayload(
   try {
     const onChain = await timeoutPromise(tradeExecutor.fetchOnChainBalance(), 1500, { balanceUsd: 0, aptBalance: 0 });
     gasApt = onChain.aptBalance;
-  } catch {}
+  } catch { }
 
   const openPositions = openTrades.map((t) => ({
     symbol: t.symbol,
@@ -263,14 +264,14 @@ export async function buildTelemetryPayload(
     leverage: t.leverage,
   }));
 
-  let syncedStrategyName = '6-Pillar Fleet CIO V13 - RISK_ON_BETA Momentum & Bi-Directional EV';
-  let assignedStrategyId = 'ai_strategy_1790750000000';
+  let syncedStrategyName = 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
+  let assignedStrategyId = 'champion_confirmed_retest_harvest30';
   try {
     const { getActiveStrategy } = require('../strategy/manager');
     const strat = getActiveStrategy();
     if (strat?.name) syncedStrategyName = strat.name;
     if (strat?.id) assignedStrategyId = strat.id;
-  } catch {}
+  } catch { }
 
   const payload: ClientTelemetryPayload = {
     timestamp: Date.now(),
@@ -304,6 +305,7 @@ export async function buildTelemetryPayload(
     budgetUsd: config.BUDGET_USD,
     openPositions,
     isConfigured: isClientConfigured(),
+    nodeHealth: getNodeHealthState(),
     onChain: {
       aptBalance: isClientConfigured() ? gasApt : 0,
       subaccount: isClientConfigured() ? (config.DECIBEL_SUBACCOUNT_ADDRESS || '') : '',
@@ -346,7 +348,7 @@ export async function pushTelemetry(
       if (!superchargeClient.getFeatureFlags().syncTelemetry) {
         return false;
       }
-    } catch {}
+    } catch { }
 
     const payload = await buildTelemetryPayload(triggerReason);
 
@@ -364,7 +366,7 @@ export async function pushTelemetry(
 
     if (success) {
       logger.info(
-        `📤 [TELEMETRY FEEDER] Pushed live telemetry to ${urlUsed} (Win rate: ${payload.execution.winRatePct}%, Closed trades: ${payload.execution.totalTradesClosed}, Trigger: ${triggerReason})`
+        `📤 [TELEMETRY FEEDER] Pushed live telemetry to ${formatPipelineUrl(urlUsed)} (Win rate: ${payload.execution.winRatePct}%, Closed trades: ${payload.execution.totalTradesClosed}, Trigger: ${triggerReason})`
       );
       return true;
     }
@@ -386,29 +388,29 @@ export function startTelemetryFeeder(): void {
   }
 
   const intervalMs = config.SIM_TELEMETRY_INTERVAL_MS || 30000;
-  logger.info(`📡 [TELEMETRY FEEDER] Starting live telemetry feeder (interval ${intervalMs}ms) -> ${config.SIM_TELEMETRY_URL}`);
+  logger.info(`📡 [TELEMETRY FEEDER] Starting live telemetry feeder (interval ${intervalMs}ms) -> ${formatPipelineUrl(config.SIM_TELEMETRY_URL)}`);
 
   // Hook into tradeExecutor events only once
   if (!isInitialized) {
     tradeExecutor.onTradeClosed((trade: TradeRecord) => {
       logger.info(`🔔 [TELEMETRY FEEDER] Immediate push triggered by closed trade: ${trade.symbol} (${trade.status})`);
-      pushTelemetry('trade_closed').catch(() => {});
+      pushTelemetry('trade_closed').catch(() => { });
     });
 
     tradeExecutor.onShadowTradeResolved((shadow: ShadowTrade) => {
       logger.info(`👻 [TELEMETRY FEEDER] Immediate push triggered by resolved shadow trade: ${shadow.symbol} (${shadow.status})`);
-      pushTelemetry('shadow_trade_resolved').catch(() => {});
+      pushTelemetry('shadow_trade_resolved').catch(() => { });
     });
 
     isInitialized = true;
   }
 
   // Initial push immediately
-  pushTelemetry('periodic_sync').catch(() => {});
+  pushTelemetry('periodic_sync').catch(() => { });
 
   // Periodic recurring push
   feederTimer = setInterval(async () => {
-    await pushTelemetry('periodic_sync').catch(() => {});
+    await pushTelemetry('periodic_sync').catch(() => { });
   }, intervalMs);
 }
 
@@ -448,7 +450,7 @@ export async function pushInstantVeto(
       headers['Authorization'] = `Bearer ${config.CLIENT_API_KEY}`;
       headers['x-api-key'] = config.CLIENT_API_KEY;
     }
-    simConnectionManager.postTelemetry(instantPayload, headers).catch(() => {});
+    simConnectionManager.postTelemetry(instantPayload, headers).catch(() => { });
     logger.info(`📡 [FLEET IMMUNITY BUS] Instant trap veto broadcast to Sim Lab: ${symbol} (${bannedSide}) [${trapCategory}]`);
   } catch (err: any) {
     logger.warn(`⚠️ [FLEET IMMUNITY BUS] Failed to broadcast instant veto: ${err.message}`);

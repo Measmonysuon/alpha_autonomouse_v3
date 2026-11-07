@@ -221,9 +221,30 @@ class TradeDatabase {
     } catch { /* column already exists */ }
 
     try {
+      this.db.exec(`ALTER TABLE custom_strategies ADD COLUMN description TEXT;`);
+    } catch { /* column already exists */ }
+
+    try {
+      this.db.exec(`ALTER TABLE custom_strategies ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0';`);
+    } catch { /* column already exists */ }
+
+    try {
+      this.db.exec(`ALTER TABLE custom_strategies ADD COLUMN config_json TEXT;`);
+    } catch { /* column already exists */ }
+
+    try {
+      this.db.exec(`UPDATE custom_strategies SET config_json = config WHERE config_json IS NULL AND config IS NOT NULL;`);
+    } catch { }
+
+    try {
+      this.db.exec(`ALTER TABLE custom_strategies ADD COLUMN author TEXT DEFAULT 'User';`);
+    } catch { /* column already exists */ }
+
+    try {
       this.db.exec(`
         UPDATE trades 
-        SET is_manual = 1 
+        SET is_manual = 1,
+            strategy_name = CASE WHEN strategy_name = 'Manual Decibel Trade' OR strategy_name IS NULL OR strategy_name = '' THEN 'human trade DEX' ELSE strategy_name END
         WHERE (client_order_id IS NULL OR (client_order_id NOT LIKE 'agent-%' AND client_order_id NOT LIKE 'decibel-%'))
           AND (id NOT LIKE 'agent-%' AND id NOT LIKE 'decibel-%');
       `);
@@ -525,9 +546,9 @@ class TradeDatabase {
               const active = getActiveStrategy();
               if (active?.name) dynStrat = active.name;
             } catch {}
-            const stratName = (!existing.strategy_name || existing.strategy_name === 'Manual Decibel Trade') && isAgent
+            const stratName = (!existing.strategy_name || existing.strategy_name === 'Manual Decibel Trade' || existing.strategy_name === 'human trade DEX') && isAgent
               ? dynStrat
-              : (existing.strategy_name || (isAgent ? dynStrat : 'Manual Decibel Trade'));
+              : (existing.strategy_name || (isAgent ? dynStrat : 'human trade DEX'));
 
             this.db.prepare(`
               UPDATE trades 
@@ -582,8 +603,8 @@ class TradeDatabase {
           dynStratTag = strat.id;
         }
       } catch {}
-      const fallbackStrategyName = isAgent ? dynStratName : 'Manual Decibel Trade';
-      const fallbackStrategyTags = isAgent ? JSON.stringify([dynStratTag]) : JSON.stringify(['Manual', 'On-Chain']);
+      const fallbackStrategyName = isAgent ? dynStratName : 'human trade DEX';
+      const fallbackStrategyTags = isAgent ? JSON.stringify([dynStratTag]) : JSON.stringify(['Manual', 'DEX', 'human trade DEX']);
 
       const netFallbackPnl = isClose ? Number((pnl - roundTripFee).toFixed(6)) : 0;
       const fallbackStatus = isClose ? (netFallbackPnl > 0.005 ? 'CLOSED_TP' : (netFallbackPnl < -0.0001 ? 'CLOSED_SL' : 'CLOSED')) : 'OPEN';
@@ -1011,7 +1032,7 @@ class TradeDatabase {
     try {
       const rows = this.db.prepare(`
         SELECT 
-          COALESCE(strategy_name, CASE WHEN is_manual = 1 THEN 'Manual Decibel Trade' ELSE 'Autonomous AI Strategy' END) as sName,
+          COALESCE(strategy_name, CASE WHEN is_manual = 1 THEN 'human trade DEX' ELSE 'Autonomous AI Strategy' END) as sName,
           MAX(strategy_tags) as sTags,
           COUNT(*) as totalTrades,
           SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as openTrades,

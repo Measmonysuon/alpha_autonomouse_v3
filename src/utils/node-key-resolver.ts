@@ -4,7 +4,7 @@
  * Provides high-speed, rate-limit-free connectivity to Aptos Mainnet Fullnodes.
  * Automatically resolves and connects through:
  *  1. Direct Decibel/Aptos Gateway using dynamic fleet node key (AG-...)
- *  2. Instant 0-second failover to Sim Lab Builder Proxy (https://simlab.measmony.me/aptos-node/v1)
+ *  2. Instant 0-second failover to Sim Lab Builder Proxy or official Aptos fullnodes
  *     if the gateway key is rate-limited (429), revoked (401), or blacklisted.
  *  3. Dynamic live hot-swapping when Sim Lab broadcasts a newly rotated key.
  */
@@ -23,7 +23,7 @@ export const BLACKLISTED_KEYS = new Set<string>([
  */
 export function sanitizeProxyUrl(rawUrl: string): string {
   let u = (rawUrl || '').trim();
-  if (!u) return 'https://simlab.measmony.me/aptos-node/v1';
+  if (!u) return 'https://fullnode.mainnet.aptoslabs.com/v1';
   if (/^https:\/\/(?:127\.0\.0\.1|localhost|0\.0\.0\.0)(?::\d+)?/i.test(u) || /^https:\/\/[^/]+:(?:4000|4005)/i.test(u)) {
     u = u.replace(/^https:/i, 'http:');
   }
@@ -36,8 +36,24 @@ let isProxyFallbackActive: boolean = false;
 let proxyEndpointUrl: string = sanitizeProxyUrl(
   process.env.APTOS_FULLNODE_URL ||
   (config as any).APTOS_FULLNODE_URL ||
-  'https://simlab.measmony.me/aptos-node/v1'
+  'https://fullnode.mainnet.aptoslabs.com/v1'
 );
+
+export interface NodeHealthState {
+  status: 'OK' | 'DEGRADED' | 'INVALID';
+  lastError?: string;
+  failedKey?: string;
+  updatedAt: number;
+}
+
+let nodeHealthState: NodeHealthState = {
+  status: 'OK',
+  updatedAt: Date.now(),
+};
+
+export function getNodeHealthState(): NodeHealthState {
+  return { ...nodeHealthState };
+}
 
 /**
  * Diagnostic status helper
@@ -106,10 +122,6 @@ export function getCandidateKeyUrls(): string[] {
   candidates.push('http://127.0.0.1:4005/api/node-key');
   candidates.push('http://127.0.0.1:4000/api/node-key');
 
-  // 5. Default fleet public endpoints
-  candidates.push('https://simlab.measmony.me/api/node-key');
-  candidates.push('https://simlab.measmony.me/api/pipeline/node-key');
-
   return Array.from(new Set(candidates));
 }
 
@@ -157,7 +169,13 @@ export async function resolveNodeApiKey(options?: {
       config.DECIBEL_NODE_API_KEY = '';
     }
     isProxyFallbackActive = true;
-    logger.warn(`🚨 [NODE KEY] Key ${badKey.slice(0, 10)}... blacklisted. Switching to builder proxy fallback.`);
+    nodeHealthState = {
+      status: 'INVALID',
+      lastError: 'Key blacklisted/invalid',
+      failedKey: badKey ? `${badKey.slice(0, 10)}...` : undefined,
+      updatedAt: Date.now(),
+    };
+    logger.warn(`🚨 [NODE KEY] Key ${badKey.slice(0, 10)}... blacklisted. Switching to public/builder proxy fallback.`);
   }
 
   // If client already has a valid non-blacklisted key and not refreshing, use it
@@ -166,73 +184,25 @@ export async function resolveNodeApiKey(options?: {
     return currentActiveApiKey;
   }
 
-  // Query remote node key dispenser
-  const candidateUrls = getCandidateKeyUrls();
-  logger.info(`🔍 [NODE KEY] Contacting Sim Lab dispenser for node routing credentials...`);
-
-  for (const baseCandidate of candidateUrls) {
-    try {
-      const urlObj = new URL(baseCandidate);
-      if (options?.failedKey) {
-        urlObj.searchParams.set('failedKey', options.failedKey);
-      }
-      urlObj.searchParams.set('clientId', config.CLIENT_ID || 'alpha-client-v3');
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-      const res = await fetch(urlObj.toString(), {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          'x-client-id': config.CLIENT_ID || 'alpha-client-v3',
-        },
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const data = (await res.json()) as any;
-        if (data.success) {
-          if (data.proxyUrl && typeof data.proxyUrl === 'string') {
-            proxyEndpointUrl = sanitizeProxyUrl(data.proxyUrl);
-            (config as any).APTOS_FULLNODE_URL = proxyEndpointUrl;
-          }
-
-          if (data.apiKey && typeof data.apiKey === 'string' && !BLACKLISTED_KEYS.has(data.apiKey.trim())) {
-            currentActiveApiKey = data.apiKey.trim();
-            config.DECIBEL_NODE_API_KEY = currentActiveApiKey;
-            isProxyFallbackActive = false;
-            logger.info(`✅ [NODE KEY] Acquired active Gateway Key: ${currentActiveApiKey.slice(0, 10)}...`);
-            return currentActiveApiKey;
-          } else {
-            // Direct gateway key not available or fallback instructed
-            isProxyFallbackActive = true;
-            currentActiveApiKey = '';
-            config.DECIBEL_NODE_API_KEY = '';
-            logger.info(`🛡️ [NODE KEY] Sim Lab directed Builder Proxy fallback: ${proxyEndpointUrl}`);
-            return proxyEndpointUrl;
-          }
-        }
-      }
-    } catch {
-      // Try next candidate
-    }
-  }
-
-  // Fallback defaults
-  if (currentActiveApiKey && !BLACKLISTED_KEYS.has(currentActiveApiKey) && !isProxyFallbackActive) {
+  // Check config/env directly (issued free during onboarding)
+  const envKey = (config.DECIBEL_NODE_API_KEY || process.env.DECIBEL_NODE_API_KEY || '').trim();
+  if (envKey && !BLACKLISTED_KEYS.has(envKey)) {
+    currentActiveApiKey = envKey;
+    isProxyFallbackActive = false;
+    nodeHealthState = { status: 'OK', updatedAt: Date.now() };
+    logger.info(`✅ [NODE KEY] Loaded active Aptos Gateway Key from local .env: ${envKey.slice(0, 10)}...`);
     return currentActiveApiKey;
   }
 
+  // Fallback to public Aptos fullnode / builder proxy
   isProxyFallbackActive = true;
-  logger.info(`🌐 [NODE RESOLVER] Routing Aptos transactions through secure Sim Lab builder proxy.`);
+  logger.info(`🌐 [NODE RESOLVER] Routing Aptos transactions through reliable public fullnode fallback.`);
   return proxyEndpointUrl;
 }
 
 /**
- * Triggers immediate 0-second failover to Sim Lab Builder Proxy.
- * Blacklists the failed key and asynchronously alerts Sim Lab.
+ * Triggers immediate 0-second failover to public fullnode / Sim Lab Builder Proxy.
+ * Blacklists the failed key and marks internal node health for telemetry reporting.
  */
 export function triggerNodeKeyFailover(failedKey?: string, reason?: string): void {
   const badKey = (failedKey || currentActiveApiKey || config.DECIBEL_NODE_API_KEY || '').trim();
@@ -243,20 +213,22 @@ export function triggerNodeKeyFailover(failedKey?: string, reason?: string): voi
   currentActiveApiKey = '';
   config.DECIBEL_NODE_API_KEY = '';
   isProxyFallbackActive = true;
+  nodeHealthState = {
+    status: 'INVALID',
+    lastError: reason || '401/429/Blacklist: Node key failed',
+    failedKey: badKey ? `${badKey.slice(0, 10)}...` : undefined,
+    updatedAt: Date.now(),
+  };
 
   logger.warn(
     `🚨 [NODE FAILOVER] Node key failure detected (${reason || '401/429/Blacklist'}). ` +
-    `Engaged 0-second immediate failover to Sim Lab Builder Proxy (${proxyEndpointUrl}).`
+    `Engaged 0-second immediate failover to public fullnode fallback (${proxyEndpointUrl}).`
   );
-
-  // Asynchronously report to Sim Lab so the dispenser updates fleet state
-  setImmediate(() => {
-    resolveNodeApiKey({ forceRefresh: true, failedKey: badKey || undefined }).catch(() => {});
-  });
 }
 
 /**
- * Hot-swaps to a new node key live in memory without requiring process restart.
+ * Hot-swaps to a new node key live in memory without requiring process restart,
+ * and atomically persists it to the local .env file.
  */
 export function hotSwapNodeKey(newKey: string): boolean {
   if (!newKey || typeof newKey !== 'string') return false;
@@ -273,8 +245,17 @@ export function hotSwapNodeKey(newKey: string): boolean {
   currentActiveApiKey = cleanKey;
   config.DECIBEL_NODE_API_KEY = cleanKey;
   isProxyFallbackActive = false;
+  nodeHealthState = { status: 'OK', updatedAt: Date.now() };
 
-  logger.info(`🔄 [NODE HOT-SWAP] Successfully installed new fleet gateway key: ${cleanKey.slice(0, 10)}... Direct gateway restored.`);
+  // Persist directly to local .env and settings
+  try {
+    const { syncCredentialsToEnv } = require('../config');
+    syncCredentialsToEnv({ DECIBEL_NODE_API_KEY: cleanKey });
+  } catch (err: any) {
+    logger.warn(`Failed to persist hot-swapped key to .env: ${err.message}`);
+  }
+
+  logger.info(`🔄 [NODE HOT-SWAP] Successfully installed new gateway key and persisted to .env: ${cleanKey.slice(0, 10)}... Direct gateway restored.`);
   return true;
 }
 
@@ -304,7 +285,10 @@ export function getAptosConfig(network?: string, customApiKey?: string): AptosCo
   }
 
   // Mode 2: Dedicated Builder Proxy URL (Zero developer secrets needed on client)
-  const proxyUrl = sanitizeProxyUrl(proxyEndpointUrl || 'https://simlab.measmony.me/aptos-node/v1');
+  const defaultProxy = config.SIMLAB_SERVER_URL
+    ? `${config.SIMLAB_SERVER_URL.replace(/\/+$/, '')}/aptos-node/v1`
+    : 'https://fullnode.mainnet.aptoslabs.com/v1';
+  const proxyUrl = sanitizeProxyUrl(proxyEndpointUrl || defaultProxy);
   return new AptosConfig({
     network: net,
     fullnode: proxyUrl,

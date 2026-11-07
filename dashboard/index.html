@@ -2161,10 +2161,35 @@
       border: 1px solid rgba(239, 68, 68, .25);
     }
 
-    .action-WAIT {
+    .action-WAIT, .action-STANDBY, .action-SCANNING {
       background: rgba(148, 163, 184, .07);
       color: var(--text3);
       border: 1px solid var(--border);
+    }
+
+    .action-ARMED, [class*="action-ARMED"] {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+    }
+
+    .action-TRIGGER-READY, [class*="action-TRIGGER-READY"] {
+      background: rgba(34, 197, 94, 0.20);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.45);
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.25);
+    }
+
+    .action-MONITORING, [class*="action-MONITORING"] {
+      background: rgba(168, 85, 247, 0.12);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.25);
+    }
+
+    .action-LIMIT-ORDER, [class*="action-LIMIT-ORDER"] {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.35);
     }
 
     .risk-badge {
@@ -8595,6 +8620,369 @@
     .eval-list.recs li {
       color: #ede9fe;
     }
+
+    /* ══════════════════════════════════════════════════════════════════
+       ALPHA MASTER COCKPIT: STRICT 4-COLOR INSTITUTIONAL PALETTE
+       Emerald (#10b981), Crimson (#f43f5e), White (#ffffff), Slate/Obsidian (#8492a6/#1e293b/#070a10)
+       Zero Blue, Zero Amber, Zero Purple
+       ══════════════════════════════════════════════════════════════════ */
+    #cockpit-stage {
+      --cp-bg: #070a10;
+      --cp-panel: #0e1420;
+      --cp-panel-inner: #090d16;
+      --cp-border: #1e293b;
+      --cp-border-light: #2b394e;
+      --cp-text: #f8fafc;
+      --cp-muted: #8492a6;
+      --cp-white: #ffffff;
+      --cp-emerald: #10b981;
+      --cp-crimson: #f43f5e;
+      --cp-gray-pill: #1e293b;
+
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+      margin-bottom: 24px;
+      width: 100%;
+    }
+
+    #cockpit-stage .mono {
+      font-family: "JetBrains Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .cockpit-top-subbar {
+      background: var(--cp-panel);
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .cockpit-panel-title {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      color: var(--cp-white);
+    }
+
+    .cockpit-tag {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2.5px 7px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .cockpit-tag-green {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--cp-emerald);
+      border: 1px solid rgba(16, 185, 129, 0.45);
+    }
+    .cockpit-tag-red {
+      background: rgba(244, 63, 94, 0.15);
+      color: var(--cp-crimson);
+      border: 1px solid rgba(244, 63, 94, 0.45);
+    }
+    .cockpit-tag-gray {
+      background: var(--cp-gray-pill);
+      color: var(--cp-white);
+      border: 1px solid var(--cp-border-light);
+    }
+    .cockpit-tag-blue {
+      background: rgba(99, 102, 241, 0.18);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, 0.4);
+    }
+    .cockpit-tag-amber {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+    .cockpit-tag-cyan {
+      background: rgba(56, 189, 248, 0.18);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    .cockpit-kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    @media (max-width: 900px) {
+      .cockpit-kpi-strip {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .cockpit-kpi-item {
+      background: var(--cp-panel-inner);
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .cockpit-kpi-label {
+      font-size: 9px;
+      color: var(--cp-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .cockpit-kpi-val {
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+    .cockpit-kpi-sub {
+      font-size: 9px;
+    }
+
+    .cockpit-banner {
+      background: var(--cp-panel-inner);
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      padding: 5px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .cockpit-top-section-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      min-height: 600px;
+      height: 620px;
+    }
+    @media (min-width: 1200px) {
+      .cockpit-top-section-grid {
+        grid-template-columns: 8.6fr 3.4fr;
+      }
+    }
+
+    .cockpit-panel {
+      background: var(--cp-panel);
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .cockpit-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--cp-border);
+      flex-wrap: wrap;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    /* Live Chart View Switcher (15M Candle vs Live Tick Line) */
+    .cockpit-view-toggle-group {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(9, 13, 22, 0.95);
+      border: 1px solid var(--cp-border);
+      border-radius: 5px;
+      padding: 2px;
+      gap: 3px;
+    }
+    .view-toggle-btn, .cockpit-view-toggle-btn {
+      background: rgba(14, 20, 32, 0.85);
+      color: var(--cp-muted);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .view-toggle-btn:hover, .cockpit-view-toggle-btn:hover {
+      color: var(--cp-white);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .view-toggle-btn.active, .cockpit-view-toggle-btn.active {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+      color: #070a10 !important;
+      font-weight: 800 !important;
+      border-color: #10b981 !important;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.45) !important;
+    }
+
+    .cockpit-canvas-container {
+      position: relative;
+      width: 100%;
+      flex: 1;
+      min-height: 440px;
+      background: #090d16;
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 2px 0;
+    }
+    #responsive-cockpit-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .cockpit-legend-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: var(--cp-muted);
+      padding-top: 4px;
+      border-top: 1px solid var(--cp-border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .cockpit-radar-container {
+      width: 100%;
+      flex: 1;
+      min-height: 440px;
+      max-height: 530px;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      background: var(--cp-panel-inner);
+    }
+
+    .cockpit-radar-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 10.5px;
+    }
+    .cockpit-radar-table th {
+      padding: 6px 8px;
+      color: var(--cp-muted);
+      font-size: 8.5px;
+      font-weight: 600;
+      border-bottom: 1px solid var(--cp-border);
+      background: #0b0f19;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .cockpit-radar-table td {
+      padding: 5.5px 8px;
+      border-bottom: 1px solid rgba(30, 41, 59, 0.45);
+      vertical-align: middle;
+      transition: background-color 0.4s ease, color 0.4s ease;
+    }
+    .cockpit-radar-row {
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .cockpit-radar-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .cockpit-radar-row.active-row {
+      background: rgba(16, 185, 129, 0.08);
+      border-left: 2px solid var(--cp-emerald);
+    }
+
+    /* ── Interactive Flash & Slow Fade Highlight FX ── */
+    @keyframes cockpitFlashPulse {
+      0% {
+        background-color: rgba(16, 185, 129, 0.45);
+        color: #ffffff !important;
+        box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
+      }
+      100% {
+        background-color: transparent;
+        box-shadow: none;
+      }
+    }
+    @keyframes cockpitFlashPulseRed {
+      0% {
+        background-color: rgba(244, 63, 94, 0.45);
+        color: #ffffff !important;
+        box-shadow: 0 0 14px rgba(244, 63, 94, 0.45);
+      }
+      100% {
+        background-color: transparent;
+        box-shadow: none;
+      }
+    }
+    @keyframes cockpitFlashPulseCyan {
+      0% {
+        background-color: rgba(56, 189, 248, 0.40);
+        color: #ffffff !important;
+        box-shadow: 0 0 14px rgba(56, 189, 248, 0.40);
+      }
+      100% {
+        background-color: transparent;
+        box-shadow: none;
+      }
+    }
+    .cockpit-flash-update {
+      animation: cockpitFlashPulse 1.6s ease-out !important;
+    }
+    .cockpit-flash-update-red {
+      animation: cockpitFlashPulseRed 1.6s ease-out !important;
+    }
+    .cockpit-flash-update-cyan {
+      animation: cockpitFlashPulseCyan 1.6s ease-out !important;
+    }
+
+    .cockpit-bottom-section-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      min-height: 280px;
+      height: auto;
+    }
+    .cockpit-bottom-section-grid .cockpit-panel {
+      min-height: 280px;
+    }
+    @media (max-width: 1100px) {
+      .cockpit-bottom-section-grid {
+        grid-template-columns: repeat(2, 1fr);
+        height: auto;
+      }
+    }
+    @media (max-width: 640px) {
+      .cockpit-bottom-section-grid {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+    }
+
+    .cockpit-inner-box {
+      background: var(--cp-panel-inner);
+      border: 1px solid var(--cp-border);
+      border-radius: 5px;
+      padding: 5px 8px;
+    }
   </style>
 </head>
 
@@ -9095,18 +9483,18 @@
               <div>
                 <div style="font-size:13px; font-weight:700; color:#f8fafc; letter-spacing:0.2px; display:flex; align-items:center; gap:8px;">
                   <span>Don't have a Decibel DEX account yet?</span>
-                  <span style="font-size:10px; font-weight:800; background:rgba(56,189,248,0.2); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px;">OFFICIAL REFERRAL</span>
+                  <span style="font-size:10px; font-weight:800; background:rgba(56,189,248,0.2); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px;">DECIBEL MAINNET</span>
                 </div>
                 <div style="font-size:11.5px; color:#cbd5e1; margin-top:3px;">
-                  Create your account & deposit collateral using our official partner link for fee rebates and VIP perks: <strong style="color:#38bdf8;">r/53OP4B</strong>
+                  Connect your Aptos wallet & deposit collateral directly on Decibel DEX: <strong style="color:#38bdf8;">app.decibel.trade</strong>
                 </div>
               </div>
             </div>
-            <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer"
+            <a href="https://app.decibel.trade" target="_blank" rel="noopener noreferrer"
               style="display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color:#ffffff; font-size:12px; font-weight:700; text-decoration:none; border-radius:7px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 4px 14px rgba(2,132,199,0.4); transition:all 0.15s ease; white-space:nowrap;"
               onmouseover="this.style.filter='brightness(1.15)'; this.style.transform='translateY(-1px)';"
               onmouseout="this.style.filter='none'; this.style.transform='none';">
-              <span>Open Decibel Account</span>
+              <span>Open Decibel DEX</span>
               <span style="font-size:13px; line-height:1;">↗</span>
             </a>
           </div>
@@ -9119,7 +9507,7 @@
                 <label style="font-size:12px; font-weight:700; color:#e2e8f0; margin-bottom:0;">Decibel Subaccount / Account <span style="color:#ef4444;">*</span></label>
                 <span style="font-size:10px; font-weight:700; color:#34d399; background:rgba(52,211,153,0.12); padding:1px 6px; border-radius:4px;">Holds USDC Collateral</span>
               </div>
-              <input type="text" id="setup-subaccount" oninput="onSetupSubaccountInput(this.value)" placeholder="0x... (e.g. 0xcc2a2641...)"
+              <input type="text" id="setup-subaccount" oninput="onSetupSubaccountInput(this.value)" placeholder="0x... (from Decibel DEX)"
                 style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; border-radius:6px; padding:9px 12px; font-size:12px; font-family:'JetBrains Mono',monospace;" />
               <div id="setup-subaccount-feedback" style="display:none; font-size:11px; margin-top:4px; line-height:1.4;"></div>
               <div style="font-size:11px; color:var(--text3); margin-top:4px;">Your Decibel DEX subaccount or primary wallet holding deposit collateral. Don't have one? <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Create with Referral Link (r/53OP4B) ↗</a></div>
@@ -9263,20 +9651,279 @@
           </div>
         </div>
 
-        <!-- Markets -->
-        <div>
-          <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;">
-            <div class="section-title">🔭 Live Market Monitor</div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <button class="pair-preset-btn reset" onclick="resetAllPairsToGlobal()"
-                style="font-size:10.5px;padding:3px 9px;border-radius:5px;cursor:pointer;"
-                title="Reset all pairs back to active Global Strategy defaults">↺ Reset All Pairs to Global</button>
-              <div class="section-meta" id="markets-meta">—</div>
+        <!-- ══════════════════════════════════════════════════════════════════
+             ALPHA MASTER COCKPIT: 15M CANDLESTICK PHYSICS & LOB DEPTH ENGINE
+             ══════════════════════════════════════════════════════════════════ -->
+        <div id="cockpit-stage">
+          <!-- TOP SUB-BAR / LIVE CONFLUENCE STATUS -->
+          <div class="cockpit-top-subbar mono">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+              <span class="cockpit-panel-title" id="cockpit-pair-title">★ BTC/USD · 15M CANDLESTICK &amp; ORDER BOOK COCKPIT</span>
+              <span class="cockpit-tag cockpit-tag-green" id="cockpit-action-badge">STANDBY</span>
+              <span class="cockpit-tag cockpit-tag-gray" id="cockpit-conf-badge">CONF --%</span>
+              <span class="cockpit-tag cockpit-tag-green" id="cockpit-mode-badge">SIMLAB SUPERCHARGED</span>
+            </div>
+
+            <!-- On-Chain Financial Metrics & Execution Route -->
+            <div style="display:flex; align-items:center; gap:16px; font-size:11px; color:var(--cp-muted); flex-wrap:wrap;">
+              <div>CAPITAL: <strong style="color:var(--cp-white); font-weight:700;" id="cockpit-top-capital">--</strong></div>
+              <div>PNL: <strong style="color:var(--cp-white); font-weight:700;" id="cockpit-top-pnl">--</strong></div>
+              <div>WIN RATE: <strong style="color:var(--cp-white); font-weight:700;" id="cockpit-top-winrate">--</strong></div>
+              <div style="border-left:1px solid var(--cp-border); padding-left:12px;">ROUTE: <strong style="color:var(--cp-white);">POST-ONLY MAKER</strong></div>
+            </div>
+
+            <!-- View Switcher & Live OHLC Bar Values -->
+            <div style="display:flex; align-items:center; gap:12px; font-size:10.5px;">
+              <div class="cockpit-view-toggle-group" id="client-v3-view-toggle">
+                <button id="cockpit-btn-view-candle" class="cockpit-view-toggle-btn active" onclick="setCockpitChartMode('CANDLES')">🕯️ 15M CANDLE</button>
+                <button id="cockpit-btn-view-line" class="cockpit-view-toggle-btn" onclick="setCockpitChartMode('TICK_LINE')">⚡ LIVE TICK LINE</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span>O: <strong style="color:var(--cp-white)" id="cockpit-bar-o">--</strong></span>
+                <span>H: <strong style="color:var(--cp-emerald)" id="cockpit-bar-h">--</strong></span>
+                <span>L: <strong style="color:var(--cp-crimson)" id="cockpit-bar-l">--</strong></span>
+                <span>C: <strong style="color:var(--cp-emerald)" id="cockpit-bar-c">--</strong></span>
+                <span style="border-left:1px solid var(--cp-border); padding-left:10px; color:var(--cp-muted);">15M: <strong style="color:#38bdf8;" id="cockpit-bar-countdown">--:--</strong></span>
+              </div>
             </div>
           </div>
-          <div class="markets-grid" id="markets-grid">
-            <div class="loading">Connecting to agent…</div>
+
+          <!-- Quick KPI Strip above chart (Dynamic for Open Position vs Flat Scanning) -->
+          <div class="cockpit-kpi-strip mono" id="cockpit-kpi-row">
+            <!-- Current Mark Price -->
+            <div class="cockpit-kpi-item">
+              <span class="cockpit-kpi-label">Current Mark Price</span>
+              <span class="cockpit-kpi-val" style="color:var(--cp-white);" id="cockpit-kpi-mark-price">--</span>
+              <span class="cockpit-kpi-sub" style="color:var(--cp-emerald);" id="cockpit-kpi-spread">Decibel DEX Feed</span>
+            </div>
+
+            <!-- Active Entry / Position State -->
+            <div class="cockpit-kpi-item" id="cockpit-kpi-entry-card">
+              <span class="cockpit-kpi-label" id="cockpit-kpi-entry-label">Position State</span>
+              <span class="cockpit-kpi-val" style="color:var(--cp-white);" id="cockpit-kpi-entry">NONE (SCANNING)</span>
+              <span class="cockpit-kpi-sub" style="color:var(--cp-muted);" id="cockpit-kpi-entry-sub">Resting for Setup</span>
+            </div>
+
+            <!-- Take-Profit Target (TP) -->
+            <div class="cockpit-kpi-item" id="cockpit-kpi-tp-card" style="border-color: rgba(16, 185, 129, 0.35);">
+              <span class="cockpit-kpi-label" style="color:var(--cp-emerald);" id="cockpit-kpi-tp-label">TP Target</span>
+              <span class="cockpit-kpi-val" style="color:var(--cp-emerald);" id="cockpit-kpi-tp">--</span>
+              <span class="cockpit-kpi-sub" style="color:var(--cp-emerald);" id="cockpit-kpi-tp-sub">1.45R Target</span>
+            </div>
+
+            <!-- Soft Stop Loss -->
+            <div class="cockpit-kpi-item" id="cockpit-kpi-soft-card" style="border-color: var(--cp-border-light);">
+              <span class="cockpit-kpi-label" style="color:var(--cp-white);" id="cockpit-kpi-soft-label">Soft Stop (Soft SL)</span>
+              <span class="cockpit-kpi-val" style="color:var(--cp-white);" id="cockpit-kpi-soft-ratchet">--</span>
+              <span class="cockpit-kpi-sub" style="color:var(--cp-emerald);" id="cockpit-kpi-soft-ratchet-desc">+0.75% BE Snap</span>
+            </div>
+
+            <!-- Hard Stop Floor -->
+            <div class="cockpit-kpi-item" id="cockpit-kpi-hard-card" style="border-color: rgba(244, 63, 94, 0.4);">
+              <span class="cockpit-kpi-label" style="color:var(--cp-crimson);" id="cockpit-kpi-hard-label">Soft SL Ratchet</span>
+              <span class="cockpit-kpi-val" style="color:var(--cp-crimson);" id="cockpit-kpi-hard-sl">--</span>
+              <span class="cockpit-kpi-sub" style="color:var(--cp-crimson);" id="cockpit-kpi-hard-sl-desc">Armed on Entry · Hard Ceiling: 30% ($10.50)</span>
+            </div>
           </div>
+
+          <!-- Microstructure Telemetry Banner -->
+          <div class="cockpit-banner mono">
+            <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+              <span><span style="color:var(--cp-muted)">SMA DYNAMICS:</span> <strong style="color:var(--cp-emerald)" id="cockpit-banner-sma-pair">SMA(8) / SMA(25)</strong></span>
+              <span><span style="color:var(--cp-muted)">SMA SPREAD:</span> <strong style="color:var(--cp-emerald)" id="cockpit-banner-sma-spread">--</strong></span>
+              <span><span style="color:var(--cp-muted)">LOB RADAR:</span> <strong style="color:var(--cp-white)" id="cockpit-banner-lob-radar">--</strong></span>
+              <span><span style="color:var(--cp-muted)">Rm RETENTION:</span> <strong style="color:var(--cp-emerald)" id="cockpit-banner-rm-retention">--</strong></span>
+              <span><span style="color:var(--cp-muted)">VPIN TOXICITY:</span> <strong style="color:var(--cp-emerald)" id="cockpit-banner-vpin">--</strong></span>
+            </div>
+            <div>
+              <span style="color:var(--cp-muted)">BOOK SKEW:</span> <strong style="color:var(--cp-emerald)" id="cockpit-banner-book-skew">--</strong>
+            </div>
+          </div>
+
+          <!-- TOP SECTION: WIDE CANDLE COCKPIT (~72%) vs RADAR (~28%) -->
+          <div class="cockpit-top-section-grid">
+            <!-- PANEL 1: CANDLESTICK & ORDER BOOK PHYSICS COCKPIT -->
+            <div class="cockpit-panel" style="display:flex; flex-direction:column;">
+              <div class="cockpit-canvas-container">
+                <canvas id="responsive-cockpit-canvas"></canvas>
+              </div>
+
+              <!-- Chart Legend & Indicator Guide -->
+              <div class="cockpit-legend-row mono">
+                <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                  <div id="cockpit-legend-tick-price-wrap" style="display:none; align-items:center; gap:6px;">
+                    <span style="width:14px; height:2px; background:#38bdf8; display:inline-block;"></span>
+                    <span><span style="color:var(--cp-muted);">Live Price</span>: <strong style="color:#38bdf8;" id="cockpit-legend-live-price">--</strong></span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="width:14px; height:2px; background:var(--cp-emerald); display:inline-block;"></span>
+                    <span><span id="cockpit-legend-sma-fast-lbl">Fast SMA</span>: <strong style="color:var(--cp-emerald);" id="cockpit-legend-sma-fast">--</strong></span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="width:14px; height:2px; background:var(--cp-white); display:inline-block;"></span>
+                    <span><span id="cockpit-legend-sma-slow-lbl">Slow SMA</span>: <strong style="color:var(--cp-white);" id="cockpit-legend-sma-slow">--</strong></span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="width:8px; height:8px; background:rgba(16,185,129,0.3); border:1px solid var(--cp-emerald); display:inline-block;"></span>
+                    <span style="color:var(--cp-muted);">LOB Liquidity Depth Heatmap (Thick = Wall, Thin = Gaps)</span>
+                  </div>
+                </div>
+                <div>
+                  <span style="color:var(--cp-muted);">Feed:</span>
+                  <strong style="color:var(--cp-white);" id="cockpit-legend-feed-source">Decibel DEX Live Action</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- PANEL 2: CROSS-PAIR OPPORTUNITY RADAR -->
+            <div class="cockpit-panel" style="display:flex; flex-direction:column;">
+              <div class="cockpit-panel-head">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <span class="cockpit-panel-title">CROSS-PAIR OPPORTUNITY RADAR</span>
+                  <span style="color:var(--cp-muted); font-size:9px;" class="mono">(Sorted by #1 Confidence)</span>
+                </div>
+                <span class="cockpit-tag cockpit-tag-gray mono" id="cockpit-radar-pair-count">-- MARKETS</span>
+              </div>
+
+              <div class="cockpit-radar-container">
+                <table class="cockpit-radar-table mono">
+                  <thead>
+                    <tr>
+                      <th>PAIR</th>
+                      <th>PRICE</th>
+                      <th>IMBALANCE</th>
+                      <th>CONF</th>
+                      <th style="text-align:right;">ACTION</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cockpit-radar-tbody">
+                    <!-- Rendered dynamically -->
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="mono" style="display:flex; justify-content:space-between; font-size:9.5px; color:var(--cp-muted); padding-top:4px; border-top:1px solid var(--cp-border); flex-shrink:0;">
+                <span>FLEET SCAN:</span>
+                <span style="color:var(--cp-white);"><strong style="color:var(--cp-emerald);" id="cockpit-stat-active">0 ACTIVE</strong> · <strong style="color:var(--cp-emerald);" id="cockpit-stat-ready">0 READY</strong> · <strong style="color:var(--cp-white);" id="cockpit-stat-watch">0 WATCH</strong> · <strong style="color:var(--cp-muted);" id="cockpit-stat-standby">0 STANDBY</strong> · <strong style="color:var(--cp-crimson);" id="cockpit-stat-veto">0 VETOED</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- BOTTOM SECTION: 4 UNIFORM ALIGNED INTELLIGENCE PANELS -->
+          <div class="cockpit-bottom-section-grid">
+            <!-- Card 1: TRADE CONFLUENCE CHECKLIST -->
+            <div class="cockpit-panel" style="justify-content:space-between;">
+              <div class="cockpit-panel-head">
+                <span class="cockpit-panel-title" id="cockpit-audit-confluence-title">TRADE CONFLUENCE CHECKLIST</span>
+                <span class="cockpit-tag cockpit-tag-green mono" id="cockpit-audit-confluence-badge">EVALUATING</span>
+              </div>
+              <div class="cockpit-inner-box mono" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:9.5px;">
+                <div>
+                  <span style="color:var(--cp-muted); display:block; font-size:8.5px;">Trigger Fill Price</span>
+                  <span style="color:var(--cp-white); font-weight:700;" id="cockpit-audit-fill">--</span>
+                </div>
+                <div>
+                  <span style="color:var(--cp-muted); display:block; font-size:8.5px;">Risk / Reward Ratio</span>
+                  <span style="color:var(--cp-emerald); font-weight:700;" id="cockpit-audit-rr">--</span>
+                </div>
+              </div>
+              <div class="cockpit-inner-box mono" id="cockpit-confluence-checklist-items" style="font-size:9px; line-height:1.45; display:flex; flex-direction:column; gap:2.5px; flex:1; justify-content:center;">
+                <!-- Dynamically populated from Sim Lab 6-Layers or Standalone 5-Layers -->
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9px; display:flex; justify-content:space-between; color:var(--cp-muted); padding:3px 6px;">
+                <span id="cockpit-audit-footer-left">Engine: <strong style="color:var(--cp-white);" id="cockpit-audit-mode-text">SIMLAB_SUPERCHARGED</strong></span>
+                <span style="color:var(--cp-emerald); font-weight:700;" id="cockpit-audit-status-text">Active</span>
+              </div>
+            </div>
+
+            <!-- Card 2: HARVEST MASTER ENGINE -->
+            <div class="cockpit-panel" style="justify-content:space-between;">
+              <div class="cockpit-panel-head">
+                <span class="cockpit-panel-title">HARVEST MASTER ENGINE</span>
+                <span class="cockpit-tag cockpit-tag-gray mono" id="cockpit-harvest-active-directive" style="color:var(--cp-white); font-size:9px;">
+                  DIRECTIVE: MONITORING
+                </span>
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9.5px; display:flex; flex-direction:column; gap:2px;">
+                <div style="display:flex; justify-content:space-between; color:var(--cp-muted); font-size:8.5px;">
+                  <span>AUTONOMOUS HARVEST DECISION</span>
+                  <span style="color:var(--cp-emerald); font-weight:700;" id="cockpit-harvest-mode-tag">REAL-TIME</span>
+                </div>
+                <div style="color:var(--cp-white); font-weight:600; line-height:1.35;" id="cockpit-harvest-decision-text">
+                  DECISION: HOLD_RUNNER · Vuln: --/100 · Next Ratchet Tier: +0.75% BE
+                </div>
+              </div>
+              <div class="cockpit-inner-box mono" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:9.5px;">
+                <div>
+                  <span style="color:var(--cp-muted); display:block; font-size:8.5px;">Vulnerability Score</span>
+                  <span style="color:var(--cp-emerald); font-size:12px; font-weight:700;" id="cockpit-harvest-vuln-score">-- / 100</span>
+                  <span style="color:var(--cp-muted); font-size:8px; display:block;" id="cockpit-harvest-gate-sub">Gate: Harvest ≥65 | Runner &lt;45</span>
+                </div>
+                <div>
+                  <span style="color:var(--cp-muted); display:block; font-size:8.5px;">Execution Policy</span>
+                  <span style="color:var(--cp-white); font-size:12px; font-weight:700;" id="cockpit-harvest-policy">VOLATILITY_RATCHET</span>
+                  <span style="color:var(--cp-muted); font-size:8px; display:block;" id="cockpit-harvest-policy-sub">+1.4R Move ➔ +0.75% Snap</span>
+                </div>
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9px; display:flex; flex-direction:column; gap:2px; color:var(--cp-muted); padding:3px 6px;">
+                <div style="display:flex; justify-content:space-between;">
+                  <span>Reversals Avoided:</span>
+                  <strong style="color:var(--cp-emerald);" id="cockpit-harvest-reversals">Active Monitoring</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between;">
+                  <span>Recommendation:</span>
+                  <span style="color:var(--cp-white); font-size:8.5px;" id="cockpit-harvest-recommendation">🎯 Defend against giveback</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: EXECUTION GATES & RISK ALLOCATION -->
+            <div class="cockpit-panel" style="justify-content:space-between;">
+              <div class="cockpit-panel-head">
+                <span class="cockpit-panel-title">EXECUTION GATES &amp; RISK ALLOCATION</span>
+                <span class="cockpit-tag cockpit-tag-green mono" id="cockpit-risk-guard-status" style="font-size:9px; padding:2px 5px;">SOVEREIGN</span>
+              </div>
+              <div class="cockpit-inner-box mono" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:9.5px;">
+                <div>
+                  <span style="color:var(--cp-muted); display:block; font-size:8.5px;">Budget Allocation</span>
+                  <span style="color:var(--cp-white); font-weight:700; font-size:11.5px; display:block;" id="cockpit-risk-budget">$200.00</span>
+                  <span style="color:var(--cp-muted); font-size:8px;" id="cockpit-risk-budget-sub">Settings Sovereignty</span>
+                </div>
+                <div>
+                  <span style="color:var(--cp-muted); display:block; font-size:8.5px;">Concurrent Risk</span>
+                  <span style="color:var(--cp-white); font-weight:700; font-size:11.5px; display:block;" id="cockpit-risk-concurrent">0 / 1 ACTIVE</span>
+                  <span style="color:var(--cp-muted); font-size:8px;" id="cockpit-risk-concurrent-sub">Min Pos: $100.00 | Max: $150.00</span>
+                </div>
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9px; line-height:1.4; color:var(--cp-muted); flex:1; display:flex; flex-direction:column; justify-content:center;">
+                <div>Loss Ceiling: <strong style="color:var(--cp-white);" id="cockpit-risk-loss-ceiling">2.0% Max Risk ($4.00)</strong></div>
+                <div>Fee Route: <strong style="color:var(--cp-emerald);">Maker Post-Only (0% Fee)</strong></div>
+                <div>Risk Floor: <strong style="color:var(--cp-crimson);" id="cockpit-risk-sl-floor">SL: 1.5% | TP: 3.0% (Decibel On-Chain)</strong></div>
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9px; display:flex; justify-content:space-between; color:var(--cp-muted); padding:3px 6px;">
+                <span>Leverage: <strong style="color:var(--cp-white);" id="cockpit-risk-leverage">5x - 10x (50%-70% Alloc)</strong></span>
+                <span>Execution: <strong style="color:var(--cp-emerald);">Decibel DEX (Aptos)</strong></span>
+              </div>
+            </div>
+
+            <!-- Card 4: REAL-TIME MULTI-BOOK EVENT STREAM -->
+            <div class="cockpit-panel" style="justify-content:space-between;">
+              <div class="cockpit-panel-head">
+                <span class="cockpit-panel-title">REAL-TIME MULTI-BOOK EVENT STREAM</span>
+                <span class="cockpit-tag cockpit-tag-green mono" id="cockpit-stream-badge" style="font-size:9px; padding:2px 5px;">LIVE SSE</span>
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9.5px; line-height:1.5; overflow-y:auto; display:flex; flex-direction:column; gap:4px; color:var(--cp-muted); flex:1; min-height:140px; max-height:200px;" id="cockpit-event-stream-box">
+                <!-- Dynamically populated from recent logs and trade actions -->
+              </div>
+              <div class="cockpit-inner-box mono" style="font-size:9px; display:flex; justify-content:space-between; color:var(--cp-muted); padding:3px 6px;">
+                <span>Stream: <strong style="color:var(--cp-emerald);" id="cockpit-stream-source">Decibel DEX + Sim Lab</strong></span>
+                <span style="color:var(--cp-emerald); font-weight:700;" id="cockpit-stream-rate">Active (1000ms)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hidden fallback for legacy scripts expecting #markets-grid -->
+          <div id="markets-grid" style="display:none;"></div>
         </div>
       </div>
 
@@ -9690,10 +10337,10 @@
                     <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text2); margin-bottom:4px;">
                       Secondary Endpoint / Public URL <span style="font-weight:400; color:var(--text3);">(e.g. Cloudflare Zero Trust tunnel)</span>
                     </label>
-                    <input type="text" id="set-secondary-ai-url" placeholder="https://qwen.measmony.me or http://localhost:11434"
+                    <input type="text" id="set-secondary-ai-url" placeholder="http://localhost:11434 or https://your-ai-host.com"
                       style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:8px 10px; border-radius:8px; font-size:12px; font-family:'JetBrains Mono',monospace; box-sizing:border-box;">
                     <div style="font-size:10.5px; color:var(--text3); margin-top:3px;">
-                      Add external public URL (e.g. <code>https://qwen.measmony.me</code>) for remote Qwen/Ollama inference.
+                      Add external URL (e.g. <code>http://localhost:11434</code>) for local/remote Qwen or Ollama inference.
                     </div>
                   </div>
 
@@ -9985,8 +10632,8 @@
                 <label
                   style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Sim Lab
                   URL</label>
-                <input type="text" id="simlab-url-input" value="https://simlab.measmony.me"
-                  placeholder="https://simlab.measmony.me" onchange="saveSimLabFeaturesFromUI()"
+                <input type="text" id="simlab-url-input" value="http://localhost:4000"
+                  placeholder="http://localhost:4000 or https://your-simlab-host.com" onchange="saveSimLabFeaturesFromUI()"
                   style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
               </div>
               <div>
@@ -11194,6 +11841,8 @@
     </div>
   </div>
 
+  <script>window.alphaClientV3Managed = true;</script>
+  <script src="cockpit.js?v=20261104_7" defer></script>
   <script>
     const API = '';
 
@@ -11435,6 +12084,11 @@
         const el = document.getElementById('tab-' + t);
         if (el) el.style.display = t === tab ? 'block' : 'none';
       });
+      if (tab === 'dashboard') {
+        setTimeout(() => {
+          if (typeof renderCockpitCanvas === 'function') renderCockpitCanvas();
+        }, 50);
+      }
       const bottomRow = document.getElementById('bottom-row');
       if (bottomRow) bottomRow.style.display = tab === 'dashboard' ? 'grid' : 'none';
       const statBar = document.getElementById('stat-bar');
@@ -11919,30 +12573,47 @@
     window._lastMacroData = null;
     const flippedMarketCards = new Set();
 
-    function toggleMarketCardFlip(symbol) {
-      const cardId = 'market-card-' + symbol.replace(/[^a-zA-Z0-9]/g, '_');
-      const cardEl = document.getElementById(cardId);
-      if (!cardEl) return;
-
-      const inner = cardEl.querySelector('.market-card-inner');
-      if (!inner) return;
+    function toggleMarketCardFlip(symbol, triggerEl) {
+      if (!symbol) return;
+      const symSafe = symbol.replace(/[^a-zA-Z0-9]/g, '_');
+      const cardId = 'market-card-' + symSafe;
 
       if (flippedMarketCards.has(symbol)) {
         flippedMarketCards.delete(symbol);
-        inner.classList.remove('is-flipped');
       } else {
         flippedMarketCards.add(symbol);
-        inner.classList.add('is-flipped');
-        const v1 = cardEl.querySelector('.card-back-view-1');
-        const m = (lastState?.markets?.[symbol]) || (window._lastKnownMarkets?.[symbol]) || { symbol };
-        if (v1 && typeof generate5LayerPlainEnglishHtml === 'function') {
-          try {
-            v1.innerHTML = generate5LayerPlainEnglishHtml(m);
-          } catch (e) {
-            console.warn('Error refreshing card back on flip:', e);
-          }
-        }
       }
+      const shouldBeFlipped = flippedMarketCards.has(symbol);
+
+      let cards = Array.from(document.querySelectorAll(`[id="${cardId}"]`));
+      if (cards.length === 0 && triggerEl) {
+        const parentCard = triggerEl.closest ? triggerEl.closest('.market-card-container') : null;
+        if (parentCard) cards.push(parentCard);
+      }
+      if (cards.length === 0) {
+        const fb = document.getElementById(cardId);
+        if (fb) cards.push(fb);
+      }
+
+      cards.forEach(cardEl => {
+        const inner = cardEl.querySelector('.market-card-inner');
+        if (!inner) return;
+
+        if (shouldBeFlipped) {
+          inner.classList.add('is-flipped');
+          const v1 = cardEl.querySelector('.card-back-view-1');
+          const m = (lastState?.markets?.[symbol]) || (window._lastKnownMarkets?.[symbol]) || { symbol };
+          if (v1 && typeof generate5LayerPlainEnglishHtml === 'function') {
+            try {
+              v1.innerHTML = generate5LayerPlainEnglishHtml(m);
+            } catch (e) {
+              console.warn('Error refreshing card back on flip:', e);
+            }
+          }
+        } else {
+          inner.classList.remove('is-flipped');
+        }
+      });
     }
 
     window._cardBackViewMode = {};
@@ -11955,25 +12626,25 @@
     function swapCardBackView(symbol, viewNum) {
       window._cardBackViewMode[symbol] = viewNum;
       const cardId = 'market-card-' + symbol.replace(/[^a-zA-Z0-9]/g, '_');
-      const cardEl = document.getElementById(cardId);
-      if (!cardEl) return;
+      const cards = document.querySelectorAll(`[id="${cardId}"]`);
+      cards.forEach(cardEl => {
+        const v1 = cardEl.querySelector('.card-back-view-1');
+        const v2 = cardEl.querySelector('.card-back-view-2');
+        const btn1 = cardEl.querySelector('.view-btn-1');
+        const btn2 = cardEl.querySelector('.view-btn-2');
 
-      const v1 = cardEl.querySelector('.card-back-view-1');
-      const v2 = cardEl.querySelector('.card-back-view-2');
-      const btn1 = cardEl.querySelector('.view-btn-1');
-      const btn2 = cardEl.querySelector('.view-btn-2');
-
-      if (viewNum === 1) {
-        if (v1) v1.style.display = 'block';
-        if (v2) v2.style.display = 'none';
-        if (btn1) btn1.classList.add('active');
-        if (btn2) btn2.classList.remove('active');
-      } else {
-        if (v1) v1.style.display = 'none';
-        if (v2) v2.style.display = 'block';
-        if (btn2) btn2.classList.add('active');
-        if (btn1) btn1.classList.remove('active');
-      }
+        if (viewNum === 1) {
+          if (v1) v1.style.display = 'block';
+          if (v2) v2.style.display = 'none';
+          if (btn1) btn1.classList.add('active');
+          if (btn2) btn2.classList.remove('active');
+        } else {
+          if (v1) v1.style.display = 'none';
+          if (v2) v2.style.display = 'block';
+          if (btn2) btn2.classList.add('active');
+          if (btn1) btn1.classList.remove('active');
+        }
+      });
     }
 
     function getPairTradeStats(symbol) {
@@ -14123,7 +14794,7 @@
             <span style="font-size:9.5px; background:rgba(16,185,129,0.2); color:#6ee7b7; padding:2px 7px; border-radius:4px; border:1px solid rgba(16,185,129,0.4); font-weight:700;">AUTHENTICATED</span>
           </div>
           <div style="font-size:10.5px; color:#cbd5e1; font-family:'JetBrains Mono',monospace; margin-top:3px;">
-            Key: <span style="color:#67e8f9;">${maskedKeyStr}</span> · Endpoint: <span style="color:#94a3b8;">${sim?.serverUrl || 'https://simlab.measmony.me'}</span>
+            Key: <span style="color:#67e8f9;">${maskedKeyStr}</span> · Endpoint: <span style="color:#94a3b8;">${sim?.serverUrl || 'Local / Standalone'}</span>
           </div>
         </div>
       </div>
@@ -14425,7 +15096,7 @@
       <div style="font-size:11px; color:#cbd5e1; margin-top:6px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0;">
         <span style="color:#94a3b8; font-weight:600;">Active Endpoint:</span>
         <code style="color:${isConnected ? '#67e8f9' : '#94a3b8'}; font-size:10.5px; background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.08); word-break:break-all; overflow-wrap:anywhere;">
-          ${isConnected ? (sim?.serverUrl || sim?.url || 'https://simlab.measmony.me') : 'None (Standalone Local Mode · Free Candlesticks)'}
+          ${isConnected ? (sim?.serverUrl || sim?.url || 'Sim Lab Online') : 'None (Standalone Local Mode · Free Candlesticks)'}
         </code>
       </div>
 
@@ -14618,7 +15289,7 @@
       const footerBtn = document.getElementById('sim-pipeline-connect-btn');
 
       const key = (input ? input.value : (window._simlabKey || document.getElementById('simlab-key-input')?.value || '')).trim();
-      const targetUrl = document.getElementById('simlab-url-input')?.value.trim() || 'https://simlab.measmony.me';
+      const targetUrl = document.getElementById('simlab-url-input')?.value.trim() || 'http://localhost:4000';
 
       if (!key) {
         if (input) {
@@ -16900,7 +17571,7 @@
         : true;
 
       return `
-  <div class="pos-card ${sideClass}" id="pos-card-${posSafeId}" data-pos-key="${posSafeId}">
+  <div class="pos-card ${sideClass}" id="pos-card-${posSafeId}" data-pos-key="${posSafeId}" onclick="if(typeof selectCockpitPair==='function'){selectCockpitPair('${p.symbol}',true);}else{window.cockpitActiveSymbol='${p.symbol}';}document.getElementById('responsive-cockpit-canvas')?.scrollIntoView({behavior:'smooth',block:'center'});" style="cursor:pointer;" title="Click to view live 15m & tick chart for this position">
     <!-- Top Header: Identity & Hero PnL -->
     <div class="pos-header">
       <div class="pos-header-left">
@@ -16909,7 +17580,7 @@
           <span class="pos-side-pill ${sideClass}">${p.action === 'LONG' ? '▲ LONG' : '▼ SHORT'}</span>
           <span class="pos-lev-pill">${displayLev}x</span>
           <span class="pos-notional-pill" style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(59,130,246,0.18);border:1px solid rgba(59,130,246,0.4);color:#60a5fa;" title="Total Leveraged Notional Value">💎 $${notionalUsd} Notional</span>
-          ${p.isManual ? '<span class="pos-manual-pill">MANUAL</span>' : '<span class="pos-ai-pill">AI SIGNAL</span>'}
+          ${(p.isManual || p.strategyName === 'human trade DEX') ? '<span class="pos-manual-pill" style="background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.4);color:#fbbf24;font-weight:700;" title="Human On-Chain DEX Trade">👤 human trade DEX</span>' : '<span class="pos-ai-pill">AI SIGNAL</span>'}
           <span class="pos-harv-pill-wrap">${harvestPill}</span>
           <button class="pos-close-btn" onclick="closePositionManually('${p.id || p.symbol}', '${p.symbol}', event)" title="Market close this position immediately on Decibel DEX">✕ Close</button>
         </div>
@@ -17389,6 +18060,20 @@
         return notionalB - notionalA; // Highest notional first
       });
 
+      // Priority Focus: Auto-prioritize displaying opening position on the main Cockpit view!
+      if (sortedPositions.length > 0) {
+        const topPos = sortedPositions[0];
+        if (topPos && topPos.symbol) {
+          const topSymNorm = topPos.symbol.replace('-', '/').toUpperCase();
+          if (!window.cockpitManualSelection && window.cockpitActiveSymbol !== topSymNorm) {
+            window.cockpitActiveSymbol = topSymNorm;
+            if (typeof selectCockpitPair === 'function') {
+              selectCockpitPair(topSymNorm, false);
+            }
+          }
+        }
+      }
+
       const autoPos = sortedPositions.filter(p => !p.isManual);
       const manualPos = sortedPositions.filter(p => !!p.isManual);
 
@@ -17784,8 +18469,8 @@
         const isTestnet = t.tradeType === 'PAPER' || t.tradeType === 'TESTNET' || t.isPaper || t.network === 'TESTNET' || String(t.id || '').startsWith('paper_');
         const typeBadge = isTestnet
           ? `<span class="trade-type-pill" style="background:rgba(168,85,247,0.18);color:#c084fc;border:1px solid rgba(168,85,247,0.35);" title="Testnet Simulated Trade">🧪 TESTNET AI</span>`
-          : (t.isManual
-              ? `<span class="trade-type-pill manual" title="Manual On-Chain Trade">👤 MANUAL</span>`
+          : (t.isManual || t.strategy_name === 'human trade DEX'
+              ? `<span class="trade-type-pill manual" style="background:rgba(245,158,11,0.18);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);font-weight:700;" title="Human On-Chain DEX Trade">👤 human trade DEX</span>`
               : `<span class="trade-type-pill auto" title="Autonomous AI Trade">🤖 AUTO AI</span>`);
 
         // Close reason badge (Client v1 Blueprint)
@@ -17836,10 +18521,12 @@
           reasonBadge = `<span class="trade-reason-pill sl" title="Stop Loss Hit">🛑 SL</span>`;
         }
 
-        const subaccount = (window._subaccount || lastState?.subaccount || '0xcc2a2641d3246ace078fb1792c4ae203cbf3587235bdb2257acc2fb2f8275b19');
+        const subaccount = (window._subaccount || lastState?.subaccount || '');
         const txLink = t.tx
           ? `<a href="https://explorer.aptoslabs.com/txn/${t.tx}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Transaction #${t.tx}">🔗 #${String(t.tx).slice(0, 7)}... ↗</a>`
-          : `<a href="https://explorer.aptoslabs.com/account/${subaccount}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Subaccount Settlement">🔗 #${subaccount.slice(0, 7)}... ↗</a>`;
+          : (subaccount && subaccount.startsWith('0x')
+              ? `<a href="https://explorer.aptoslabs.com/account/${subaccount}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Subaccount Settlement">🔗 #${subaccount.slice(0, 7)}... ↗</a>`
+              : `<span style="color:var(--text3);font-size:10px;">Local DB</span>`);
 
         const numPrice = Number(t.price);
         const priceFormatted = numPrice < 2 ? numPrice.toFixed(4) : numPrice.toFixed(2);
@@ -17847,8 +18534,8 @@
         const sizeFormatted = numSize < 0.1 ? numSize.toFixed(5) : numSize.toFixed(2);
 
         const tradeLookupId = t.id || t.client_order_id || (t.tx ? `txn-${t.tx}` : '');
-        const intelCell = t.isManual
-          ? `<span style="color:var(--text3);font-size:11px;">Manual DEX</span>`
+        const intelCell = (t.isManual || t.strategy_name === 'human trade DEX')
+          ? `<span style="color:#fbbf24;font-size:11px;font-weight:600;">👤 human trade DEX</span>`
           : `<button class="ai-intel-btn" onclick="openTradeIntel('${encodeURIComponent(tradeLookupId)}', false)" title="Inspect AI Decision Rationale & Telemetry">🧠 ${t.strategy_name || 'AI Sniper'} (${t.confidence || 80}%) ↗</button>`;
 
         return `<tr>
@@ -18124,7 +18811,7 @@
 
       const data = telemetry || localMatch || {};
       if (data.subaccount) window._subaccount = data.subaccount;
-      const subaccount = window._subaccount || lastState?.subaccount || '0xcc2a2641d3246ace078fb1792c4ae203cbf3587235bdb2257acc2fb2f8275b19';
+      const subaccount = window._subaccount || lastState?.subaccount || '';
 
       const sym = data.symbol || 'DEX Pair';
       const action = data.action || (data.side === 'buy' ? 'LONG' : 'SHORT');
@@ -19124,7 +19811,7 @@
   <div class="market-card-container" id="${cardId}" data-last-updated="${m.updatedAt || 0}">
     <div class="market-card-inner${flippedClass}">
       <!-- FRONT FACE -->
-      <div class="market-card-face market-card-front ${cardPosClass}" onclick="toggleMarketCardFlip('${m.symbol}')" title="Click anywhere on card to flip and inspect AI Trap Shield audit">
+      <div class="market-card-face market-card-front ${cardPosClass}" onclick="toggleMarketCardFlip('${m.symbol}', this)" title="Click anywhere on card to flip and inspect AI Trap Shield audit">
         <div>
           ${openPosHtml}
           <div class="market-header">
@@ -19165,14 +19852,14 @@
           ${vpRowHtml}
           ${kronosFrontHtml}
           <div class="signal-row">
-            <span class="action-badge action-${openPos ? (openPos.action || 'LONG').toUpperCase() : m.action}">${openPos ? `ACTIVE ${(openPos.action || 'LONG').toUpperCase()}` : m.action}</span>
+            <span class="action-badge action-${openPos ? (openPos.action || 'LONG').toUpperCase() : String(m.action || 'WAIT').replace(/\s+/g, '-')}">${openPos ? `OPEN ${(openPos.action || 'LONG').toUpperCase()}` : (m.action === 'LONG' || m.action === 'ACTIVE LONG' ? 'LONG BIAS' : (m.action === 'SHORT' || m.action === 'ACTIVE SHORT' ? 'SHORT BIAS' : m.action))}</span>
             <span class="risk-badge risk-${m.riskLevel}">${m.riskLevel} RISK</span>
             <span class="action-badge action-WAIT" style="flex:none;padding:6px 12px;font-size:11.5px;font-weight:800;">⚡ ${m.confidence}%</span>
           </div>
         </div>
 
         <!-- Flip Trigger Footer Banner with Integrated Confidence Progress Gauge -->
-        <div class="market-flip-cta ${(m.confidence >= stratGate && m.action && m.action !== 'WAIT' && m.action !== 'HOLD') ? 'is-gate-pass' : ''}" title="Click to view AI Trap Shield & confluence audit">
+        <div class="market-flip-cta ${(m.confidence >= stratGate && m.action && m.action !== 'WAIT' && m.action !== 'HOLD' && !m.action.startsWith('STANDBY') && !m.action.startsWith('SCANNING')) ? 'is-gate-pass' : ''}" onclick="toggleMarketCardFlip('${m.symbol}', this); event.stopPropagation();" title="Click to view AI Trap Shield & confluence audit">
           <div class="market-flip-gauge-fill" style="width:${confWidth}%;"></div>
           <div class="market-flip-gauge-line" style="width:${confWidth}%;"></div>
           <span class="market-flip-text-left">
@@ -19189,14 +19876,14 @@
         <div>
           <!-- Header with Back Button -->
           <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:7px;cursor:pointer;" onclick="toggleMarketCardFlip('${m.symbol}')" title="Click to return to price data">
+            <div style="display:flex;align-items:center;gap:7px;cursor:pointer;" onclick="toggleMarketCardFlip('${m.symbol}', this); event.stopPropagation();" title="Click to return to price data">
               <span style="font-size:16px;">🛡️</span>
               <div>
                 <div style="font-size:13px;font-weight:800;color:var(--text-primary);">${m.symbol} AI Shield</div>
                 <div class="card-back-model-used" style="font-size:9.5px;color:var(--text-muted);">${modelUsed}</div>
               </div>
             </div>
-            <button class="card-flip-back-btn" onclick="toggleMarketCardFlip('${m.symbol}')" title="Return to price data">
+            <button class="card-flip-back-btn" onclick="toggleMarketCardFlip('${m.symbol}', this); event.stopPropagation();" title="Return to price data">
               ↩ Price Data
             </button>
           </div>
@@ -19230,7 +19917,7 @@
           <span style="color:${isVetoed ? '#f87171' : 'var(--text-muted)'};font-weight:600;">
             ${isVetoed ? '🚫 VETO: Capital Protected' : '⚡ 9 Confluence Gates Armed'}
           </span>
-          <button class="card-flip-back-btn" onclick="toggleMarketCardFlip('${m.symbol}')" style="padding:3px 8px;font-size:9.5px;">
+          <button class="card-flip-back-btn" onclick="toggleMarketCardFlip('${m.symbol}', this); event.stopPropagation();" style="padding:3px 8px;font-size:9.5px;">
             ↩ Return
           </button>
         </div>
@@ -19635,10 +20322,10 @@
           sidePill.textContent = `${posArrow} ${posAction}`;
         }
 
-        // Update signal row action badge
+        // Update signal row action badge for open position
         if (actionBadge) {
           actionBadge.className = `action-badge action-${posAction}`;
-          actionBadge.textContent = `ACTIVE ${posAction}`;
+          actionBadge.textContent = `OPEN ${posAction}`;
         }
       } else {
         // No open position for this market
@@ -19648,9 +20335,11 @@
           const sidePill = symEl.querySelector('.pos-side-pill');
           if (sidePill) sidePill.remove();
         }
-        if (actionBadge && actionBadge.textContent.startsWith('ACTIVE')) {
-          actionBadge.className = `action-badge action-${m.action || 'WAIT'}`;
-          actionBadge.textContent = m.action || 'WAIT';
+        if (actionBadge && (actionBadge.textContent.startsWith('ACTIVE') || actionBadge.textContent.startsWith('OPEN'))) {
+          const rawAct = m.action || 'WAIT';
+          const cleanAct = (rawAct === 'LONG' || rawAct === 'ACTIVE LONG') ? 'LONG BIAS' : ((rawAct === 'SHORT' || rawAct === 'ACTIVE SHORT') ? 'SHORT BIAS' : rawAct);
+          actionBadge.className = `action-badge action-${cleanAct.replace(/\s+/g, '-')}`;
+          actionBadge.textContent = cleanAct;
         }
       }
     }
@@ -19660,7 +20349,26 @@
         markets = window.lastState?.markets || window._lastKnownMarkets || {};
       }
       if (!markets || typeof markets !== 'object') return;
-      const grids = ['markets-grid', 'markets-grid-full'];
+
+      // STRICT DECIBEL DEX UNIVERSE FILTER:
+      // Drop any asset that is NOT in the official Decibel DEX universe (e.g. DOT, SHIB, LTC, BCH, FET, RENDER, ARB, OP, INJ, SEI, TIA)
+      const DECIBEL_DEX_SYMBOLS = new Set([
+        'BTC/USD', 'ETH/USD', 'HYPE/USD', 'SOL/USD', 'LINK/USD', 'ZEC/USD', 'DOGE/USD', 'BNB/USD', 'XRP/USD', 'MON/USD', 'AAVE/USD', 'ADA/USD', 'APT/USD',
+        'NEAR/USD', 'TAO/USD', 'kPEPE/USD', 'PEPE/USD', 'MEGA/USD', 'SUI/USD', 'ENA/USD', 'LIT/USD', 'FARTCOIN/USD', 'TRUMP/USD', 'LDO/USD', 'MORPHO/USD',
+        'CHIP/USD', 'PUMP/USD', 'XPL/USD', 'AVAX/USD', 'UNI/USD', 'GME/USD', 'WLFI/USD', 'TRX/USD', 'ZRO/USD', 'SONY/USD', 'TTWO/USD',
+        'APT/USDC', 'ETH/USDC', 'BTC/USDC', 'XRP/USDC'
+      ]);
+
+      const filteredMarkets = {};
+      for (const [sym, m] of Object.entries(markets)) {
+        const normSlash = sym.replace(/[-_]/g, '/').toUpperCase();
+        if (DECIBEL_DEX_SYMBOLS.has(normSlash) || DECIBEL_DEX_SYMBOLS.has(sym.toUpperCase())) {
+          filteredMarkets[sym] = m;
+        }
+      }
+      markets = filteredMarkets;
+
+      const grids = ['markets-grid-full'];
       const meta = document.getElementById('markets-meta');
       if (!Object.keys(markets).length) {
         const empty = '<div class="loading">Waiting for first scan…</div>';
@@ -19687,32 +20395,43 @@
       const DEFAULT_TOP_PAIRS = [
         'BTC/USD', 'BTCUSDT', 'BTC',
         'ETH/USD', 'ETHUSDT', 'ETH',
+        'HYPE/USD', 'HYPEUSDT', 'HYPE',
         'SOL/USD', 'SOLUSDT', 'SOL',
-        'APT/USD', 'APTUSDT', 'APT',
-        'SUI/USD', 'SUIUSDT', 'SUI',
-        'AVAX/USD', 'AVAXUSDT', 'AVAX',
+        'LINK/USD', 'LINKUSDT', 'LINK',
+        'ZEC/USD', 'ZECUSDT', 'ZEC',
+        'DOGE/USD', 'DOGEUSDT', 'DOGE',
         'BNB/USD', 'BNBUSDT', 'BNB',
         'XRP/USD', 'XRPUSDT', 'XRP',
-        'DOGE/USD', 'DOGEUSDT', 'DOGE',
-        'TRX/USD', 'TRXUSDT', 'TRX',
-        'NEAR/USD', 'NEARUSDT', 'NEAR',
-        'LINK/USD', 'LINKUSDT', 'LINK',
+        'MON/USD', 'MONUSDT', 'MON',
+        'AAVE/USD', 'AAVEUSDT', 'AAVE',
         'ADA/USD', 'ADAUSDT', 'ADA',
-        'DOT/USD', 'DOTUSDT', 'DOT',
-        'HYPE/USD', 'HYPEUSDT', 'HYPE',
-        'PEPE/USD', 'PEPEUSDT', 'PEPE',
-        'SHIB/USD', 'SHIBUSDT', 'SHIB',
-        'LTC/USD', 'LTCUSDT', 'LTC',
-        'BCH/USD', 'BCHUSDT', 'BCH',
-        'UNI/USD', 'UNIUSDT', 'UNI',
-        'FET/USD', 'FETUSDT', 'FET',
+        'APT/USD', 'APTUSDT', 'APT',
+        'NEAR/USD', 'NEARUSDT', 'NEAR',
         'TAO/USD', 'TAOUSDT', 'TAO',
-        'RENDER/USD', 'RENDERUSDT', 'RENDER',
-        'ARB/USD', 'ARBUSDT', 'ARB',
-        'OP/USD', 'OPUSDT', 'OP',
-        'INJ/USD', 'INJUSDT', 'INJ',
-        'SEI/USD', 'SEIUSDT', 'SEI',
-        'TIA/USD', 'TIAUSDT', 'TIA',
+        'kPEPE/USD', 'PEPE/USD', 'PEPEUSDT', 'kPEPE', 'PEPE',
+        'MEGA/USD', 'MEGAUSDT', 'MEGA',
+        'SUI/USD', 'SUIUSDT', 'SUI',
+        'ENA/USD', 'ENAUSDT', 'ENA',
+        'LIT/USD', 'LITUSDT', 'LIT',
+        'FARTCOIN/USD', 'FARTCOINUSDT', 'FARTCOIN',
+        'TRUMP/USD', 'TRUMPUSDT', 'TRUMP',
+        'LDO/USD', 'LDOUSDT', 'LDO',
+        'MORPHO/USD', 'MORPHOUSDT', 'MORPHO',
+        'CHIP/USD', 'CHIPUSDT', 'CHIP',
+        'PUMP/USD', 'PUMPUSDT', 'PUMP',
+        'XPL/USD', 'XPLUSDT', 'XPL',
+        'AVAX/USD', 'AVAXUSDT', 'AVAX',
+        'UNI/USD', 'UNIUSDT', 'UNI',
+        'GME/USD', 'GMEUSDT', 'GME',
+        'WLFI/USD', 'WLFIUSDT', 'WLFI',
+        'TRX/USD', 'TRXUSDT', 'TRX',
+        'ZRO/USD', 'ZROUSDT', 'ZRO',
+        'SONY/USD', 'SONYUSDT', 'SONY',
+        'TTWO/USD', 'TTWOUSDT', 'TTWO',
+        'APT/USDC', 'APTUSDC',
+        'ETH/USDC', 'ETHUSDC',
+        'BTC/USDC', 'BTCUSDC',
+        'XRP/USDC', 'XRPUSDC',
       ];
 
       window._fixedMarketOrder = window._fixedMarketOrder || [];
@@ -20028,7 +20747,7 @@
             }
           }
           if (flipCta) {
-            const isGatePass = (m.confidence || 0) >= stratGate && m.action && m.action !== 'WAIT' && m.action !== 'HOLD';
+            const isGatePass = (m.confidence || 0) >= stratGate && m.action && m.action !== 'WAIT' && m.action !== 'HOLD' && !m.action.startsWith('STANDBY') && !m.action.startsWith('SCANNING');
             flipCta.classList.toggle('is-gate-pass', isGatePass);
           }
 
@@ -20738,6 +21457,16 @@
         ? state.markets
         : (window._lastKnownMarkets || {});
       renderMarkets(marketsToRender);
+      if (state && Array.isArray(state.recentLogs) && state.recentLogs.length > 0) {
+        window.recentLogs = state.recentLogs;
+      }
+      try {
+        if (typeof renderCockpit === 'function') {
+          renderCockpit(state);
+        }
+      } catch (err) {
+        console.warn('renderCockpit error:', err);
+      }
       if (state.stats) {
         lastStats = state.stats;
         renderStats(state.stats, state);
@@ -20860,6 +21589,23 @@
             const pd = document.querySelector('.pulse-dot');
             if (pd) pd.style.background = 'var(--green)';
           };
+
+          // Also subscribe to dedicated log stream
+          try {
+            const logEs = new EventSource(API + '/api/logs/stream');
+            logEs.onmessage = ev => {
+              try {
+                const item = JSON.parse(ev.data);
+                appendLogBoth(item);
+                if (!window.recentLogs) window.recentLogs = [];
+                window.recentLogs.push(item);
+                if (window.recentLogs.length > 50) window.recentLogs.shift();
+                if (typeof window.renderCockpit === 'function' && window.lastState) {
+                  window.renderCockpit(window.lastState);
+                }
+              } catch {}
+            };
+          } catch {}
         } catch { }
 
       } catch (e) {
@@ -20870,8 +21616,13 @@
       }
     }
 
-    // Continuous background polling to ensure market pairs & positions never drop
+    // Continuous background polling fallback (strictly guarded against connection flooding)
+    let isBgPolling = false;
     setInterval(async () => {
+      const isSseConnected = window._activeEventSource && window._activeEventSource.readyState === 1;
+      if (isSseConnected || isBgPolling) return;
+      isBgPolling = true;
+
       try {
         const [st, pos, trades, stats] = await Promise.all([
           fetch(API + '/api/state').then(r => r.json()).catch(() => null),
@@ -20894,10 +21645,10 @@
             renderPositions(pollPositions);
           }
         }
-        const isSseConnected = window._activeEventSource && window._activeEventSource.readyState === 1;
-        if (st && !isSseConnected) {
+        const isSseStillConnected = window._activeEventSource && window._activeEventSource.readyState === 1;
+        if (st && !isSseStillConnected) {
           renderState(st);
-        } else if (stats && !isSseConnected) {
+        } else if (stats && !isSseStillConnected) {
           renderStats(stats?.stats || stats, lastState);
         }
         if (trades) renderHistory(trades);
@@ -20905,7 +21656,10 @@
           fetchLogs();
         }
       } catch { }
-    }, 2000);
+      finally {
+        isBgPolling = false;
+      }
+    }, 6000);
 
     // ── Copilot Intelligence & Control ──────────────────────────────────────────
     let isDraggingSlider = false;
@@ -21312,7 +22066,7 @@
       }
       if (provider === 'custom') {
         if (urlInput && !urlInput.value) {
-          urlInput.value = 'http://192.168.100.21:11434/v1';
+          urlInput.value = 'http://localhost:11434/v1';
         }
         if (keyInput && !keyInput.value) {
           keyInput.placeholder = 'Optional for Ollama (defaults to local)';
@@ -21371,11 +22125,9 @@
       }
     }
 
-    function updateAIModelPlaceholder(explicitModel) {
+    async function updateAIModelPlaceholder(explicitModel) {
       const provider = (document.getElementById('set-ai-provider')?.value || 'gemini').toLowerCase();
       const modelEl = document.getElementById('set-ai-model');
-      const sel = document.getElementById('set-ai-model-select');
-      const targetModel = explicitModel || modelEl?.value || sel?.value;
       const placeholders = {
         gemini: 'gemini-2.5-flash',
         openai: 'gpt-4o-mini',
@@ -21383,11 +22135,12 @@
         deepseek: 'deepseek-chat',
         groq: 'llama-3.3-70b-versatile',
         openrouter: 'google/gemini-2.5-flash',
+        huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
         custom: 'qwen2.5:3b',
         local_rules: 'quantitative-confluence-engine'
       };
       if (modelEl) modelEl.placeholder = placeholders[provider] || 'gemini-2.5-flash';
-      fetchAvailableModelsForSelectedProvider(undefined, targetModel);
+      return await fetchAvailableModelsForSelectedProvider(undefined, explicitModel);
     }
 
     function onModelSelectChange(val) {
@@ -21499,12 +22252,15 @@
 
       select.innerHTML = html;
 
+      const matched = models.find(m => m.id.toLowerCase() === effectiveModel.toLowerCase());
+      const canonical = matched ? matched.id : effectiveModel;
+
       if (effectiveModel && !inList && effectiveModel !== '__custom__') {
         select.value = effectiveModel;
         if (txt) { txt.style.display = 'none'; txt.value = effectiveModel; }
       } else if (inList) {
-        select.value = effectiveModel;
-        if (txt) { txt.style.display = 'none'; txt.value = effectiveModel; }
+        select.value = canonical;
+        if (txt) { txt.style.display = 'none'; txt.value = canonical; }
       } else if (effectiveModel === '__custom__') {
         select.value = '__custom__';
         if (txt) { txt.style.display = 'block'; }
@@ -21715,7 +22471,7 @@
         if (fb) {
           fb.style.display = 'block';
           fb.style.color = '#ef4444';
-          fb.innerHTML = '❌ <b>Wrong Account!</b> This is your <b>Gas Signer Address</b> (for transaction fees), NOT your trading subaccount. Please enter your Decibel Subaccount (e.g. <code>0xcc2a2641...</code>) or primary wallet.';
+          fb.innerHTML = '❌ <b>Wrong Account!</b> This is your <b>Gas Signer Address</b> (for transaction fees), NOT your trading subaccount. Please enter your Decibel Subaccount (0x...) or primary wallet.';
         }
         return;
       }
@@ -21825,15 +22581,6 @@
         hintEl.textContent = `(Max wallet: $${maxWallet.toFixed(2)})`;
         hintEl.style.color = '#93c5fd';
       }
-
-      const maxPosEl = document.getElementById('set-max-position-usd');
-      if (maxPosEl) {
-        maxPosEl.max = budget;
-        const curVal = parseFloat(maxPosEl.value);
-        if (isNaN(curVal) || curVal > budget) {
-          maxPosEl.value = Math.min(budget, Math.round(budget * 0.35) || 10);
-        }
-      }
     }
 
     // ── Onboarding Setup Card ───────────────────────────────────────────────────
@@ -21896,7 +22643,7 @@
         const derivedGas = (document.getElementById('setup-derived-gas-address')?.value || '').trim();
         if (derivedGas && subaccount.toLowerCase() === derivedGas.toLowerCase()) {
           if (errEl) {
-            errEl.innerHTML = '❌ <b>Wrong Account!</b> You entered your Gas Signer key address as your subaccount.<br>Please enter your Decibel Subaccount holding USDC collateral (e.g. <code>0xcc2a2641...</code>).';
+            errEl.innerHTML = '❌ <b>Wrong Account!</b> You entered your Gas Signer key address as your subaccount.<br>Please enter your Decibel Subaccount holding USDC collateral (0x...).';
             errEl.style.display = 'block';
           } else {
             alert('You entered your Gas Signer address as your subaccount! Please enter your Decibel Subaccount.');
@@ -22062,27 +22809,15 @@
         if (aiEnabledEl) aiEnabledEl.checked = s.aiEnabled !== false;
         const aiProvEl = document.getElementById('set-ai-provider');
         const aiModelEl = document.getElementById('set-ai-model');
-        let modelToSet = s.aiModel || ai.model;
-        if (!modelToSet) {
-          try {
-            const aiData = await fetch(API + '/api/settings/ai').then(r => r.json());
-            if (aiData && (aiData.model || aiData.settings?.model)) {
-              modelToSet = aiData.model || aiData.settings?.model;
-            }
-          } catch {}
-        }
-        if (!modelToSet) modelToSet = 'gemini-2.5-flash';
+        let modelToSet = s.aiModel || ai.model || 'gemini-2.5-flash';
         if (aiModelEl) aiModelEl.value = modelToSet;
 
         if (aiProvEl) {
           aiProvEl.value = ai.provider || s.aiProvider || 'gemini';
-          updateAIModelPlaceholder(modelToSet);
-        } else {
-          fetchAvailableModelsForSelectedProvider(undefined, modelToSet);
         }
         const aiKeyEl = document.getElementById('set-ai-key');
         if (aiKeyEl) {
-          if (ai.hasGeminiKey || ai.hasClaudeKey || s.aiApiKeyMasked) {
+          if (ai.hasApiKey || ai.hasGeminiKey || ai.hasClaudeKey || s.aiApiKeyMasked) {
             aiKeyEl.placeholder = 'Configured on server (••••••••)';
           }
         }
@@ -22091,7 +22826,10 @@
         const secEnabledEl = document.getElementById('set-secondary-ai-enabled');
         if (secEnabledEl) secEnabledEl.checked = Boolean(s.secondaryEnabled || ai.secondaryEnabled || s.secondaryAiEnabled);
         const secProvEl = document.getElementById('set-secondary-ai-provider');
-        if (secProvEl) secProvEl.value = s.secondaryProvider || ai.secondaryProvider || s.secondaryAiProvider || ai.secondaryAiProvider || 'anthropic';
+        if (secProvEl) {
+          const rawSecProv = (s.secondaryProvider || ai.secondaryProvider || s.secondaryAiProvider || ai.secondaryAiProvider || 'anthropic').toLowerCase();
+          secProvEl.value = (rawSecProv === 'ollama') ? 'custom' : rawSecProv;
+        }
         const secModelEl = document.getElementById('set-secondary-ai-model');
         if (secModelEl) secModelEl.value = s.secondaryModel || ai.secondaryModel || s.secondaryAiModel || ai.secondaryAiModel || 'claude-3-5-sonnet-20241022';
         const secUrlEl = document.getElementById('set-secondary-ai-url');
@@ -22106,17 +22844,13 @@
         // Risk & Budget Parameters
         const maxWallet = window._lastKnownEquity || 0;
         let budgetCeil = Number(trading.budgetUsd ?? s.budgetUsd ?? 30);
-        if (maxWallet > 0 && budgetCeil > maxWallet) {
-          budgetCeil = Number(maxWallet.toFixed(2));
-        }
         if (document.getElementById('set-budget-ceiling-usd')) {
           const bEl = document.getElementById('set-budget-ceiling-usd');
-          if (maxWallet > 0) {
-            bEl.max = maxWallet;
-            const hintEl = document.getElementById('budget-ceiling-max-hint');
-            if (hintEl) hintEl.textContent = `(Max wallet: $${maxWallet.toFixed(2)})`;
-          }
           bEl.value = budgetCeil;
+          if (maxWallet > 0) {
+            const hintEl = document.getElementById('budget-ceiling-max-hint');
+            if (hintEl) hintEl.textContent = `(Wallet balance: $${maxWallet.toFixed(2)})`;
+          }
         }
         if (document.getElementById('set-min-leverage')) document.getElementById('set-min-leverage').value = trading.minLeverage ?? s.minLeverage ?? 5;
         if (document.getElementById('set-max-leverage')) document.getElementById('set-max-leverage').value = trading.maxLeverage ?? s.maxLeverage ?? 12;
@@ -22128,10 +22862,10 @@
         }
         if (document.getElementById('set-min-alloc-pct')) document.getElementById('set-min-alloc-pct').value = trading.minAllocPct ?? s.minAllocPct ?? 35;
         if (document.getElementById('set-max-alloc-pct')) document.getElementById('set-max-alloc-pct').value = trading.maxAllocPct ?? s.maxAllocPct ?? 60;
-        if (document.getElementById('set-stop-loss-pct')) document.getElementById('set-stop-loss-pct').value = s.defaultStopLossPct ?? 1.5;
-        if (document.getElementById('set-take-profit-pct')) document.getElementById('set-take-profit-pct').value = s.defaultTakeProfitPct ?? 3.0;
-        if (document.getElementById('set-max-open-positions')) document.getElementById('set-max-open-positions').value = s.maxOpenPositions ?? 3;
-        if (document.getElementById('set-slippage-pct')) document.getElementById('set-slippage-pct').value = s.slippageTolerancePct ?? 0.3;
+        if (document.getElementById('set-stop-loss-pct')) document.getElementById('set-stop-loss-pct').value = trading.defaultStopLossPct ?? s.defaultStopLossPct ?? 1.5;
+        if (document.getElementById('set-take-profit-pct')) document.getElementById('set-take-profit-pct').value = trading.defaultTakeProfitPct ?? s.defaultTakeProfitPct ?? 3.0;
+        if (document.getElementById('set-max-open-positions')) document.getElementById('set-max-open-positions').value = trading.maxOpenPositions ?? s.maxOpenPositions ?? trading.maxConcurrentPositions ?? s.maxConcurrentPositions ?? 3;
+        if (document.getElementById('set-slippage-pct')) document.getElementById('set-slippage-pct').value = trading.slippageTolerancePct ?? s.slippageTolerancePct ?? 0.3;
 
         // Telegram
         if (document.getElementById('set-telegram-bot-token')) {
@@ -22148,14 +22882,18 @@
         }
 
         // Admin Password
+        window._hasAdminPassword = Boolean(sec.hasAdminPassword || s.hasAdminPassword);
         if (document.getElementById('set-admin-password')) {
           const pwdEl = document.getElementById('set-admin-password');
-          if (sec.hasAdminPassword || s.hasAdminPassword) {
+          if (window._hasAdminPassword) {
             pwdEl.placeholder = 'Password configured (leave blank to keep unchanged)';
           } else {
             pwdEl.placeholder = 'Set a strong password to protect public web access';
           }
         }
+
+        // Asynchronously populate AI Model Dropdown without blocking UI fields
+        updateAIModelPlaceholder(modelToSet).catch(console.warn);
       } catch (err) {
         console.error('Failed to load settings:', err);
       }
@@ -22163,85 +22901,141 @@
 
     async function saveDecibelSettingsUI() {
       const btn = document.getElementById('btn-save-decibel');
+      const originalText = btn?.textContent || '💾 Save Decibel Credentials';
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
-      const sub = document.getElementById('set-decibel-subaccount')?.value.trim();
-      const key = document.getElementById('set-decibel-private-key')?.value.trim();
-      const net = document.getElementById('set-decibel-network')?.value;
-      const url = document.getElementById('set-decibel-api-url')?.value.trim();
-      const payload = {
-        decibelSubaccount: sub,
-        decibelNetwork: net,
-        decibelApiBaseUrl: url
-      };
-      if (key && !key.startsWith('•')) {
-        payload.decibelPrivateKey = key;
-      }
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
+
       try {
+        const sub = document.getElementById('set-decibel-subaccount')?.value.trim();
+        const key = document.getElementById('set-decibel-private-key')?.value.trim();
+        const net = document.getElementById('set-decibel-network')?.value;
+        const url = document.getElementById('set-decibel-api-url')?.value.trim();
+        const payload = {
+          decibelSubaccount: sub,
+          decibelNetwork: net,
+          decibelApiBaseUrl: url
+        };
+        if (key && !key.startsWith('•')) {
+          payload.decibelPrivateKey = key;
+        }
+
+        if (!await requireAdminAuth()) { return; }
         const res = await fetch(API + '/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save Decibel credentials');
+
+        clearTimeout(safetyTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ SAVED!';
+          btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+        }
         showToastNotification('⚡ Decibel DEX credentials saved successfully!');
-        await checkSetupStatus();
-        await loadAllSettingsUI();
+        setTimeout(() => {
+          if (btn) {
+            btn.textContent = originalText;
+            btn.style.boxShadow = '';
+          }
+        }, 1500);
+
+        setTimeout(() => {
+          checkSetupStatus?.().catch(console.warn);
+          loadAllSettingsUI?.().catch(console.warn);
+        }, 100);
+
       } catch (err) {
-        alert('Failed to save Decibel credentials: ' + err.message);
+        clearTimeout(safetyTimer);
+        showToastNotification('❌ Failed to save Decibel credentials: ' + err.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Decibel Credentials'; }
+        if (btn && btn.textContent.includes('Saving')) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
     async function saveAISettingsBoxUI() {
       const btn = document.getElementById('btn-save-ai');
+      const originalText = btn?.textContent || '💾 Save AI Brain';
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
-      const isEnabled = document.getElementById('set-ai-enabled')?.checked;
-      const prov = document.getElementById('set-ai-provider')?.value || 'gemini';
-      const model = getSelectedAIModel() || 'gemini-2.5-flash';
-      const key = document.getElementById('set-ai-key')?.value.trim();
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
 
-      const secEnabled = document.getElementById('set-secondary-ai-enabled')?.checked;
-      const secProv = document.getElementById('set-secondary-ai-provider')?.value || 'anthropic';
-      const secModel = document.getElementById('set-secondary-ai-model')?.value.trim() || 'claude-3-5-sonnet-20241022';
-      const secUrl = document.getElementById('set-secondary-ai-url')?.value.trim() || '';
-      const secKey = document.getElementById('set-secondary-ai-key')?.value.trim();
-
-      const payload = {
-        aiEnabled: isEnabled,
-        aiProvider: prov,
-        aiModel: model,
-        enabled: isEnabled,
-        provider: prov,
-        model: model,
-        secondaryEnabled: secEnabled,
-        secondaryProvider: secProv,
-        secondaryModel: secModel,
-        secondaryCustomBaseUrl: secUrl,
-      };
-      if (key && !key.startsWith('•')) {
-        payload.aiApiKey = key;
-        payload.apiKey = key;
-      }
-      if (secKey && !secKey.startsWith('•')) {
-        payload.secondaryApiKey = secKey;
-      }
       try {
+        const isEnabled = document.getElementById('set-ai-enabled')?.checked ?? true;
+        const prov = document.getElementById('set-ai-provider')?.value || 'gemini';
+        const model = getSelectedAIModel() || 'gemini-2.5-flash';
+        const key = (document.getElementById('set-ai-key')?.value || '').trim();
+
+        const secEnabled = document.getElementById('set-secondary-ai-enabled')?.checked ?? false;
+        const secProv = document.getElementById('set-secondary-ai-provider')?.value || 'anthropic';
+        const secModel = (document.getElementById('set-secondary-ai-model')?.value || '').trim() || 'claude-3-5-sonnet-20241022';
+        const secUrl = (document.getElementById('set-secondary-ai-url')?.value || '').trim() || '';
+        const secKey = (document.getElementById('set-secondary-ai-key')?.value || '').trim();
+
+        const payload = {
+          aiEnabled: isEnabled,
+          aiProvider: prov,
+          aiModel: model,
+          enabled: isEnabled,
+          provider: prov,
+          model: model,
+          secondaryEnabled: secEnabled,
+          secondaryProvider: secProv,
+          secondaryModel: secModel,
+          secondaryCustomBaseUrl: secUrl,
+        };
+        if (key && !key.startsWith('•')) {
+          payload.aiApiKey = key;
+          payload.apiKey = key;
+        }
+        if (secKey && !secKey.startsWith('•')) {
+          payload.secondaryApiKey = secKey;
+        }
+        if (!await requireAdminAuth()) { return; }
         const res = await fetch(API + '/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save AI configuration');
+
+        clearTimeout(safetyTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ SAVED!';
+          btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+        }
         showToastNotification('🧠 Primary & Second Tier AI settings saved successfully!');
-        updateHeaderAIBadge(payload);
-        await loadAllSettingsUI();
+        if (typeof updateHeaderAIBadge === 'function') updateHeaderAIBadge(payload);
+
+        setTimeout(() => {
+          if (btn) {
+            btn.textContent = originalText;
+            btn.style.boxShadow = '';
+          }
+        }, 1500);
+
+        setTimeout(() => {
+          loadAllSettingsUI?.().catch(console.warn);
+        }, 100);
+
       } catch (err) {
-        alert('Failed to save AI settings: ' + err.message);
+        clearTimeout(safetyTimer);
+        showToastNotification('❌ Failed to save AI settings: ' + err.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 Save AI Brain'; }
+        if (btn && btn.textContent.includes('Saving')) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
@@ -22344,7 +23138,11 @@
 
         // ── Login flow
         pwdInput.focus();
-        submitBtn.addEventListener('click', () => resolve(pwdInput.value || null));
+        submitBtn.addEventListener('click', () => {
+          const val = pwdInput.value;
+          modal.remove();
+          resolve(val || null);
+        });
         cancelBtn.addEventListener('click', () => { modal.remove(); resolve(null); });
         pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitBtn.click(); });
 
@@ -22397,25 +23195,20 @@
     // Ensures the user has a valid session token if the server has a password set.
     // Returns true if auth is satisfied (no password configured, or valid token obtained).
     async function requireAdminAuth() {
-      // Check if the server has a password configured
-      let hasPassword = false;
-      try {
-        const settingsRes = await fetch(API + '/api/settings').then(r => r.json()).catch(() => ({}));
-        hasPassword = settingsRes?.settings?.security?.hasAdminPassword === true;
-        if (!hasPassword) return true; // No password — no auth needed
-      } catch { return true; }
-
-      // Already have a cached token? Validate it.
-      const cached = sessionStorage.getItem('alpha_admin_token');
-      if (cached) {
-        const probe = await fetch(API + '/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cached },
-          body: JSON.stringify({ _probe: true })
-        }).catch(() => null);
-        if (probe && probe.status !== 401) return true; // Token still valid
-        sessionStorage.removeItem('alpha_admin_token'); // Expired — clear and re-prompt
+      // Check if the server has a password configured (use cached flag if already loaded)
+      let hasPassword = window._hasAdminPassword;
+      if (hasPassword === undefined) {
+        try {
+          const settingsRes = await fetch(API + '/api/settings').then(r => r.json()).catch(() => ({}));
+          hasPassword = settingsRes?.settings?.security?.hasAdminPassword === true;
+          window._hasAdminPassword = hasPassword;
+        } catch { return true; }
       }
+      if (!hasPassword) return true; // No password — no auth needed
+
+      // Already have a cached token? Optimistically return true (server verifies token on actual POST).
+      const cached = sessionStorage.getItem('alpha_admin_token');
+      if (cached) return true;
 
       // Show the styled login modal
       const pwd = await showAdminLoginModal();
@@ -22445,35 +23238,35 @@
 
     async function saveRiskSettingsUI() {
       const btn = document.getElementById('btn-save-risk');
+      const originalText = btn?.textContent || '💾 Save Risk Guardrails';
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
-      let budgetUsd = parseFloat(document.getElementById('set-budget-ceiling-usd')?.value) || 30;
-      const maxWallet = window._lastKnownEquity || 0;
-      if (maxWallet > 0 && budgetUsd > maxWallet) {
-        budgetUsd = Number(maxWallet.toFixed(2));
-        const bEl = document.getElementById('set-budget-ceiling-usd');
-        if (bEl) bEl.value = budgetUsd;
-        showToastNotification(`⚠️ Budget Ceiling capped to on-chain wallet balance: $${budgetUsd.toFixed(2)}`);
-      }
-      let minPositionUsd = parseFloat(document.getElementById('set-min-position-usd')?.value) || 35;
-      let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 150;
-      let minLeverage = parseFloat(document.getElementById('set-min-leverage')?.value) || 5;
-      let maxLeverage = parseFloat(document.getElementById('set-max-leverage')?.value) || 12;
-      let minAllocPct = parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35;
-      let maxAllocPct = parseFloat(document.getElementById('set-max-alloc-pct')?.value) || 60;
-      const payload = {
-        budgetUsd: budgetUsd,
-        minPositionUsd: minPositionUsd,
-        maxPositionUsd: maxPositionUsd,
-        minLeverage: minLeverage,
-        maxLeverage: maxLeverage,
-        minAllocPct: minAllocPct,
-        maxAllocPct: maxAllocPct,
-        defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
-        defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
-        maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
-        slippageTolerancePct: parseFloat(document.getElementById('set-slippage-pct')?.value) || 0.3
-      };
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
+
       try {
+        let budgetUsd = parseFloat(document.getElementById('set-budget-ceiling-usd')?.value) || 30;
+        let minPositionUsd = parseFloat(document.getElementById('set-min-position-usd')?.value) || 35;
+        let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 150;
+        let minLeverage = parseFloat(document.getElementById('set-min-leverage')?.value) || 5;
+        let maxLeverage = parseFloat(document.getElementById('set-max-leverage')?.value) || 12;
+        let minAllocPct = parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35;
+        let maxAllocPct = parseFloat(document.getElementById('set-max-alloc-pct')?.value) || 60;
+        const payload = {
+          budgetUsd: budgetUsd,
+          minPositionUsd: minPositionUsd,
+          maxPositionUsd: maxPositionUsd,
+          minLeverage: minLeverage,
+          maxLeverage: maxLeverage,
+          minAllocPct: minAllocPct,
+          maxAllocPct: maxAllocPct,
+          defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
+          defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
+          maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
+          maxConcurrentPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
+          slippageTolerancePct: parseFloat(document.getElementById('set-slippage-pct')?.value) || 0.3
+        };
+
         if (!await requireAdminAuth()) { return; }
         const res = await fetch(API + '/api/settings', {
           method: 'POST',
@@ -22482,27 +23275,54 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save risk settings');
+
+        clearTimeout(safetyTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ SAVED!';
+          btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+        }
         showToastNotification('🛡️ Risk & execution guardrails saved successfully!');
-        await loadAllSettingsUI();
+        setTimeout(() => {
+          if (btn) {
+            btn.textContent = originalText;
+            btn.style.boxShadow = '';
+          }
+        }, 1500);
+
+        setTimeout(() => {
+          loadAllSettingsUI?.().catch(console.warn);
+        }, 100);
+
       } catch (err) {
-        alert('Failed to save risk settings: ' + err.message);
+        clearTimeout(safetyTimer);
+        showToastNotification('❌ Failed to save risk settings: ' + err.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Risk Guardrails'; }
+        if (btn && btn.textContent.includes('Saving')) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
     async function saveTelegramSettingsUI() {
       const btn = document.getElementById('btn-save-telegram');
+      const originalText = btn?.textContent || '💾 Save Telegram';
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
-      const token = document.getElementById('set-telegram-bot-token')?.value.trim();
-      const chatId = document.getElementById('set-telegram-chat-id')?.value.trim();
-      const payload = {
-        telegramChatId: chatId
-      };
-      if (token && !token.startsWith('•') && !token.startsWith('Configured')) {
-        payload.telegramBotToken = token;
-      }
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
+
       try {
+        const token = document.getElementById('set-telegram-bot-token')?.value.trim();
+        const chatId = document.getElementById('set-telegram-chat-id')?.value.trim();
+        const payload = {
+          telegramChatId: chatId
+        };
+        if (token && !token.startsWith('•') && !token.startsWith('Configured')) {
+          payload.telegramBotToken = token;
+        }
+
         if (!await requireAdminAuth()) { return; }
         const res = await fetch(API + '/api/settings', {
           method: 'POST',
@@ -22511,99 +23331,174 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save Telegram settings');
+
+        clearTimeout(safetyTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ SAVED!';
+          btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+        }
         showToastNotification('📱 Telegram notification settings saved successfully!');
-        await loadAllSettingsUI();
+        setTimeout(() => {
+          if (btn) {
+            btn.textContent = originalText;
+            btn.style.boxShadow = '';
+          }
+        }, 1500);
+
+        setTimeout(() => {
+          loadAllSettingsUI?.().catch(console.warn);
+        }, 100);
+
       } catch (err) {
-        alert('Failed to save Telegram settings: ' + err.message);
+        clearTimeout(safetyTimer);
+        showToastNotification('❌ Failed to save Telegram settings: ' + err.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Telegram'; }
+        if (btn && btn.textContent.includes('Saving')) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
     async function saveSecuritySettingsUI() {
       const btn = document.getElementById('btn-save-security');
+      const originalText = btn?.textContent || '💾 Save Admin Password';
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
-      const pwd = document.getElementById('set-admin-password')?.value;
-      const payload = {
-        adminPassword: pwd !== undefined ? pwd : ''
-      };
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
+
       try {
-        // Security settings: may be setting password for the first time (no auth needed then)
-        // or changing an existing password (auth required).
-        const settingsCheck = await fetch(API + '/api/settings').then(r => r.json()).catch(() => ({}));
-        const alreadyHasPwd = settingsCheck?.settings?.security?.hasAdminPassword === true;
-        if (alreadyHasPwd && !await requireAdminAuth()) { return; }
+        const pwd = document.getElementById('set-admin-password')?.value;
+        const payload = {
+          adminPassword: pwd !== undefined ? pwd : ''
+        };
+
         const res = await fetch(API + '/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save security settings');
-        // If a new password was set, clear the old cached token so they re-login next time.
+        if (!res.ok || !data.success) {
+          if (res.status === 401 && await requireAdminAuth()) {
+            const retryRes = await fetch(API + '/api/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+              body: JSON.stringify(payload)
+            });
+            const retryData = await retryRes.json();
+            if (!retryRes.ok || !retryData.success) throw new Error(retryData.error || 'Failed to save security settings');
+          } else {
+            throw new Error(data.error || 'Failed to save security settings');
+          }
+        }
         if (pwd && pwd.trim()) sessionStorage.removeItem('alpha_admin_token');
+
+        clearTimeout(safetyTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ SAVED!';
+          btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+        }
         showToastNotification('🔒 Admin password and public security saved successfully!');
-        await loadAllSettingsUI();
+        setTimeout(() => {
+          if (btn) {
+            btn.textContent = originalText;
+            btn.style.boxShadow = '';
+          }
+        }, 1500);
+
+        setTimeout(() => {
+          loadAllSettingsUI?.().catch(console.warn);
+        }, 100);
+
       } catch (err) {
-        alert('Failed to save security settings: ' + err.message);
+        clearTimeout(safetyTimer);
+        showToastNotification('❌ Failed to save security settings: ' + err.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Admin Password'; }
+        if (btn && btn.textContent.includes('Saving')) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
     async function saveAllSettingsUI() {
       const btn = document.getElementById('btn-save-all-settings');
+      const originalText = btn?.textContent || '💾 SAVE ALL SETTINGS';
       if (btn) { btn.disabled = true; btn.textContent = '⏳ SAVING...'; }
-
-      let budgetUsd = parseFloat(document.getElementById('set-budget-ceiling-usd')?.value) || 30;
-      const maxWallet = window._lastKnownEquity || 0;
-      if (maxWallet > 0 && budgetUsd > maxWallet) {
-        budgetUsd = Number(maxWallet.toFixed(2));
-        const bEl = document.getElementById('set-budget-ceiling-usd');
-        if (bEl) bEl.value = budgetUsd;
-        showToastNotification(`⚠️ Budget Ceiling capped to on-chain wallet balance: $${budgetUsd.toFixed(2)}`);
-      }
-      let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 10;
-      if (maxPositionUsd > budgetUsd) {
-        maxPositionUsd = budgetUsd;
-        const posEl = document.getElementById('set-max-position-usd');
-        if (posEl) posEl.value = budgetUsd;
-      }
-
-      let subaccountVal = (document.getElementById('set-decibel-subaccount')?.value || '').trim();
-      const gasSignerVal = (document.getElementById('set-derived-gas-address')?.value || '').trim();
-      if (gasSignerVal && subaccountVal && subaccountVal.toLowerCase() === gasSignerVal.toLowerCase()) {
-        alert('⚠️ Warning: You cannot save the Gas Signer address as your trading Subaccount. Reverting to protected subaccount.');
-        await loadAllSettingsUI();
-        subaccountVal = (document.getElementById('set-decibel-subaccount')?.value || '').trim();
-      }
-
-      const payload = {
-        decibelSubaccount: subaccountVal,
-        decibelPrivateKey: document.getElementById('set-decibel-private-key')?.value.trim(),
-        decibelNetwork: document.getElementById('set-decibel-network')?.value,
-        decibelApiBaseUrl: document.getElementById('set-decibel-api-url')?.value.trim(),
-        aiEnabled: document.getElementById('set-ai-enabled')?.checked,
-        aiProvider: document.getElementById('set-ai-provider')?.value,
-        aiModel: getSelectedAIModel(),
-        aiApiKey: document.getElementById('set-ai-key')?.value.trim(),
-        budgetUsd: budgetUsd,
-        minPositionUsd: parseFloat(document.getElementById('set-min-position-usd')?.value) || 35,
-        maxPositionUsd: parseFloat(document.getElementById('set-max-position-usd')?.value) || 150,
-        minLeverage: parseFloat(document.getElementById('set-min-leverage')?.value) || 5,
-        maxLeverage: parseFloat(document.getElementById('set-max-leverage')?.value) || 12,
-        minAllocPct: parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35,
-        maxAllocPct: parseFloat(document.getElementById('set-max-alloc-pct')?.value) || 60,
-        defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
-        defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
-        maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
-        slippageTolerancePct: parseFloat(document.getElementById('set-slippage-pct')?.value) || 0.3,
-        telegramBotToken: document.getElementById('set-telegram-bot-token')?.value.trim(),
-        telegramChatId: document.getElementById('set-telegram-chat-id')?.value.trim(),
-        adminPassword: document.getElementById('set-admin-password')?.value || undefined
-      };
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
 
       try {
+        let budgetUsd = parseFloat(document.getElementById('set-budget-ceiling-usd')?.value) || 30;
+        let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 150;
+
+        let subaccountVal = (document.getElementById('set-decibel-subaccount')?.value || '').trim();
+        const gasSignerVal = (document.getElementById('set-derived-gas-address')?.value || '').trim();
+        if (gasSignerVal && subaccountVal && subaccountVal.toLowerCase() === gasSignerVal.toLowerCase()) {
+          showToastNotification('⚠️ Cannot save Gas Signer as trading Subaccount.');
+          subaccountVal = '';
+        }
+
+        const primaryKeyVal = (document.getElementById('set-ai-key')?.value || '').trim();
+        const secEnabled = document.getElementById('set-secondary-ai-enabled')?.checked ?? false;
+        const secProv = document.getElementById('set-secondary-ai-provider')?.value || 'anthropic';
+        const secModel = (document.getElementById('set-secondary-ai-model')?.value || '').trim() || 'claude-3-5-sonnet-20241022';
+        const secUrl = (document.getElementById('set-secondary-ai-url')?.value || '').trim() || '';
+        const secKey = (document.getElementById('set-secondary-ai-key')?.value || '').trim();
+        const decibelKey = (document.getElementById('set-decibel-private-key')?.value || '').trim();
+        const tgTok = (document.getElementById('set-telegram-bot-token')?.value || '').trim();
+        const tgChat = (document.getElementById('set-telegram-chat-id')?.value || '').trim();
+        const adminPwd = document.getElementById('set-admin-password')?.value;
+
+        const payload = {
+          decibelSubaccount: subaccountVal,
+          decibelNetwork: document.getElementById('set-decibel-network')?.value || 'mainnet',
+          decibelApiBaseUrl: (document.getElementById('set-decibel-api-url')?.value || '').trim() || 'https://api.decibel.trade',
+          aiEnabled: document.getElementById('set-ai-enabled')?.checked ?? true,
+          aiProvider: document.getElementById('set-ai-provider')?.value || 'gemini',
+          aiModel: getSelectedAIModel() || 'gemini-3.8-flash',
+          secondaryEnabled: secEnabled,
+          secondaryProvider: secProv,
+          secondaryModel: secModel,
+          secondaryCustomBaseUrl: secUrl,
+          budgetUsd: budgetUsd,
+          minPositionUsd: parseFloat(document.getElementById('set-min-position-usd')?.value) || 35,
+          maxPositionUsd: maxPositionUsd,
+          minLeverage: parseFloat(document.getElementById('set-min-leverage')?.value) || 5,
+          maxLeverage: parseFloat(document.getElementById('set-max-leverage')?.value) || 12,
+          minAllocPct: parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35,
+          maxAllocPct: parseFloat(document.getElementById('set-max-alloc-pct')?.value) || 60,
+          defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
+          defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
+          maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
+          maxConcurrentPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
+          slippageTolerancePct: parseFloat(document.getElementById('set-slippage-pct')?.value) || 0.3
+        };
+        if (tgTok && !tgTok.startsWith('•') && !tgTok.startsWith('Configured')) {
+          payload.telegramBotToken = tgTok;
+        }
+        if (tgChat && !tgChat.startsWith('•')) {
+          payload.telegramChatId = tgChat;
+        }
+        if (adminPwd && adminPwd.trim() !== '') {
+          payload.adminPassword = adminPwd;
+        }
+        if (primaryKeyVal && !primaryKeyVal.startsWith('•')) {
+          payload.aiApiKey = primaryKeyVal;
+          payload.apiKey = primaryKeyVal;
+        }
+        if (secKey && !secKey.startsWith('•')) {
+          payload.secondaryApiKey = secKey;
+        }
+        if (decibelKey && !decibelKey.startsWith('•')) {
+          payload.decibelPrivateKey = decibelKey;
+        }
+
         if (!await requireAdminAuth()) { return; }
         const res = await fetch(API + '/api/settings', {
           method: 'POST',
@@ -22612,14 +23507,36 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save settings');
-        showToastNotification('💾 Settings saved and applied successfully!');
-        updateHeaderAIBadge(payload);
-        await checkSetupStatus();
-        await loadAllSettingsUI();
+
+        clearTimeout(safetyTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ SAVED!';
+          btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+        }
+        showToastNotification('💾 All settings saved and applied successfully!');
+        if (typeof updateHeaderAIBadge === 'function') updateHeaderAIBadge(payload);
+
+        setTimeout(() => {
+          if (btn) {
+            btn.textContent = originalText;
+            btn.style.boxShadow = '';
+          }
+        }, 1500);
+
+        setTimeout(() => {
+          checkSetupStatus?.().catch(console.warn);
+          loadAllSettingsUI?.().catch(console.warn);
+        }, 100);
+
       } catch (err) {
-        alert('Failed to save settings: ' + err.message);
+        clearTimeout(safetyTimer);
+        showToastNotification('❌ Failed to save settings: ' + err.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 SAVE ALL SETTINGS'; }
+        if (btn && (btn.textContent.includes('SAVING') || btn.textContent.includes('Saving'))) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
@@ -22708,7 +23625,7 @@
 
         const urlInput = document.getElementById('simlab-url-input');
         if (urlInput && document.activeElement !== urlInput) {
-          urlInput.value = data.serverUrl || 'https://simlab.measmony.me';
+          urlInput.value = data.serverUrl || 'http://localhost:4000';
         }
         const keyInput = document.getElementById('simlab-key-input');
         if (keyInput && document.activeElement !== keyInput && data.simLabKey) {
@@ -22804,7 +23721,7 @@
     }
 
     async function saveSimLabFeaturesFromUI() {
-      const url = document.getElementById('simlab-url-input')?.value.trim() || 'https://simlab.measmony.me';
+      const url = document.getElementById('simlab-url-input')?.value.trim() || 'http://localhost:4000';
       const flags = {
         url: url,
         features: {
@@ -22844,7 +23761,7 @@
       const keyInput = document.getElementById('simlab-key-input');
       const urlInput = document.getElementById('simlab-url-input');
 
-      const url = urlInput?.value.trim() || 'https://simlab.measmony.me';
+      const url = urlInput?.value.trim() || 'http://localhost:4000';
       const key = keyInput?.value.trim() || '';
 
       if (isDisconnect) {
@@ -22993,7 +23910,7 @@
     }
 
     async function testSimLabPingUI() {
-      const url = document.getElementById('simlab-url-input')?.value.trim() || 'https://simlab.measmony.me';
+      const url = document.getElementById('simlab-url-input')?.value.trim() || 'http://localhost:4000';
       const keyInput = document.getElementById('simlab-key-input');
       const key = keyInput?.value.trim() || '';
       const feedback = document.getElementById('simlab-settings-auth-feedback');
@@ -23315,7 +24232,10 @@
     function getSelectedAIModel() {
       const sel = document.getElementById('set-ai-model-select');
       const txt = document.getElementById('set-ai-model');
-      if (sel && sel.value && sel.value !== '__custom__') {
+      if (sel && sel.value === '__custom__' && txt && txt.value.trim()) {
+        return txt.value.trim();
+      }
+      if (sel && sel.value && sel.value !== '__custom__' && !sel.value.includes('Fetching')) {
         return sel.value;
       }
       if (txt && txt.value && txt.value.trim()) {
@@ -23323,10 +24243,10 @@
       }
       const presetSelect = document.getElementById('ai-model-preset');
       const customInput = document.getElementById('ai-model-custom');
-      if (presetSelect && presetSelect.value === 'custom') {
-        return customInput ? customInput.value.trim() : 'gemini-2.5-flash';
+      if (presetSelect && presetSelect.value === 'custom' && customInput?.value?.trim()) {
+        return customInput.value.trim();
       }
-      return presetSelect ? presetSelect.value : 'gemini-2.5-flash';
+      return presetSelect?.value || 'gemini-3.8-flash';
     }
 
     function getSelectedModel() {
@@ -23404,7 +24324,7 @@
           modelEl.value = 'qwen2.5:3b';
         }
         if (urlEl && !urlEl.value) {
-          urlEl.value = 'https://qwen.measmony.me';
+          urlEl.value = 'http://localhost:11434';
         }
       }
     }
@@ -23474,51 +24394,80 @@
     async function saveAISettingsUI() {
       const banner = document.getElementById('ai-status-banner');
       const btn = document.getElementById('btn-save-ai');
+      const originalText = btn?.textContent || '💾 SAVE SETTINGS';
       if (btn) { btn.textContent = '⏳ SAVING...'; btn.disabled = true; }
-
-      const payload = {
-        enabled: document.getElementById('ai-enabled').checked,
-        provider: currentProvider,
-        model: getSelectedModel(),
-        apiKey: document.getElementById('ai-api-key').value.trim(),
-        customBaseUrl: document.getElementById('ai-custom-url').value.trim(),
-        temperature: parseFloat(document.getElementById('ai-temperature').value),
-        useForCopilot: document.getElementById('ai-use-copilot').checked,
-        useForTradeValidation: document.getElementById('ai-use-validation').checked,
-        primaryIntelligenceSource: document.getElementById('ai-primary-source')?.value || 'hybrid',
-        tradeValidationMode: document.getElementById('ai-trade-validation-mode')?.value || 'smart_hybrid',
-        hybridThresholdPct: parseInt(document.getElementById('ai-hybrid-threshold')?.value, 10) || 65,
-        macroAdvisorMode: document.getElementById('ai-macro-advisor-mode')?.value || 'sim_primary_with_fallback',
-        tradePostMortemMode: document.getElementById('ai-trade-postmortem-mode')?.value || 'off_sim_delegated',
-        bypassLocalAiWhenSimActive: document.getElementById('ai-bypass-hotloop')?.checked ?? true,
-        autoFailoverToLocalAi: document.getElementById('ai-auto-failover')?.checked ?? true,
-      };
+      const safetyTimer = setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }, 30000);
 
       try {
+        const payload = {
+          enabled: document.getElementById('ai-enabled')?.checked ?? document.getElementById('set-ai-enabled')?.checked ?? true,
+          provider: typeof currentProvider !== 'undefined' ? currentProvider : (document.getElementById('set-ai-provider')?.value || 'gemini'),
+          model: getSelectedModel() || 'gemini-2.5-flash',
+          apiKey: (document.getElementById('ai-api-key')?.value || document.getElementById('set-ai-key')?.value || '').trim(),
+          customBaseUrl: (document.getElementById('ai-custom-url')?.value || document.getElementById('set-secondary-ai-url')?.value || '').trim(),
+          temperature: parseFloat(document.getElementById('ai-temperature')?.value || '0.2'),
+          useForCopilot: document.getElementById('ai-use-copilot')?.checked ?? true,
+          useForTradeValidation: document.getElementById('ai-use-validation')?.checked ?? true,
+          primaryIntelligenceSource: document.getElementById('ai-primary-source')?.value || 'hybrid',
+          tradeValidationMode: document.getElementById('ai-trade-validation-mode')?.value || 'smart_hybrid',
+          hybridThresholdPct: parseInt(document.getElementById('ai-hybrid-threshold')?.value, 10) || 65,
+          macroAdvisorMode: document.getElementById('ai-macro-advisor-mode')?.value || 'sim_primary_with_fallback',
+          tradePostMortemMode: document.getElementById('ai-trade-postmortem-mode')?.value || 'off_sim_delegated',
+          bypassLocalAiWhenSimActive: document.getElementById('ai-bypass-hotloop')?.checked ?? true,
+          autoFailoverToLocalAi: document.getElementById('ai-auto-failover')?.checked ?? true,
+        };
+
         const res = await fetch(API + '/api/settings/ai', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload),
         });
         const data = await res.json();
 
+        clearTimeout(safetyTimer);
         if (data.success) {
-          banner.className = 'status-banner success';
-          banner.innerHTML = `💾 <strong>Settings saved successfully!</strong> Active provider: <code>${data.settings.provider.toUpperCase()}</code> (${data.settings.model}) • ${data.settings.enabled ? '⚡ External AI Active' : '⚪ Using Local Fallback Engine'}`;
-          banner.style.display = 'flex';
-          // Reload UI state to update placeholders
-          await loadAISettingsUI();
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = '✅ SAVED!';
+            btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.6)';
+          }
+          if (banner) {
+            banner.className = 'status-banner success';
+            banner.innerHTML = `💾 <strong>Settings saved successfully!</strong> Active provider: <code>${data.settings.provider.toUpperCase()}</code> (${data.settings.model}) • ${data.settings.enabled ? '⚡ External AI Active' : '⚪ Using Local Fallback Engine'}`;
+            banner.style.display = 'flex';
+          }
+          setTimeout(() => {
+            if (btn) {
+              btn.textContent = originalText;
+              btn.style.boxShadow = '';
+            }
+          }, 1500);
+          setTimeout(() => {
+            loadAISettingsUI?.().catch(console.warn);
+          }, 100);
         } else {
-          banner.className = 'status-banner error';
-          banner.innerHTML = `❌ <strong>Save failed:</strong> ${data.error || 'Unknown error'}`;
-          banner.style.display = 'flex';
+          if (banner) {
+            banner.className = 'status-banner error';
+            banner.innerHTML = `❌ <strong>Save failed:</strong> ${data.error || 'Unknown error'}`;
+            banner.style.display = 'flex';
+          }
+          showToastNotification('❌ Save failed: ' + (data.error || 'Unknown error'));
         }
       } catch (err) {
-        banner.className = 'status-banner error';
-        banner.innerHTML = `❌ <strong>Error:</strong> ${err.message}`;
-        banner.style.display = 'flex';
+        clearTimeout(safetyTimer);
+        if (banner) {
+          banner.className = 'status-banner error';
+          banner.innerHTML = `❌ <strong>Error:</strong> ${err.message}`;
+          banner.style.display = 'flex';
+        }
+        showToastNotification('❌ Error: ' + err.message);
       } finally {
-        if (btn) { btn.textContent = '💾 SAVE SETTINGS'; btn.disabled = false; }
+        if (btn && btn.textContent.includes('SAVING')) {
+          btn.textContent = originalText;
+          btn.disabled = false;
+        }
       }
     }
 
@@ -23814,12 +24763,18 @@
       }
     }
 
-    // Telemetry Polling (every 3s when system tab active, 6s otherwise)
+    // Telemetry Polling (only when system/telemetry tab is active, strictly guarded)
+    let isSystemStatsPolling = false;
     setInterval(async () => {
+      if (typeof currentTab === 'undefined' || currentTab !== 'system' || isSystemStatsPolling) return;
+      isSystemStatsPolling = true;
       try {
         await fetchSystemStats();
       } catch { }
-    }, 3500);
+      finally {
+        isSystemStatsPolling = false;
+      }
+    }, 6000);
 
     // ── Strategy Studio Controller ────────────────────────────────────────────────
     let studioData = { templates: [], custom: [], activeId: '', activeStrategy: null };

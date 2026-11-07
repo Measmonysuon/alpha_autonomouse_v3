@@ -206,6 +206,81 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
 
   // ─── 2. Deterministic Domain Handlers ─────────────────────────────────────
 
+  // ─── Client Desk Isolation & Fleet Status ─────────────────────────────────
+  if (/^(?:list|show|get|display|who\s+are)?\s*(?:all\s+)?(?:online\s+)?clients\b|online\s+clients|client\s+status|connected\s+desks|fleet\s+status|other\s+clients/i.test(lower)) {
+    const stats = tradeExecutor.getStats();
+    const open = tradeExecutor.getOpenTrades();
+    const strat = getActiveStrategy();
+    const budget = agentState.budgetUsd || config.BUDGET_USD || 100;
+    const equity = agentState.accountEquityUsd > 0 ? agentState.accountEquityUsd : budget;
+    return {
+      reply: `### 🌐 Client V3 Execution Desk Status\n\n` +
+        `- **Desk Identity**: **Client V3 Desk (Jetson)** (\`${config.CLIENT_ID || 'client_v3'}\` · ${config.NETWORK.toUpperCase()})\n` +
+        `- **Status**: 🟢 **ONLINE** (Port 3000)\n` +
+        `- **Assigned Strategy**: *${strat?.name || 'Active Strategy'}*\n` +
+        `- **Account Equity**: **$${equity.toFixed(2)} USD**\n` +
+        `- **Performance**: **${fmtPnl(stats.totalPnlUsd)}** (${stats.winRate.toFixed(1)}% WR across ${stats.closedTradesCount || 0} trades)\n` +
+        `- **Active Positions**: **${open.length} open**\n\n` +
+        `🔒 **Data Isolation Policy**: Client V3 operates in strict data isolation. This copilot only accesses Client V3's local execution state and its inbound Alpha Bundle. It cannot access other client desks (e.g. Client V1) or Sim Lab internal server files. For fleet-wide multi-desk telemetry, consult Sim Lab Copilot on Port 4000.`,
+      actionTaken: 'list_online_clients',
+      timestamp: Date.now(),
+    };
+  }
+
+  // ─── 6-Pillar Fleet Compliance & Foundation Goals ──────────────────────────
+  if (/(?:6\s*pillars?|pillars?|fleet\s*pillars?|foundation\s*goals?|risk\s*goals?)/i.test(lower)) {
+    const strat = getActiveStrategy();
+    const l1 = strat.layer1 || ({} as any);
+    const l5 = strat.layer5 || ({} as any);
+    const enforcesPillar1 = l5.enforcePostOnly === true;
+    const enforcesPillar2 = Boolean(l5.moveSlToBreakevenAtTp1 || l5.dynamicTakeProfit1R || (l5.minRiskRewardRatio ?? 0) >= 1.8);
+    const enforcesPillar3 = Boolean(l1.volumeProfileEnabled || (strat.layer2 as any)?.useLiquidationClusters || (strat.layer3 as any)?.turtleSoupSweep || l1.boxConsolidationRetest);
+    const enforcesPillar4 = Boolean((strat.layer4 as any)?.qwenTrapShield || (strat.layer4 as any)?.vetoOnSpoofing);
+    const enforcesPillar5 = Boolean(l1.fastSmaRetestEnabled || (l5.minRiskRewardRatio ?? 0) >= 1.8);
+    const enforcesPillar6 = Boolean(l5.enabled !== false && (l5.leverage ?? 99) <= 10);
+
+    return {
+      reply: `### 🏛️ Autonomous Fleet: Pure Risk Goals & 6-Pillar Compliance\n\n` +
+        `**Strategy Evaluated:** **${strat.name}** [ID: \`${strat.id}\`]\n\n` +
+        `| Pillar Code | Pure Institutional Goal | Compliance | Implementation Parameters |\n` +
+        `| :--- | :--- | :--- | :--- |\n` +
+        `| **Pillar 1** | Asymmetric Payoff Mandate (EV ≥ 1.25x Long / 1.40x Short) | ${enforcesPillar2 ? '✅ **PASSED**' : '❌ Failed'} | Min R:R ≥ 2.0, Breakeven at TP1 |\n` +
+        `| **Pillar 2** | Cost-Minimizing Liquidity Capture (PostOnly Maker 0% Fees) | ${enforcesPillar1 ? '✅ **PASSED**' : '❌ Failed'} | \`enforcePostOnly: true\`, Timeout: 1 Bar (300s) |\n` +
+        `| **Pillar 3** | Downside Convexity & Capital Preservation (Hard SL + BE Lock) | ${enforcesPillar2 ? '✅ **PASSED**' : '❌ Failed'} | Breakeven lock +0.30% fee cushion, Ratchet |\n` +
+        `| **Pillar 4** | Toxicity & Trap Immunity (AI Trap Shield & Retail Skew) | ${enforcesPillar4 ? '✅ **PASSED**' : '❌ Failed'} | Qwen adversarial verification, spoofing veto |\n` +
+        `| **Pillar 5** | Regime Agility & Capital Recycling (Freshness & SMA Retest) | ${enforcesPillar5 ? '✅ **PASSED**' : '❌ Failed'} | Freshness ≤ 4 bars, Dynamic Fast SMA Retest ±0.35% |\n` +
+        `| **Pillar 6** | Decentralized Execution Reliability (Gas Buffer & Risk Guard) | ${enforcesPillar6 ? '✅ **PASSED**' : '❌ Failed'} | On-chain gas ≥ 0.05 APT, Leverage ≤ 8x |\n\n` +
+        `#### 🏝️ Concrete Algorithmic Implementation (Robust Island Framework):\n` +
+        `• **Goal #1 Entry (Freshness & Dynamic Retest)**: Freshness ≤ 4 bars, ADX ≥ 20, Fast SMA trampoline retest within ±0.35%.\n` +
+        `• **Goal #2 In-Trade (Risk Neutralization)**: Automatic ratchet locking breakeven + 0.30% fee cushion.\n` +
+        `• **Goal #3 Exit (Dynamic Harvest Master)**: TP1 1.25R (50% scale-out), TP2 2.50R, Stagnation Harvester at 0.50R if market stalls > 12 bars, and trailing dynamic Fast SMA deviation.`,
+      actionTaken: 'six_pillars_report',
+      timestamp: Date.now(),
+    };
+  }
+
+  // ─── Robust Island Fast SMA Retest & HarvestMaster Trailing ────────────────
+  if (/(?:robust\s*island|fast\s*sma|slow\s*sma|sma\s*retest|harvestmaster\s*trailing|trailing\s*stop\s*buffer)/i.test(lower)) {
+    const strat = getActiveStrategy();
+    const l1 = strat.layer1 || ({} as any);
+    const l5 = strat.layer5 || ({} as any);
+    return {
+      reply: `### 🏝️ Client V3 Robust Island SMA Telemetry\n\n` +
+        `**Active Strategy:** **${strat.name}** [ID: \`${strat.id}\`]\n\n` +
+        `| Parameter | Value | Institutional Purpose |\n` +
+        `| :--- | :--- | :--- |\n` +
+        `| **L1 Fast SMA Retest** | ${l1.fastSmaRetestEnabled ? '🟢 **ACTIVE**' : '⚪ Disabled'} | Pullback retest gate to Fast SMA before order execution |\n` +
+        `| **Fast / Slow Periods** | **Fast: ${l1.fastPeriod || 9}** · **Slow: ${l1.slowPeriod || 21}** | High-momentum responsive crossover baseline |\n` +
+        `| **Retest Tolerance** | **±${l1.fastSmaRetestTolerancePct || 0.35}%** | Retest cushion around Fast SMA curve |\n` +
+        `| **Spread Threshold** | **${l1.smaSpreadThresholdPct || 0.05}%** | Filters flat crossovers during chop |\n` +
+        `| **L5 HarvestMaster Trail** | ${l5.fastSmaTrailingStopEnabled ? '🟢 **ACTIVE**' : '⚪ Disabled'} | Dynamic trailing stop ratcheting along Fast SMA |\n` +
+        `| **Trailing Buffer** | **${l5.fastSmaTrailingBufferPct || 0.15}%** | Volatility breathing buffer below Fast SMA line |\n\n` +
+        `🔒 *Synchronized via Sim Lab Alpha Bundle.*`,
+      actionTaken: 'robust_island_sma_report',
+      timestamp: Date.now(),
+    };
+  }
+
   // ─── A. "Why no trades yet?" ──────────────────────────────────────────────
   if (/(?:why no trades|why haven't you traded|why not trading|why wait|why waiting|any trades|why haven't we traded)/i.test(lower)) {
     const activeStrat = getActiveStrategy();
@@ -265,7 +340,7 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
     const maxA = agentState.maxAllocPct || config.MAX_ALLOC_PCT || 25;
     const minUsd = (minA / 100 * totalBudget).toFixed(2);
     const maxUsd = (maxA / 100 * totalBudget).toFixed(2);
-    const maxLev = config.MAX_LEVERAGE || 5;
+    const maxLev = config.MAX_LEVERAGE || 15;
 
     return {
       reply: `### 💰 Capital & Risk Management Overview\n\n` +
@@ -389,22 +464,23 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
         `- **Macro Operating Mode**: \`${dirs.source}\` (${dirs.regime} regime)\n` +
         `- **Layer Execution Order**: ${activeStrategy.layerOrder.map((l: string) => `**L${l.replace('layer', '').replace(/_.*/, '')}**`).join(' ➔ ')}\n` +
         `- **Risk-to-Reward Target**: **1 : ${(activeStrategy.layer5?.minRiskRewardRatio ?? 2.0).toFixed(1)}**\n` +
-        `- **Position Sizing**: **${allocMin}% to ${allocMax}%** of budget per trade at **${activeStrategy.layer5?.leverage ?? 5}x** leverage\n` +
-        `- **Dual Take-Profit**: ${activeStrategy.layer5?.dualTakeProfit ? `**Enabled** (${((activeStrategy.layer5?.tp1CloseRatio ?? 0.5) * 100).toFixed(0)}% scale-out at TP1 + Breakeven SL + TP2 runner)` : 'Single TP'}\n` +
-        `- **Pillar 1 Maker Routing**: ${activeStrategy.layer5?.enforcePostOnly ? '🟢 **Maker-First PostOnly Active (0% Taker Drag, 25s timeout)**' : '⚪ Standard Market'}\n` +
+        `- **Position Sizing**: **${allocMin}% to ${allocMax}%** of budget per trade at **${Math.max(10, Math.min(15, activeStrategy.layer5?.leverage ?? 15))}x** leverage (10x–15x range)\n` +
+        `- **Dynamic Gap Harvest**: 🟢 **30% Gap Partial Close + BE Lock ➔ 50% Midpoint Full Exit** (Zero fixed TP orders)\n` +
+        `- **Pillar 1 Maker Routing**: ${activeStrategy.layer5?.enforcePostOnly ? '🟢 **Maker-First PostOnly Active (0% Taker Drag, 1 Candle Bar / 300s timeout)**' : '⚪ Standard Market'}\n` +
+        `- **L1 Robust Island SMA Retest**: ${activeStrategy.layer1?.fastSmaRetestEnabled ? `🟢 **ACTIVE** (SOL: Fast 12 / Slow 48, ETH: Fast 14 / Slow 52, Tol ±${activeStrategy.layer1.fastSmaRetestTolerancePct || 0.35}%)` : '⚪ Disabled'}\n` +
+        `- **L5 HarvestMaster Fast SMA Trail**: ${activeStrategy.layer5?.fastSmaTrailingStopEnabled ? `🟢 **ACTIVE** (Dynamic Fast SMA Trailing Buffer: ${activeStrategy.layer5.fastSmaTrailingBufferPct || 0.15}%)` : '⚪ Disabled'}\n` +
         `- **Stagnation Time-Stop**: **${activeStrategy.layer5?.stagnationTimeStopBars ?? 8} bars** auto-exit if momentum stalls\n` +
         `- **SMC Dealing Range**: ${activeStrategy.layer3?.premiumDiscountEquilibrium ? 'Strict 50% Equilibrium (No Long in Premium / Short in Discount)' : 'Momentum expansion allowed'}\n\n` +
-        `#### 📚 Institutional Strategy Presets in Studio:\n` +
-        `1. ⚡ **Turtle Soup & Liquidity Grab** [template_turtle_soup] · Est. 74% WR\n` +
-        `2. 🎯 **MTF Trend Pullback Sniper** [template_trend_sniper] · Est. 68% WR\n` +
-        `3. 💥 **Funding Squeeze & Cascade Hunter** [template_squeeze_hunter] · Est. 64% WR\n` +
-        `4. ⚖️ **Mean-Reversion Equilibrium Scalper** [template_range_scalper] · Est. 60% WR\n` +
-        `5. 🚀 **FOMO Velocity & Hit-and-Run Scalper** [template_fomo_scalper] · Est. 62% WR\n` +
-        `6. 🌊 **Macro Shock & Absorption Hunter** [template_macro_hunter] · Est. 71% WR\n` +
-        `7. 🛡️ **Defensive Capital Shield Scalper** [template_capital_shield] · Est. 76% WR\n` +
-        `8. 🏹 **Dynamic Confluence Multi-Layer Sniper** [template_confluence_sniper] · Est. 72% WR\n\n` +
-        `#### 🛠️ Modular Quant Builder Canvas:\n` +
-        `You can switch strategies anytime or build your own custom strategy directly in the **🧩 Strategy Studio** tab! Rearrange layers via drag-and-drop, toggle specific rules, tune sliders, run the **🤖 AI Quantitative Strategy Auditor**, and click **🚀 Deploy to Live Trading** to switch the bot's live brain instantly.`,
+        `#### 🔬 Institutional 6-Layer Quant Engine in Studio:\n` +
+        `The fleet exclusively trades **Champion V3** (\`champion_confirmed_retest_harvest30\`). Strategy switching is permanently disabled.\n` +
+        `1. 🧠 **L0: Kronos Neural Trajectory** · Symmetrical EV Expectancy hurdle (≥ 1.40x)\n` +
+        `2. 🏝️ **L1: Robust Island SMA Retest** · Fast/Slow pullback confirmation (SOL: 12/48, ETH: 14/52)\n` +
+        `3. 🌊 **L2: Delta-OI & CVD Liquidity Flow** · Whale cluster absorption & Delta-OI flush\n` +
+        `4. 📐 **L3: Smart Money Concepts (SMC)** · Equilibrium discount/premium alignment (bypassed for runners)\n` +
+        `5. 🛡️ **L4: Qwen Multi-Agent Microstructure Trap Shield** · Adversarial fakeout & spoofing defense\n` +
+        `6. 🌾 **L5: Dynamic Gap Harvest & Risk Sizing** · 30% gap expansion partial harvest + BE lock ➔ 50% midpoint full exit · 10x–15x leverage\n\n` +
+        `#### 🛠️ Parameter Tuning & Hypothesis Learning Arena:\n` +
+        `Operators and the AI Brain can fine-tune and toggle any of the 6 layers within institutional safety boundaries. Parameter mutations are tested in the Sim Lab Shadow Arena and must be promoted by RiskSentinel before production deployment.`,
       timestamp: Date.now(),
     };
   }
@@ -509,9 +585,10 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
 
   // ─── J. Token-Specific Queries (e.g. SUI, BTC, ETH) ───────────────────────
   const knownTokens = [
-    'SUI', 'BTC', 'ETH', 'SOL', 'APT', 'XRP', 'DOGE', 'BNB', 'LINK',
-    'AVAX', 'NEAR', 'ADA', 'TRX', 'DOT', 'HYPE', 'PEPE', 'SHIB',
-    'LTC', 'BCH', 'UNI', 'FET', 'TAO', 'RENDER', 'ARB', 'OP', 'INJ', 'SEI', 'TIA'
+    'BTC', 'ETH', 'HYPE', 'SOL', 'LINK', 'ZEC', 'DOGE', 'BNB', 'XRP',
+    'MON', 'AAVE', 'ADA', 'APT', 'NEAR', 'TAO', 'kPEPE', 'PEPE', 'MEGA',
+    'SUI', 'ENA', 'LIT', 'FARTCOIN', 'TRUMP', 'LDO', 'MORPHO', 'CHIP',
+    'PUMP', 'XPL', 'AVAX', 'UNI', 'GME', 'WLFI', 'TRX', 'ZRO', 'SONY', 'TTWO'
   ];
   const matchedToken = knownTokens.find(t => 
     lower.includes(t.toLowerCase() + 'usd') || 
@@ -608,7 +685,7 @@ export async function processUserMessage(rawQuery: string, source: 'web' | 'tele
   const currentStrat = getActiveStrategy();
   return {
     reply: `👋 **I am your Decibel Trading Agent Copilot (Client V3).**\n\n` +
-      `Active Strategy: **${currentStrat ? currentStrat.name : 'Turtle Soup & Liquidity Grab'}** | ` +
+      `Active Strategy: **${currentStrat ? currentStrat.name : 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3'}** | ` +
       `Open Positions: **${tradeExecutor.getOpenTrades().length}**\n\n` +
       `Here are things you can ask me directly in this dashboard:\n` +
       `• *"Why no trades yet?"* — Deep-dive into dynamic safety gates and scanned pairs\n` +

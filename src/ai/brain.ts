@@ -51,7 +51,7 @@ export interface CopilotChatContext {
 }
 
 export class LocalAIBrain {
-  private activeProvider: 'gemini' | 'claude' | 'ollama' | 'local_rules';
+  private activeProvider: string;
 
   constructor() {
     this.activeProvider = config.ACTIVE_AI_PROVIDER;
@@ -112,11 +112,10 @@ export class LocalAIBrain {
     const orderflow = simDir?.orderflow;
     const action = signal.action;
 
-    // A. Sim Lab Emergency Cooling VETO
+    // A. Sim Lab Emergency Cooling VETO (Ephemeral Tick-Level Pause, no sticky 15m lock)
     if (bundle?.macro?.marketCoolingActive) {
       const coolingReason = bundle.macro.coolingReason || 'Emergency market volatility shockwave active';
-      const reason = `🛑 Market Cooling Active: Sim Lab freeze (${coolingReason}). Trading halted to protect capital.`;
-      riskGuard.triggerL4TrapCoolOff(signal.symbol, action, 'MARKET_COOLING', coolingReason, 15);
+      const reason = `🛑 Market Cooling Active: Sim Lab freeze (${coolingReason}). Trading paused for capital protection.`;
       return {
         confirmed: false,
         confidenceScore: 25,
@@ -397,7 +396,7 @@ export class LocalAIBrain {
     // Tactical Conviction Booster (+5% to +10%) for verified institutional moves
     if (baseEval.confirmed && baseEval.confidenceScore >= 75) {
       const isInstitutionalConfirm = (action === 'LONG' && orderflow?.cvdTrend === 'BUY' && (orderflow?.oiChange24h ?? 0) > 1.5) ||
-                                     (action === 'SHORT' && orderflow?.cvdTrend === 'SELL' && (orderflow?.oiChange24h ?? 0) > 1.5);
+        (action === 'SHORT' && orderflow?.cvdTrend === 'SELL' && (orderflow?.oiChange24h ?? 0) > 1.5);
       if (isInstitutionalConfirm) {
         const bonus = 8;
         baseEval.convictionBonus = bonus;
@@ -728,7 +727,7 @@ export class LocalAIBrain {
       if (directives?.bannedSides && signal.action !== 'HOLD' && directives.bannedSides.includes(signal.action as any)) {
         riskFlags.push('MACRO_DIRECTIONAL_BAN');
       }
-    } catch {}
+    } catch { }
 
     const confirmed = score >= 70 && riskFlags.length === 0;
 
@@ -812,7 +811,7 @@ export class LocalAIBrain {
     try {
       const secProvider = (aiSettings.secondaryProvider || 'custom').toLowerCase();
       const secEnabled = aiSettings.secondaryEnabled !== false;
-      const secBaseUrl = aiSettings.secondaryCustomBaseUrl || aiSettings.customBaseUrl || 'https://qwen.measmony.me';
+      const secBaseUrl = aiSettings.secondaryCustomBaseUrl || aiSettings.customBaseUrl || config.OLLAMA_BASE_URL || 'http://localhost:11434';
       const secModel = aiSettings.secondaryModel || 'qwen2.5:3b';
 
       if (secEnabled) {
@@ -857,16 +856,17 @@ export class LocalAIBrain {
     const deployed = context.stats?.budgetUsedUsd || 0;
     const maxB = context.budgetUsd || config.BUDGET_USD || 100;
     const openCount = context.openPositions?.length || 0;
-    const activeStrat = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
+    const activeStrat = context.directives?.activeStrategy || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
     const regime = context.directives?.regime || 'RANGING_CHOP';
     const banned = context.directives?.bannedSides?.length ? context.directives.bannedSides.join(', ') : 'None';
     const scoreFloor = context.directives?.scoreFloor ?? 65;
 
     // Token query detection
     const knownTokens = [
-      'SUI', 'BTC', 'ETH', 'SOL', 'APT', 'XRP', 'DOGE', 'BNB', 'LINK',
-      'AVAX', 'NEAR', 'ADA', 'TRX', 'DOT', 'HYPE', 'PEPE', 'SHIB',
-      'LTC', 'BCH', 'UNI', 'FET', 'TAO', 'RENDER', 'ARB', 'OP', 'INJ', 'SEI', 'TIA'
+      'BTC', 'ETH', 'HYPE', 'SOL', 'LINK', 'ZEC', 'DOGE', 'BNB', 'XRP',
+      'MON', 'AAVE', 'ADA', 'APT', 'NEAR', 'TAO', 'kPEPE', 'PEPE', 'MEGA',
+      'SUI', 'ENA', 'LIT', 'FARTCOIN', 'TRUMP', 'LDO', 'MORPHO', 'CHIP',
+      'PUMP', 'XPL', 'AVAX', 'UNI', 'GME', 'WLFI', 'TRX', 'ZRO', 'SONY', 'TTWO'
     ];
     const tokenMatch = knownTokens.find((t) => lower.includes(t.toLowerCase() + 'usd') || lower.includes(t.toLowerCase() + '/usd') || new RegExp(`\\b${t.toLowerCase()}\\b`).test(lower));
 
@@ -876,7 +876,7 @@ export class LocalAIBrain {
       try {
         const { getSimPairDirective } = require('../strategy/manager');
         simDir = getSimPairDirective(symNorm);
-      } catch {}
+      } catch { }
 
       const pos = context.openPositions?.find((p: any) => (p.symbol || '').toUpperCase().includes(tokenMatch));
       const gate = simDir?.minConfidenceGate ?? scoreFloor;
@@ -913,7 +913,7 @@ export class LocalAIBrain {
             ).join('\n');
           }
         }
-      } catch {}
+      } catch { }
 
       return {
         reply: `### 🛡️ Why the Agent Has Not Entered Any Trades Yet:\n\n` +
@@ -943,7 +943,7 @@ export class LocalAIBrain {
           `| **Budget Free** | **$${(maxB - deployed).toFixed(2)}** |\n` +
           `| **Allocation / Trade** | **${minA}% – ${maxA}%** ($${minUsd} – $${maxUsd}) |\n` +
           `| **Confidence Gate** | **${scoreFloor}%** |\n` +
-          `| **Leverage Hard Ceiling** | **${config.MAX_LEVERAGE || 5}x Max** |\n` +
+          `| **Leverage Hard Ceiling** | **${config.MAX_LEVERAGE || 15}x Max** |\n` +
           `| **Max Open Positions** | 4 concurrent positions max |\n\n` +
           `🔒 *Every order is sized according to dynamic account equity with automated Stop-Loss, Take-Profit, and Maker-First PostOnly routing.*`,
       };
@@ -963,7 +963,7 @@ export class LocalAIBrain {
               }).join('\n');
           }
         }
-      } catch {}
+      } catch { }
 
       if (table) {
         return {
@@ -975,6 +975,30 @@ export class LocalAIBrain {
     if (lower.includes('pnl') || lower.includes('performance') || lower.includes('win rate')) {
       return {
         reply: `Our desk performance stands at a **${winRate}%** win rate (${wins} wins / ${losses} losses) with **+$${totalPnl} USD** in realized net profit across ${context.stats?.closedTradesCount || 43} closed trades. All $${(maxB - deployed).toFixed(2)} USD of our margin is currently preserved and available.`,
+      };
+    }
+
+    if (lower.includes('pillar') || lower.includes('6-pillar') || lower.includes('6 pillar') || lower.includes('goal') || lower.includes('robust island') || lower.includes('entry') || lower.includes('exit')) {
+      return {
+        reply: `### 🏛️ Autonomous Fleet: Pure Risk Goals & Robust Island Architecture\n\n` +
+          `The agent brain prioritizes **pure mathematical risk goals and objective guardrails** above any dogmatic strategy:\n\n` +
+          `#### 🎯 The 6 Institutional Foundation Goals:\n` +
+          `1. **Pillar 1: Asymmetric Payoff Mandate (Min EV ≥ 1.25x Long / 1.40x Short)**\n` +
+          `   - Absolute positive mathematical expectancy required before a single dollar is deployed.\n` +
+          `2. **Pillar 2: Cost-Minimizing Liquidity Capture (PostOnly Maker 0% Fees)**\n` +
+          `   - Zero taker fees; captures maker rebates via non-blocking dynamic orderbook placement.\n` +
+          `3. **Pillar 3: Downside Convexity & Capital Preservation (Hard SL + BE Lock + Ratchet)**\n` +
+          `   - Eliminates tail risk; locks Breakeven + fee cushion (+0.30%) as soon as price moves in our favor.\n` +
+          `4. **Pillar 4: Toxicity & Trap Immunity (AI Trap Shield & Order Flow Veto)**\n` +
+          `   - Microstructure defense against retail traps, wick hunting, and adverse order flow toxicity.\n` +
+          `5. **Pillar 5: Regime Agility & Capital Recycling (Freshness ≤ 4 Bars & Fast SMA Retest)**\n` +
+          `   - Enforces early momentum cycle entry and rapid capital velocity recycling.\n` +
+          `6. **Pillar 6: Decentralized Execution Reliability (On-Chain Gas Buffer & CLOB Settlement)**\n` +
+          `   - Decibel DEX non-custodial signing with mandatory ≥0.05 APT gas wallet runway.\n\n` +
+          `#### 🏝️ Concrete Algorithmic Implementation (Robust Island Framework):\n` +
+          `• **Goal #1 Entry (Freshness & Dynamic Retest)**: Freshness ≤ 4 bars post-crossover, ADX ≥ 20, and price within dynamic trampoline tolerance (±0.35%) of Fast SMA.\n` +
+          `• **Goal #2 In-Trade (Risk Neutralization)**: Automatic ratchet locking breakeven + 0.30% fee cushion.\n` +
+          `• **Goal #3 Exit (Dynamic Harvest Master)**: TP1 at 1.25R (50% scale-out), TP2 at 2.50R, Stagnation Harvester at 0.50R if market stalls > 12 bars, and trailing dynamic Fast SMA deviation.`
       };
     }
 
@@ -1006,11 +1030,11 @@ export class LocalAIBrain {
     const closedCount = context.stats?.closedTradesCount ?? 0;
     const openPositionsCount = context.openPositions?.length ?? 0;
     const mode = context.isSimLabConnected ? 'SIM LAB SUPERCHARGED (Active Sync)' : 'STANDALONE LOCAL MODE';
-    const strategyName = context.directives?.activeStrategy || 'Turtle Soup & Liquidity Grab';
+    const strategyName = context.directives?.activeStrategy || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
     const regime = context.directives?.regime || 'RANGING_CHOP';
     const banned = context.directives?.bannedSides?.length ? context.directives.bannedSides.join(', ') : 'None';
     const scoreFloor = context.directives?.scoreFloor ?? 65;
-    const maxLeverage = context.maxLeverage || config.MAX_LEVERAGE || 5;
+    const maxLeverage = context.maxLeverage || config.MAX_LEVERAGE || 15;
     const isPaper = context.paperTrading ?? config.PAPER_TRADING;
     const pairsCount = context.watchPairs?.length || 28;
     const watchPairsStr = context.watchPairs?.length ? context.watchPairs.join(', ') : '28 Aptos Perpetual Pairs';
@@ -1034,7 +1058,7 @@ export class LocalAIBrain {
       if (simBundle?.learning?.dynamicScoreFloor) {
         dynamicScoreFloor = simBundle.learning.dynamicScoreFloor;
       }
-    } catch {}
+    } catch { }
 
     // ── Active Pair Directives & Cooldowns ──
     let pairDirectivesSummary = '';
@@ -1048,7 +1072,7 @@ export class LocalAIBrain {
         pairDirectivesSummary = `\n• Pair Calibration Sample: ${sampleDirectives}` +
           (cooldownPairs.length > 0 ? `\n• Cooldowns Active (Trading Prohibited): ${cooldownPairs.join(', ')}` : '\n• Cooldowns Active: None');
       }
-    } catch {}
+    } catch { }
 
     // ── Recent Trades & L4 Shield Vetoes ──
     let recentTradesSummary = 'None';
@@ -1067,7 +1091,7 @@ export class LocalAIBrain {
           `${st.symbol} ${st.action} vetoed by ${st.vetoCategory} (${st.vetoReason})`
         ).join(' | ');
       }
-    } catch {}
+    } catch { }
 
     // ── Live Market Prices & Scanned Indicators ──
     let marketTableSummary = '';
@@ -1084,7 +1108,7 @@ export class LocalAIBrain {
             }).join('\n');
         }
       }
-    } catch {}
+    } catch { }
 
     // ── Live Capital Risk Guardrails ──
     const minAllocPct = config.MIN_ALLOC_PCT || 15;
@@ -1105,11 +1129,16 @@ export class LocalAIBrain {
           breakingNewsSummary = `⚠️ FLASH SHOCKWAVE ALERT: ${news.shockwaveReason}\n• ` + breakingNewsSummary;
         }
       }
-    } catch {}
+    } catch { }
 
     return `You are the dedicated Autonomous AI Copilot & Senior Quantitative Desk Officer for "${clientName}" (Desk ID: ${clientId}) on Decibel DEX (Aptos blockchain).
 
 MISSION & PERSONA:
+- STRICT CLIENT DESK ISOLATION MANDATE:
+  * You are dedicated exclusively to "${clientName}" (Desk ID: ${clientId}, Port 3000).
+  * You have access ONLY to this desk's own internal telemetry (shown below) and its OWN individual inbound Alpha Bundle from Sim Lab.
+  * You have ABSOLUTELY NO ACCESS to other client execution desks (e.g. Client V1) or Sim Lab internal private server operations.
+  * If asked about other client desks, state clearly: "I am the dedicated Copilot for ${clientName} and only have visibility over this desk's own execution state and our inbound Alpha Bundle. For fleet-wide multi-desk telemetry, please consult Sim Lab Copilot on Port 4000."
 - Speak in fluent, professional, natural language like an experienced hedge-fund algorithmic trader.
 - Answer the user's questions directly, conversationally, and insightfully with EXACT LIVE NUMBERS from the telemetry below.
 - NEVER use placeholders like "[X.XX] USD" or "[A.AA] USD". You have the exact live mark prices and 24h metrics for all 28 assets below.
@@ -1139,6 +1168,8 @@ MISSION & PERSONA:
 🔬 SIM LAB CENTRAL COMMAND & ALPHA BUNDLE (Port 4000):
 • Sim Lab Connection: ${mode}
 • Active Champion Strategy: "${strategyName}" (Exploits range-bound liquidity sweeps, false breakouts, and stop hunts)
+• Robust Island Fast SMA Retest Gate: Fast SMA(9) / Slow SMA(21) Retest Gate (±0.35% tolerance, 0.05% spread threshold, +15pts crossover confluence bonus)
+• HarvestMaster Fast SMA Dynamic Trailing Stop: Active (0.15% trailing buffer below Fast SMA, ratcheting stop-loss dynamically)
 • Macro Market Regime: ${regime}
 • Directional Bans: ${banned} (Any trade matching a banned side is strictly blocked by Layer 4 AI Shield)
 • Global Confidence Floor: ≥${scoreFloor}% (Dynamic Floor: ${dynamicScoreFloor}%)
@@ -1290,7 +1321,7 @@ When the user asks questions about the market, specific tokens (like SUI or BTC)
   ): Promise<string> {
     const { loadAISettings } = require('./settings');
     const aiSettings = loadAISettings();
-    const rawBaseUrl = customBaseUrl || aiSettings.secondaryCustomBaseUrl || aiSettings.customBaseUrl || config.OLLAMA_BASE_URL || 'https://qwen.measmony.me';
+    const rawBaseUrl = customBaseUrl || aiSettings.secondaryCustomBaseUrl || aiSettings.customBaseUrl || config.OLLAMA_BASE_URL || 'http://localhost:11434';
     const baseUrl = rawBaseUrl.replace(/\/+$/, '');
     const url = `${baseUrl}/api/generate`;
     const systemPrompt = this.buildCopilotSystemPrompt(context);

@@ -10,17 +10,30 @@ interface FailoverChannelState {
   lastProbeTime: number;
 }
 
+export function formatPipelineUrl(url?: string): string {
+  if (!url) return 'Sim Lab';
+  if (url.includes('127.0.0.1') || url.includes('localhost')) {
+    return 'Sim Lab Local';
+  }
+  try {
+    const parsed = new URL(url);
+    return `Sim Lab (${parsed.hostname})`;
+  } catch {
+    return 'Sim Lab';
+  }
+}
+
 class SimConnectionManager {
   private telemetryState: FailoverChannelState;
   private pipelineState: FailoverChannelState;
   private readonly PROBE_INTERVAL_MS = 180_000; // Probe primary every 3 minutes when on fallback
 
   constructor() {
-    const defaultTelemPrimary = config.SIM_TELEMETRY_URL || 'https://simlab.measmony.me/api/pipeline/telemetry';
-    const defaultTelemFallback = config.SIM_TELEMETRY_FALLBACK_URL || 'https://simlab.measmony.me/api/pipeline/telemetry';
+    const defaultTelemPrimary = config.SIM_TELEMETRY_URL || 'http://127.0.0.1:4000/api/pipeline/telemetry';
+    const defaultTelemFallback = config.SIM_TELEMETRY_FALLBACK_URL || '';
 
-    const defaultPipePrimary = config.SIM_PIPELINE_URL || 'https://simlab.measmony.me/api/pipeline/alpha-bundle';
-    const defaultPipeFallback = config.SIM_PIPELINE_FALLBACK_URL || 'https://simlab.measmony.me/api/pipeline/alpha-bundle';
+    const defaultPipePrimary = config.SIM_PIPELINE_URL || 'http://127.0.0.1:4000/api/pipeline/alpha-bundle';
+    const defaultPipeFallback = config.SIM_PIPELINE_FALLBACK_URL || '';
 
     this.telemetryState = {
       primaryUrl: defaultTelemPrimary,
@@ -74,11 +87,11 @@ class SimConnectionManager {
       try {
         const res = await axios.post(url, payload, {
           headers,
-          timeout: url.includes('measmony.me') ? 6000 : 3500,
+          timeout: 4000,
         });
         if (res.status >= 200 && res.status < 300) {
           state.activeUrl = url;
-          state.usingFallback = url.includes('measmony.me');
+          state.usingFallback = Boolean(state.fallbackUrl && url === state.fallbackUrl);
           return { success: true, urlUsed: url };
         }
       } catch (err: any) {
@@ -86,7 +99,7 @@ class SimConnectionManager {
       }
     }
 
-    logger.warn(`⚠️ [TELEMETRY] Push failed across all endpoints (${candidates.join(', ')})`);
+    logger.warn(`⚠️ [TELEMETRY] Push failed across all endpoints (${candidates.map(c => formatPipelineUrl(c)).join(', ')})`);
     return { success: false, urlUsed: state.activeUrl };
   }
 
@@ -101,7 +114,7 @@ class SimConnectionManager {
       state.lastProbeTime = Date.now();
       const primaryHealthy = await this.probeHealth(state.primaryUrl);
       if (primaryHealthy) {
-        logger.info(`🔄 [AUTO-FAILOVER] Primary local alpha pipeline restored: ${state.primaryUrl}. Switching back from public fallback.`);
+        logger.info(`🔄 [AUTO-FAILOVER] Primary local alpha pipeline restored: ${formatPipelineUrl(state.primaryUrl)}. Switching back from public fallback.`);
         state.activeUrl = state.primaryUrl;
         state.usingFallback = false;
       }
@@ -121,7 +134,7 @@ class SimConnectionManager {
     } catch (err: any) {
       // If primary failed, try fallback
       if (!state.usingFallback && state.fallbackUrl && state.fallbackUrl !== state.primaryUrl) {
-        logger.warn(`⚠️ [AUTO-FAILOVER] Primary local alpha pipeline (${targetUrl}) unreachable (${err.message}). Failing over to public Cloudflare: ${state.fallbackUrl}`);
+        logger.warn(`⚠️ [AUTO-FAILOVER] Primary local alpha pipeline (${formatPipelineUrl(targetUrl)}) unreachable (${err.message}). Failing over to public Cloudflare: ${formatPipelineUrl(state.fallbackUrl)}`);
         try {
           const fallbackRes = await axios.get(state.fallbackUrl, {
             params,
@@ -133,7 +146,7 @@ class SimConnectionManager {
             state.activeUrl = state.fallbackUrl;
             state.usingFallback = true;
             state.lastProbeTime = Date.now();
-            logger.info(`✅ [AUTO-FAILOVER] Alpha pipeline successfully received via public Cloudflare: ${state.fallbackUrl}`);
+            logger.info(`✅ [AUTO-FAILOVER] Alpha pipeline successfully received via public Cloudflare: ${formatPipelineUrl(state.fallbackUrl)}`);
             return { data: fallbackRes.data, urlUsed: state.fallbackUrl };
           }
         } catch (fbErr: any) {

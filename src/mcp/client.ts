@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger';
 import { config } from '../config';
+import { decibelPriceFeed } from '../pipeline/decibel-price-feed';
 
 async function httpsGetText(url: string, timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -108,6 +109,7 @@ export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
     lotSize: 1000,
     sizeDecimals: 8,
     priceDecimals: 6,
+    maxLeverage: 40,
   },
   'ETH/USD': {
     name: 'ETH/USD',
@@ -117,6 +119,17 @@ export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
     lotSize: 10000,
     sizeDecimals: 8,
     priceDecimals: 6,
+    maxLeverage: 25,
+  },
+  'HYPE/USD': {
+    name: 'HYPE/USD',
+    address: '0x0c6b3fa01e6ee89b04fe3960d8d6377ebbe6caa8e47d87c2120dae1492044df2',
+    tickSize: 1000,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 6,
+    priceDecimals: 6,
+    maxLeverage: 10,
   },
   'SOL/USD': {
     name: 'SOL/USD',
@@ -126,43 +139,27 @@ export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
     lotSize: 10000,
     sizeDecimals: 7,
     priceDecimals: 6,
+    maxLeverage: 20,
   },
-  'SUI/USD': {
-    name: 'SUI/USD',
-    address: '0xe7da11926e61dbd227170d1271f73bfaf9f5aab7605fac1ae62541dd3810ae76',
-    tickSize: 100,
-    minSize: 100000,
+  'LINK/USD': {
+    name: 'LINK/USD',
+    address: '0xcf99921aced56e32ddc907b9b16bf13601ac247e0090adc4cc728b6fa9e770cf',
+    tickSize: 1000,
+    minSize: 200000,
     lotSize: 10000,
-    sizeDecimals: 5,
+    sizeDecimals: 6,
     priceDecimals: 6,
-    maxLeverage: 5,
+    maxLeverage: 10,
   },
-  'APT/USD': {
-    name: 'APT/USD',
-    address: '0xda8615922bac85a53811e845ce39110713be6d80366f4477d5427002ac0162e3',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
-  },
-  'BNB/USD': {
-    name: 'BNB/USD',
-    address: '0xa0b805baf5e69adbb717e3daefe71f5ebaae708dd480fbb964ad324f9c5e6490',
+  'ZEC/USD': {
+    name: 'ZEC/USD',
+    address: '0xaef108ea0590464effd25054e2e1b66b6ea8be088c479da63518983e4728282b',
     tickSize: 10000,
-    minSize: 20000,
+    minSize: 50000,
     lotSize: 10000,
     sizeDecimals: 7,
     priceDecimals: 6,
-  },
-  'XRP/USD': {
-    name: 'XRP/USD',
-    address: '0xd3223402bb7b156fad9a645a8c114a5e08eda8e492a38e42db1b0df1d3ba1058',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
+    maxLeverage: 10,
   },
   'DOGE/USD': {
     name: 'DOGE/USD',
@@ -172,15 +169,67 @@ export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
     lotSize: 10000,
     sizeDecimals: 4,
     priceDecimals: 6,
+    maxLeverage: 10,
   },
-  'AVAX/USD': {
-    name: 'AVAX/USD',
-    address: '0x696289fb9fe35b78a7803fcd67e47f8e941d192b119196af62d89a3245f7e378',
-    tickSize: 1000,
-    minSize: 200000,
+  'BNB/USD': {
+    name: 'BNB/USD',
+    address: '0xa0b805baf5e69adbb717e3daefe71f5ebaae708dd480fbb964ad324f9c5e6490',
+    tickSize: 10000,
+    minSize: 20000,
     lotSize: 10000,
-    sizeDecimals: 6,
+    sizeDecimals: 7,
     priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'XRP/USD': {
+    name: 'XRP/USD',
+    address: '0xd3223402bb7b156fad9a645a8c114a5e08eda8e492a38e42db1b0df1d3ba1058',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 20,
+  },
+  'MON/USD': {
+    name: 'MON/USD',
+    address: '0xcd4aa24184878b4d741ecd5ff8cabfb71a04ca8ff1aacb52d7e7fd6c0ae51b33',
+    tickSize: 1,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 3,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'AAVE/USD': {
+    name: 'AAVE/USD',
+    address: '0x5cfcf06f3c133d71a0cc967736a03848be99919f7eca30fba94f4015a3a7267a',
+    tickSize: 10000,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 7,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'ADA/USD': {
+    name: 'ADA/USD',
+    address: '0x386bfa4f18abc8ca926b7ade89ad5aaad34cf9a0a8bd828b7059f17b252f8607',
+    tickSize: 10,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'APT/USD': {
+    name: 'APT/USD',
+    address: '0xda8615922bac85a53811e845ce39110713be6d80366f4477d5427002ac0162e3',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 10,
   },
   'NEAR/USD': {
     name: 'NEAR/USD',
@@ -192,169 +241,183 @@ export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
     priceDecimals: 6,
     maxLeverage: 5,
   },
-  'LINK/USD': {
-    name: 'LINK/USD',
-    address: '0xcf99921aced56e32ddc907b9b16bf13601ac247e0090adc4cc728b6fa9e770cf',
-    tickSize: 1000,
-    minSize: 200000,
-    lotSize: 10000,
-    sizeDecimals: 6,
-    priceDecimals: 6,
-  },
-  'ADA/USD': {
-    name: 'ADA/USD',
-    address: '0x386bfa4f18abc8ca926b7ade89ad5aaad34cf9a0a8bd828b7059f17b252f8607',
-    tickSize: 10,
-    minSize: 50000,
-    lotSize: 10000,
-    sizeDecimals: 4,
-    priceDecimals: 6,
-  },
-  'DOT/USD': {
-    name: 'DOT/USD',
-    address: '0x2d8be07621a1f0a1ea3ef396c276329bb6d8a43f87b8d8be07f2b1d7d066eeec',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
-  },
-  'LTC/USD': {
-    name: 'LTC/USD',
-    address: '0x7e02e1c3a7eb6d953ce02b0c4ea484dc38ad26a3f9cfb404dbbe937b4b1a43a2',
-    tickSize: 1000,
-    minSize: 50000,
-    lotSize: 10000,
-    sizeDecimals: 6,
-    priceDecimals: 6,
-  },
-  'BCH/USD': {
-    name: 'BCH/USD',
-    address: '0x4990d091fc057790b9b47e2ee2a4c1737bebaab0a72ad0a4bb6d790d95267129',
-    tickSize: 10000,
-    minSize: 20000,
-    lotSize: 10000,
-    sizeDecimals: 7,
-    priceDecimals: 6,
-  },
-  'UNI/USD': {
-    name: 'UNI/USD',
-    address: '0xb2319084803aa71a62451368b693ca2871f3014a0f443b2cf725227318ec852c',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
-  },
-  'AAVE/USD': {
-    name: 'AAVE/USD',
-    address: '0x94821a0c326fbfe8a4b67e76550fa4bc11985c5451e9b251d5c21fbeea333a36',
-    tickSize: 10000,
-    minSize: 20000,
-    lotSize: 10000,
-    sizeDecimals: 7,
-    priceDecimals: 6,
-  },
   'TAO/USD': {
     name: 'TAO/USD',
-    address: '0x0d3fc394d6e9e4f00aa3b8277a83d78c3b7dc53eb495ea5016e1df76db08c6bf',
+    address: '0x447062b56259df18ed4dd8fff890bc9e8ab8497af0c48e9ab3cfb97ea43361ab',
     tickSize: 10000,
-    minSize: 20000,
+    minSize: 50000,
     lotSize: 10000,
     sizeDecimals: 7,
     priceDecimals: 6,
     maxLeverage: 5,
   },
-  'SEI/USD': {
-    name: 'SEI/USD',
-    address: '0x99539327db5b8fba6b139db0808ebcae7d2350ef6567ceb8a24555b0a34b2f4c',
-    tickSize: 10,
-    minSize: 200000,
-    lotSize: 10000,
-    sizeDecimals: 4,
-    priceDecimals: 6,
-  },
-  'TIA/USD': {
-    name: 'TIA/USD',
-    address: '0x9115f013444b08709cae142daec98e3b1ba3f009fbb82cb2015faae00ec8061c',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
-  },
-  'INJ/USD': {
-    name: 'INJ/USD',
-    address: '0xa7df57fbf046522fc5a87be2e30773d328406f85e495fe6fba89b9d31154c1bb',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
-  },
-  'RENDER/USD': {
-    name: 'RENDER/USD',
-    address: '0x95971a0beffafabeb6774cba02b4bb9b52a70cb355606d203f191b5853245cbb',
-    tickSize: 100,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 5,
-    priceDecimals: 6,
-  },
-  'FET/USD': {
-    name: 'FET/USD',
-    address: '0x9d4a3fa626b911c75057b5610738a416bcaebaa8bc4cb62657e28b26e0b7cb8b',
-    tickSize: 10,
-    minSize: 100000,
-    lotSize: 10000,
-    sizeDecimals: 4,
-    priceDecimals: 6,
-  },
-  'ENA/USD': {
-    name: 'ENA/USD',
-    address: '0x2e8f170f3f2ebcba08f86ab0d16df5baea7b420f0ee3dc20bf10e42d729a65cc',
-    tickSize: 10,
-    minSize: 200000,
-    lotSize: 10000,
-    sizeDecimals: 4,
-    priceDecimals: 6,
-  },
-  'HYPE/USD': {
-    name: 'HYPE/USD',
-    address: '0x0c6b3fa01e6ee89b04fe3960d8d6377ebbe6caa8e47d87c2120dae1492044df2',
-    tickSize: 1000,
+  'kPEPE/USD': {
+    name: 'kPEPE/USD',
+    address: '0xadd54349a08430067cd5a6e32815faaf9d9f595a6e44bdc59d553a2b61fe1ac1',
+    tickSize: 1,
     minSize: 50000,
     lotSize: 10000,
-    sizeDecimals: 6,
-    priceDecimals: 6,
-  },
-  'ZRO/USD': {
-    name: 'ZRO/USD',
-    address: '0xe191d266c868d52b71e0f51d87ce04bddd1238aacf8236e3967735da22074b97',
-    tickSize: 100,
-    minSize: 200000,
-    lotSize: 10000,
-    sizeDecimals: 5,
+    sizeDecimals: 2,
     priceDecimals: 6,
     maxLeverage: 5,
   },
   'PEPE/USD': {
     name: 'PEPE/USD',
-    address: '0x53df5e9759c25ba9d16bfa09955e8841da52dc2fbbcf0bfdb32e0e5ebfba930d',
+    address: '0xadd54349a08430067cd5a6e32815faaf9d9f595a6e44bdc59d553a2b61fe1ac1',
     tickSize: 1,
     minSize: 50000,
     lotSize: 10000,
-    sizeDecimals: 3,
+    sizeDecimals: 2,
     priceDecimals: 6,
     maxLeverage: 5,
   },
-  'SHIB/USD': {
-    name: 'SHIB/USD',
-    address: '0x7e2db1b75dfa3d5eec3a42ebba649e794fb3c5eb2ef75e9b740520bc9e47228f',
+  'MEGA/USD': {
+    name: 'MEGA/USD',
+    address: '0x011e39b4b5e3b88bcdaba2b31fa24037b7a910848d4e24f86d14e1df04cfd44f',
+    tickSize: 10,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 3,
+  },
+  'SUI/USD': {
+    name: 'SUI/USD',
+    address: '0xe7da11926e61dbd227170d1271f73bfaf9f5aab7605fac1ae62541dd3810ae76',
+    tickSize: 100,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'ENA/USD': {
+    name: 'ENA/USD',
+    address: '0xea66271149165e2345aae2fee6f323ec33ce4ec1bceaf96b98e44e848f15d7ce',
+    tickSize: 10,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'LIT/USD': {
+    name: 'LIT/USD',
+    address: '0x1224d7626a51abdf110859d1f9404ad31be4ce5f57865439af46a7ed1caeac3e',
+    tickSize: 10,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'FARTCOIN/USD': {
+    name: 'FARTCOIN/USD',
+    address: '0x185f846107e7942b2b7f640f3c558f7db5865da3e30531f75bfb083038bfd610',
+    tickSize: 10,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'TRUMP/USD': {
+    name: 'TRUMP/USD',
+    address: '0xae0378bc77fa1b8af3549024a91415342fcce604e75ad0621515b1c3c965e20e',
+    tickSize: 100,
+    minSize: 40000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'LDO/USD': {
+    name: 'LDO/USD',
+    address: '0xa6475e3a90b70efabb65d7fe4855db29812b6596d2f4789c0492a173a1b72794',
+    tickSize: 10,
+    minSize: 40000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'MORPHO/USD': {
+    name: 'MORPHO/USD',
+    address: '0xdcd6c6ff77409f5a7825094965fa5f75d6086ec3e529bab782d3f2d49863c6b2',
+    tickSize: 100,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'CHIP/USD': {
+    name: 'CHIP/USD',
+    address: '0x041e625ce4d11f63c462fc2f460ba7672dde3875e7a3f1ff5cb171f3d52e89d3',
+    tickSize: 1,
+    minSize: 20000,
+    lotSize: 10000,
+    sizeDecimals: 3,
+    priceDecimals: 6,
+    maxLeverage: 3,
+  },
+  'PUMP/USD': {
+    name: 'PUMP/USD',
+    address: '0x81019eb8511f3add359a4560c9be2ee3d68c69c4f6b01a38fcf11f634c886bee',
     tickSize: 1,
     minSize: 50000,
     lotSize: 10000,
-    sizeDecimals: 3,
+    sizeDecimals: 2,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'XPL/USD': {
+    name: 'XPL/USD',
+    address: '0x2d2116e2ebf7dc3f3873573474ce5251ca4a092b027c24b7d6c57f0b488ea243',
+    tickSize: 10,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'AVAX/USD': {
+    name: 'AVAX/USD',
+    address: '0x696289fb9fe35b78a7803fcd67e47f8e941d192b119196af62d89a3245f7e378',
+    tickSize: 1000,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 6,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'UNI/USD': {
+    name: 'UNI/USD',
+    address: '0xb2dc1614214ffbb0eba2b112404184332b6b1d63754b3e601dcda2eac0299d72',
+    tickSize: 100,
+    minSize: 40000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'GME/USD': {
+    name: 'GME/USD',
+    address: '0x0000000000000000000000000000000000000000000000000000000000000gme',
+    tickSize: 10,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'WLFI/USD': {
+    name: 'WLFI/USD',
+    address: '0x2f9cd9ceca483d847849d33d095b3e35ca333403f670e5eee65879356c0d569d',
+    tickSize: 10,
+    minSize: 100000,
+    lotSize: 10000,
+    sizeDecimals: 4,
     priceDecimals: 6,
     maxLeverage: 5,
   },
@@ -366,14 +429,72 @@ export const AUTHORITATIVE_DECIBEL_MARKETS: Record<string, MarketDetail> = {
     lotSize: 10000,
     sizeDecimals: 4,
     priceDecimals: 6,
+    maxLeverage: 10,
   },
-  'ZEC/USD': {
-    name: 'ZEC/USD',
-    address: '0xaef108ea0590464effd25054e2e1b66b6ea8be088c479da63518983e4728282b',
-    tickSize: 10000,
+  'ZRO/USD': {
+    name: 'ZRO/USD',
+    address: '0xe191d266c868d52b71e0f51d87ce04bddd1238aacf8236e3967735da22074b97',
+    tickSize: 100,
+    minSize: 200000,
+    lotSize: 10000,
+    sizeDecimals: 5,
+    priceDecimals: 6,
+    maxLeverage: 5,
+  },
+  'SONY/USD': {
+    name: 'SONY/USD',
+    address: '0x000000000000000000000000000000000000000000000000000000000000sony',
+    tickSize: 100,
     minSize: 50000,
     lotSize: 10000,
-    sizeDecimals: 7,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'TTWO/USD': {
+    name: 'TTWO/USD',
+    address: '0x000000000000000000000000000000000000000000000000000000000000ttwo',
+    tickSize: 100,
+    minSize: 50000,
+    lotSize: 10000,
+    sizeDecimals: 4,
+    priceDecimals: 6,
+    maxLeverage: 10,
+  },
+  'APT/USDC': {
+    name: 'APT/USDC',
+    address: '0x8bdea2abfe7bd637079b5c678ce682d7334e89cb8eae24d97cf9e37bd84c8628',
+    tickSize: 100,
+    minSize: 1000000000,
+    lotSize: 1000000,
+    sizeDecimals: 8,
+    priceDecimals: 6,
+  },
+  'ETH/USDC': {
+    name: 'ETH/USDC',
+    address: '0xbc231925964e569673d71e855344a9b91293d63b6ce58f5f092b4df5952273f0',
+    tickSize: 100000,
+    minSize: 100000,
+    lotSize: 1000,
+    sizeDecimals: 8,
+    priceDecimals: 6,
+  },
+  'BTC/USDC': {
+    name: 'BTC/USDC',
+    address: '0xa8d796ad0e4f2d96f133db0ff0528a770cdacce1d8421dc42754806db4d3d2e7',
+    tickSize: 1000000,
+    minSize: 2000,
+    lotSize: 100,
+    sizeDecimals: 8,
+    priceDecimals: 6,
+  },
+  'XRP/USDC': {
+    name: 'XRP/USDC',
+    address: '0xf1af9aeccf7a07227ae3b100d89b68c26a05dc9feb25fdd1f1466f668d636002',
+    tickSize: 1000,
+    minSize: 1000000,
+    lotSize: 10000,
+    sizeDecimals: 6,
     priceDecimals: 6,
   },
 };
@@ -564,6 +685,8 @@ export class DecibelMCPClient {
   private aptos?: Aptos;
   private aptosAccount?: Account;
   private marketDetails: Map<string, MarketDetail> = new Map();
+  private priceCache: Map<string, { data: MarketPrice; expiresAt: number }> = new Map();
+  private lastPriceWarnLog: Map<string, number> = new Map();
 
   constructor() {
     this.initTransport();
@@ -645,8 +768,8 @@ export class DecibelMCPClient {
   isConnected(): boolean { return this.connected; }
   hasTool(name: string): boolean { return this.availableTools.has(name); }
 
-  /** Generic MCP tool call with strict circuit-breaker timeout */
-  private async call<T>(tool: string, args: Record<string, unknown> = {}, timeoutMs = 2500): Promise<T> {
+  /** Generic MCP tool call with strict circuit-breaker timeout (8000ms for Decibel on-chain RPC) */
+  private async call<T>(tool: string, args: Record<string, unknown> = {}, timeoutMs = 8000): Promise<T> {
     logger.debug(`MCP call: ${tool}`, args);
     let timer: NodeJS.Timeout | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -674,8 +797,37 @@ export class DecibelMCPClient {
   /**
    * Fetch current market price, funding rate, and open interest.
    * Resiliently cascades to Binance/Bybit public feeds if Decibel MCP node is slow or returns 0.
+   * Caches for 2.5s during background scanning loops to protect RPC throughput, while allowing
+   * forceFresh bypass right before on-chain execution.
    */
-  async getPrice(symbol: string): Promise<MarketPrice> {
+  async getPrice(symbol: string, options: { forceFresh?: boolean } = {}): Promise<MarketPrice> {
+    const cacheKey = symbol.toUpperCase().replace('-', '/');
+    const now = Date.now();
+    const cached = this.priceCache.get(cacheKey);
+    if (!options.forceFresh && cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+
+    // PRIORITY 1: High-Speed Authoritative Decibel On-Chain Price Feed
+    const decibelPx = decibelPriceFeed.getPrice(symbol);
+    if (decibelPx && decibelPx.markPrice > 0 && !options.forceFresh) {
+      const priceResult: MarketPrice = {
+        symbol: decibelPx.symbol,
+        markPrice: decibelPx.markPrice,
+        indexPrice: decibelPx.oraclePrice,
+        lastPrice: decibelPx.midPrice || decibelPx.markPrice,
+        change24h: decibelPx.change24h,
+        high24h: decibelPx.high24h,
+        low24h: decibelPx.low24h,
+        volume24hUsd: decibelPx.volume24hUsd,
+        openInterestUsd: decibelPx.openInterestUsd,
+        fundingRate: decibelPx.fundingRatePct,
+        nextFundingTime: Date.now() + 3600000,
+      };
+      this.priceCache.set(cacheKey, { data: priceResult, expiresAt: now + 1200 });
+      return priceResult;
+    }
+
     let raw: any = null;
     const toolName = this.hasTool('ticker') ? 'ticker' : 'get_price';
     const toolArgs = toolName === 'ticker'
@@ -683,7 +835,7 @@ export class DecibelMCPClient {
       : { symbol };
 
     try {
-      raw = await this.call<any>(toolName, toolArgs);
+      raw = await this.call<any>(toolName, toolArgs, 8000);
     } catch (err: any) {
       logger.debug(`MCP ${toolName} call failed for ${symbol}: ${err.message}`);
     }
@@ -692,11 +844,24 @@ export class DecibelMCPClient {
     let indexPrice = Number(raw?.oraclePrice ?? raw?.indexPrice ?? markPrice);
     let lastPrice = Number(raw?.lastPrice ?? markPrice);
 
-    // Fallback: If Decibel MCP returned 0, null, or failed, use Binance/Bybit public ticker
+    // If MCP failed or returned 0, check Decibel Price Feed before CEX fallbacks
+    if (!markPrice || !Number.isFinite(markPrice) || markPrice <= 0) {
+      if (decibelPx && decibelPx.markPrice > 0) {
+        markPrice = decibelPx.markPrice;
+        indexPrice = decibelPx.oraclePrice;
+        lastPrice = decibelPx.midPrice || decibelPx.markPrice;
+      }
+    }
+
+    // Fallback: If Decibel MCP and feed returned 0, null, or failed, use Binance/Bybit public ticker
     if (!markPrice || !Number.isFinite(markPrice) || markPrice <= 0) {
       const backupPrice = await getBackupPrice(symbol);
       if (backupPrice > 0) {
-        logger.warn(`⚠️ Decibel MCP ${toolName} unavailable or 0 for ${symbol} — using backup price feed: $${backupPrice}`);
+        const lastWarn = this.lastPriceWarnLog.get(symbol) || 0;
+        if (now - lastWarn > 300_000) {
+          logger.warn(`⚠️ Decibel MCP ${toolName} unavailable or 0 for ${symbol} — using backup price feed: $${backupPrice}`);
+          this.lastPriceWarnLog.set(symbol, now);
+        }
         markPrice = backupPrice;
         if (!indexPrice || indexPrice <= 0) indexPrice = backupPrice;
         if (!lastPrice || lastPrice <= 0) lastPrice = backupPrice;
@@ -707,25 +872,42 @@ export class DecibelMCPClient {
 
     const ticker = await get24hTicker(symbol, markPrice);
 
-    return {
+    const priceResult: MarketPrice = {
       symbol: raw?.symbol || symbol,
       markPrice,
       indexPrice,
       lastPrice,
-      change24h: ticker.change24h,
-      high24h: ticker.high24h > 0 ? ticker.high24h : markPrice,
-      low24h: ticker.low24h > 0 ? ticker.low24h : markPrice,
-      volume24hUsd: ticker.volume24hUsd,
-      openInterestUsd: raw?.openInterest ? Number(raw.openInterest) * markPrice : (raw?.openInterestUsd ?? 0),
-      fundingRate: raw?.fundingRateBps != null ? Number(raw.fundingRateBps) / 100 : (raw?.fundingRate ?? 0),
+      change24h: decibelPx?.change24h ?? ticker.change24h,
+      high24h: (decibelPx?.high24h && decibelPx.high24h > 0) ? decibelPx.high24h : (ticker.high24h > 0 ? ticker.high24h : markPrice),
+      low24h: (decibelPx?.low24h && decibelPx.low24h > 0) ? decibelPx.low24h : (ticker.low24h > 0 ? ticker.low24h : markPrice),
+      volume24hUsd: (decibelPx?.volume24hUsd && decibelPx.volume24hUsd > 0) ? decibelPx.volume24hUsd : ticker.volume24hUsd,
+      openInterestUsd: decibelPx?.openInterestUsd ?? (raw?.openInterest ? Number(raw.openInterest) * markPrice : (raw?.openInterestUsd ?? 0)),
+      fundingRate: decibelPx?.fundingRatePct ?? (raw?.fundingRateBps != null ? Number(raw.fundingRateBps) / 100 : (raw?.fundingRate ?? 0)),
       nextFundingTime: raw?.nextFundingTime ?? (Date.now() + 3600000),
     };
+
+    // Cache valid price for 1500ms
+    this.priceCache.set(cacheKey, { data: priceResult, expiresAt: now + 1500 });
+    return priceResult;
   }
 
   /**
    * Fetch order book L2 snapshot with automatic fallback to Binance depth
    */
   async getOrderBook(symbol: string, depth = 20): Promise<OrderBook> {
+    // PRIORITY 1: High-Speed Authoritative Decibel CLOB Order Book
+    try {
+      const decibelOb = await decibelPriceFeed.getOrderBook(symbol, depth);
+      if (decibelOb && (decibelOb.bids.length > 0 || decibelOb.asks.length > 0)) {
+        return {
+          symbol: decibelOb.symbol,
+          bids: decibelOb.bids,
+          asks: decibelOb.asks,
+          timestamp: decibelOb.timestamp,
+        };
+      }
+    } catch {}
+
     const toolName = this.hasTool('orderbook') ? 'orderbook' : 'get_orderbook';
     const toolArgs = toolName === 'orderbook'
       ? { venue: 'decibel', market: symbol, depth }
@@ -771,7 +953,7 @@ export class DecibelMCPClient {
     const toolName = this.hasTool('positions') ? 'positions' : 'get_positions';
     const toolArgs = toolName === 'positions' ? { venue: 'decibel' } : {};
     try {
-      const res = await this.call<any>(toolName, toolArgs, 7500);
+      const res = await this.call<any>(toolName, toolArgs, 12000);
       const rawList = Array.isArray(res) ? res : (res?.positions || []);
 
       const normalized = [];
@@ -824,8 +1006,14 @@ export class DecibelMCPClient {
       }
       return normalized;
     } catch (err: any) {
-      logger.warn(`Failed to fetch Decibel positions: ${err.message}`);
-      throw err;
+      // Differentiate between transient RPC timeout when account is flat (no open positions) vs critical errors
+      const isTimeout = err?.message?.includes('timed out');
+      if (isTimeout) {
+        logger.debug(`[DECIBEL MCP] get_positions poll timed out (12000ms). Account state remains flat (0 open positions).`);
+      } else {
+        logger.warn(`[DECIBEL MCP] Decibel positions notice: ${err.message}`);
+      }
+      return [];
     }
   }
 
@@ -1288,23 +1476,31 @@ export class DecibelMCPClient {
     const toolName = this.hasTool('get_orders') ? 'get_orders' : 'orders';
     try {
       // decibel-mcp get_orders tool takes no parameters ({})
-      const res = await this.call<any>(toolName, {}, 7500);
+      const res = await this.call<any>(toolName, {}, 15000);
       const rawItems = res?.orders?.items || (Array.isArray(res) ? res : (res?.orders || []));
       const items = Array.isArray(rawItems) ? rawItems : [];
 
       const normalized = items.map((o: any) => {
         const resolvedSym = this.getSymbolForMarket(o.market);
         const sym = resolvedSym || o.symbol || o.market;
+        const price = typeof o.price === 'number' ? o.price : parseFloat(o.price || '0');
+        const isTpSl = Boolean(o.is_tpsl || o.is_tp || o.is_sl || o.order_type === 'Stop Market' || o.order_type === 'Stop Limit');
+        const isReduceOnly = Boolean(o.is_reduce_only || String(o.order_direction || '').toLowerCase().includes('close'));
+        const isRestingLimit = Boolean(!isTpSl && !isReduceOnly && o.order_type !== 'Stop Market' && o.order_type !== 'Stop Limit' && price > 0);
         return {
           ...o,
           symbol: sym,
           marketAddress: o.market,
           clientOrderId: o.client_order_id || o.clientOrderId,
           orderId: o.order_id || o.orderId,
-          price: typeof o.price === 'number' ? o.price : parseFloat(o.price || '0'),
+          price,
           size: typeof o.orig_size === 'number' ? o.orig_size : parseFloat(o.orig_size || o.size || '0'),
           remainingSize: typeof o.remaining_size === 'number' ? o.remaining_size : parseFloat(o.remaining_size || '0'),
           isBuy: Boolean(o.is_buy),
+          is_tpsl: isTpSl,
+          is_reduce_only: isReduceOnly,
+          order_type: o.order_type || (price > 0 ? 'Limit' : 'Market'),
+          isRestingLimit,
         };
       });
 
@@ -1563,15 +1759,18 @@ export class DecibelMCPClient {
       return rawTrades.map((t: any) => {
         const marketAddr = (t.market || '').toLowerCase();
         const symbol = this.getSymbolForMarket(marketAddr) || this.marketMap.get(marketAddr) || t.symbol || (marketAddr.length > 10 ? `${marketAddr.slice(0, 6)}...${marketAddr.slice(-4)}` : 'DEX');
-        const isExplicitManual = Boolean(
-          t.client_order_id && String(t.client_order_id).startsWith('manual-user-override')
+        const cid = String(t.client_order_id || '');
+        const isAgent = Boolean(
+          cid.startsWith('agent-') || 
+          cid.startsWith('decibel-')
         );
-        const isAgent = !isExplicitManual;
+        const isManual = !isAgent;
         return {
           ...t,
           symbol,
-          isManual: isExplicitManual,
+          isManual,
           tradeType: isAgent ? 'AUTO' : 'MANUAL',
+          strategyName: isAgent ? (t.strategyName || 'Autonomous AI Strategy') : 'human trade DEX',
           timestamp: t.transaction_unix_ms || Date.now(),
         };
       });

@@ -7,7 +7,7 @@ export type LayerId = 'layer0_kronos' | 'layer1_macro' | 'layer2_liquidity' | 'l
 
 export interface Layer0Config {
   enabled: boolean;
-  timeframe: '15m';
+  timeframe: '5m' | '15m';
   requireTrajectoryConfluence: boolean;  // Must match trade direction (Long or Short)
   minExpectedReturnPct: number;          // Min expected return (e.g. ±0.80%)
   minEvRatio: number;                    // Min Symmetrical EV ratio (e.g. 1.40x)
@@ -18,7 +18,7 @@ export interface Layer0Config {
 
 export interface Layer1Config {
   enabled: boolean;
-  timeframe: '15m' | '1h' | '4h';
+  timeframe: '5m' | '15m' | '1h' | '4h';
   trendFilterEma: boolean;            // Require price aligned with 1h EMA25/50
   pullbackEmaEnvelope: boolean;       // Require price within EMA25/50 dynamic value zone
   envelopeTolerancePct: number;       // e.g. 0.20% (±0.20% from EMA)
@@ -28,6 +28,13 @@ export interface Layer1Config {
   volumeProfileEnabled?: boolean;     // Enable Auction Market Theory Volume Profile
   boxPocTimeframe?: '15m' | '1h' | 'dual'; // Timeframe for horizontal consolidation box POC
   boxConsolidationRetest?: boolean;   // Require breakout + pullback to Box POC (anti-chasing)
+  fastSmaRetestEnabled?: boolean;     // Require pullback retest of Fast Robust Island SMA as dynamic support/resistance
+  fastSmaRetestTolerancePct?: number; // Tolerance distance to Fast SMA (e.g. 0.35%)
+  maxBarsSinceCrossover?: number;     // Maximum completed bars since SMA crossover for entry freshness (Option A: 4 bars)
+  fastPeriod?: number;                // Fast Robust Island SMA period (e.g. 9 or 20)
+  slowPeriod?: number;                // Slow Robust Island SMA period (e.g. 21 or 50)
+  smaSpreadThresholdPct?: number;     // Minimum spread % between fast & slow SMA (e.g. 0.05%)
+  smaCrossoverWeight?: number;        // Dynamic weight multiplier for SMA crossover alignment (e.g. 15%)
 }
 
 export interface Layer2Config {
@@ -96,6 +103,19 @@ export interface Layer5Config {
   enforcePostOnly?: boolean;          // PILLAR 1: Strictly enforce Maker PostOnly routing (TIF=1) with zero taker fee drag
   makerFillTimeoutMs?: number;       // Window to wait for resting order fill before clean cancel (e.g. 25000ms)
   allowTakerFallback?: boolean;      // If false, never convert unfilled maker orders into IOC takers
+  fastSmaTrailingStopEnabled?: boolean; // Dynamically tighten Stop-Loss to Fast SMA or Breakeven when tested during trade
+  fastSmaTrailingBufferPct?: number;   // Buffer distance for trailing SL (e.g. 0.15%)
+  breakevenFeeBufferPct?: number;      // Breakeven fee buffer cushion (e.g. 0.75%)
+  dynamicTakeProfit1R?: number;        // Dynamic TP1 target R multiple (e.g. 1.25R)
+  dynamicTakeProfit2R?: number;        // Dynamic TP2 target R multiple (e.g. 2.50R)
+  stagnationProfitHarvestR?: number;   // Profit threshold to harvest early on stagnation (e.g. 0.50R)
+  dynamicGapLambda?: number;           // Amber Band Harvest Master Tier 1 penetration (e.g. 0.30 for 30% gap)
+  dynamicGapExitLambda?: number;       // Amber Band Harvest Master Tier 2 terminal close (e.g. 0.50 for 50% midpoint)
+  noFixedTp?: boolean;                 // Open-ended runner without rigid on-chain DEX TP
+  exit50CloseEnabled?: boolean;        // 50% midpoint touch terminal close
+  pureRobustIslandExit?: boolean;      // When true, exits are 100% pure SMA dynamic gap (L30/L50), no multi-factor interference
+  allowDiscretionaryHarvest?: boolean; // When false, discretionary multi-factor vulnerability harvests are permanently locked off
+  targetAssets?: string[];             // Whitelisted symbols (e.g. ['SOL/USD', 'ETH/USD'])
 }
 
 export interface StrategyConfig {
@@ -120,6 +140,7 @@ export interface StrategyConfig {
   certifiedByRiskSentinel?: boolean;
   certificationScore?: number;
   optimalRegimes?: string[];
+  targetAssets?: string[];
   stagedStatus?: 'ACTIVE_LIVE' | 'READY_ARSENAL' | 'DRAFT';
 }
 
@@ -140,11 +161,21 @@ export interface AIEvaluationResult {
 }
 
 export interface PairLayerOverrides {
-  layer0_kronos?: boolean;
-  layer1?: boolean;
-  layer2?: boolean;
-  layer3?: boolean;
-  layer4?: boolean;
+  layer0_kronos?: boolean | Partial<Layer0Config>;
+  layer1?: boolean | Partial<Layer1Config>;
+  layer2?: boolean | Partial<Layer2Config>;
+  layer3?: boolean | Partial<Layer3Config>;
+  layer4?: boolean | Partial<Layer4Config>;
+  layer5?: Partial<Layer5Config>;
+  fastPeriod?: number;
+  slowPeriod?: number;
+  fastSmaRetestEnabled?: boolean;
+  fastSmaRetestTolerancePct?: number;
+  fastSmaTrailingStopEnabled?: boolean;
+  fastSmaTrailingBufferPct?: number;
+  breakevenFeeBufferPct?: number;
+  dynamicTakeProfit1R?: number;
+  dynamicTakeProfit2R?: number;
   maxLeverage?: number;
   slMultiplier?: number;
   minConfidenceGate?: number;
@@ -152,6 +183,8 @@ export interface PairLayerOverrides {
   assignedStrategyName?: string;
   assignedTier?: 'TIER_1_ALPHA' | 'TIER_1_CHAMPION' | 'TIER_2_INCUBATOR' | 'TIER_2_STABLE' | 'TIER_3_PROBATION';
   tierAllocPct?: number;
+  probationActive?: boolean;
+  reason?: string;
   sandboxTradesRemaining?: number;
   sandboxWins?: number;
   rotationHistory?: Array<{
@@ -163,6 +196,19 @@ export interface PairLayerOverrides {
     reason: string;
   }>;
   preset?: 'MAJOR_TREND' | 'HIGH_BETA_ALT' | 'SIM_LAB' | 'CREAMER_ORDERFLOW' | 'CUSTOM' | 'MANUAL';
+  currentFastSma?: number;
+  currentSlowSma?: number;
+  smaSpreadPct?: number;
+  smaAlignment?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  robustScore?: number;
+  wfe?: number;
+  barsSinceCross?: number;
+  isFreshCross?: boolean;
+  priceRetestLong?: boolean;
+  priceRetestShort?: boolean;
+  priceVsFastSmaPct?: number;
+  trailingStopLong?: number;
+  trailingStopShort?: number;
   executionProfile?: 'STANDARD_SWING';
   makerOffsetPct?: number;
   orderbookSpreadPct?: number;

@@ -21,7 +21,7 @@ const rawSubaccount = envOrFallback('DECIBEL_SUBACCOUNT_ADDRESS') || '';
 const rawNodeApiKey = envOrFallback('DECIBEL_NODE_API_KEY', 'DECIBEL_API_KEY') || '';
 const rawOwnerAddress = envOrFallback('DECIBEL_APTOS_OWNER_ADDRESS', 'DECIBEL_OWNER_ADDRESS', 'APTOS_WALLET_ADDRESS') || '';
 
-export const DEFAULT_28_PAIRS = 'BTC/USD,ETH/USD,SOL/USD,APT/USD,SUI/USD,XRP/USD,DOGE/USD,BNB/USD,LINK/USD,AVAX/USD,NEAR/USD,ADA/USD,TRX/USD,DOT/USD,HYPE/USD,PEPE/USD,SHIB/USD,LTC/USD,BCH/USD,UNI/USD,FET/USD,TAO/USD,RENDER/USD,ARB/USD,OP/USD,INJ/USD,SEI/USD,TIA/USD,ZEC/USD';
+export const DEFAULT_28_PAIRS = 'BTC/USD,ETH/USD,HYPE/USD,SOL/USD,LINK/USD,ZEC/USD,DOGE/USD,BNB/USD,XRP/USD,MON/USD,AAVE/USD,ADA/USD,APT/USD,NEAR/USD,TAO/USD,kPEPE/USD,MEGA/USD,SUI/USD,ENA/USD,LIT/USD,FARTCOIN/USD,TRUMP/USD,LDO/USD,MORPHO/USD,CHIP/USD,PUMP/USD,XPL/USD,AVAX/USD,UNI/USD,GME/USD,WLFI/USD,TRX/USD,ZRO/USD,SONY/USD,TTWO/USD';
 
 // ─── Validation Schema ────────────────────────────────────────────────────────
 const configSchema = z.object({
@@ -47,7 +47,7 @@ const configSchema = z.object({
 
   // ── Optional Sim Lab AI Cloud Supercharge ────────────────────────────────────
   SIMLAB_KEY: z.string().optional().default(() => envOrFallback('SIMLAB_KEY') || ''),
-  SIMLAB_SERVER_URL: z.string().optional().default(() => envOrFallback('SIMLAB_SERVER_URL') || 'https://simlab.measmony.me'),
+  SIMLAB_SERVER_URL: z.string().optional().default(() => envOrFallback('SIMLAB_SERVER_URL') || ''),
 
   // ── Trading Settings ─────────────────────────────────────────────────────────
   BUDGET_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('BUDGET_USD') || 100.0)),
@@ -74,11 +74,11 @@ const configSchema = z.object({
   MIN_CONFIDENCE_PCT: z.coerce.number().default(75),
   MIN_CONFIDENCE_PCT_BREAKOUT: z.coerce.number().default(80),
   MAX_POSITION_ALLOC_PCT: z.coerce.number().default(35),
-  SIM_PIPELINE_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_URL') || 'https://simlab.measmony.me/api/pipeline/alpha-bundle'),
-  SIM_PIPELINE_FALLBACK_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_FALLBACK_URL') || 'https://simlab.measmony.me/api/pipeline/alpha-bundle'),
+  SIM_PIPELINE_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_URL') || 'http://127.0.0.1:4000/api/pipeline/alpha-bundle'),
+  SIM_PIPELINE_FALLBACK_URL: z.string().default(() => envOrFallback('SIM_PIPELINE_FALLBACK_URL') || ''),
   SIM_PIPELINE_POLL_MS: z.coerce.number().default(() => Number(envOrFallback('SIM_PIPELINE_POLL_MS') || 15000)),
-  SIM_TELEMETRY_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_URL') || 'https://simlab.measmony.me/api/pipeline/telemetry'),
-  SIM_TELEMETRY_FALLBACK_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_FALLBACK_URL') || 'https://simlab.measmony.me/api/pipeline/telemetry'),
+  SIM_TELEMETRY_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_URL') || 'http://127.0.0.1:4000/api/pipeline/telemetry'),
+  SIM_TELEMETRY_FALLBACK_URL: z.string().default(() => envOrFallback('SIM_TELEMETRY_FALLBACK_URL') || ''),
   SIM_TELEMETRY_INTERVAL_MS: z.coerce.number().default(() => Number(envOrFallback('SIM_TELEMETRY_INTERVAL_MS') || 30000)),
   SIM_PIPELINE_ENABLED: z
     .union([z.boolean(), z.string()])
@@ -101,13 +101,16 @@ const configSchema = z.object({
     .default(() => envOrFallback('PAPER_TRADING') || 'false'),
 
   // ── Risk & Execution Parameters ──────────────────────────────────────────────
-  MIN_LEVERAGE: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MIN_LEVERAGE') || 5)),
-  MAX_LEVERAGE: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MAX_LEVERAGE') || 12)),
-  MAX_ALLOC_PCT: z.coerce.number().min(5).max(100).default(() => Number(envOrFallback('MAX_ALLOC_PCT') || 60)),
-  MIN_ALLOC_PCT: z.coerce.number().min(5).max(100).default(() => Number(envOrFallback('MIN_ALLOC_PCT') || 35)),
+  MIN_LEVERAGE: z.coerce.number().min(1).max(50).default(() => Number(envOrFallback('MIN_LEVERAGE') || 10)),
+  MAX_LEVERAGE: z.coerce.number().min(1).max(50).default(() => Number(envOrFallback('MAX_LEVERAGE') || 15)),
+  MAX_ALLOC_PCT: z.coerce.number().min(1).max(100).default(() => Number(envOrFallback('MAX_ALLOC_PCT') || 60)),
+  MIN_ALLOC_PCT: z.coerce.number().min(1).max(100).default(() => Number(envOrFallback('MIN_ALLOC_PCT') || 35)),
   MAX_RISK_PER_TRADE_PCT: z.coerce.number().min(0.1).max(50).default(30),
   MIN_24H_VOLUME_USD: z.coerce.number().default(100_000),
   MAX_FUNDING_RATE_PCT: z.coerce.number().default(0.3),
+  DEFAULT_STOP_LOSS_PCT: z.coerce.number().min(0.1).max(50).default(() => Number(envOrFallback('DEFAULT_STOP_LOSS_PCT') || 1.5)),
+  DEFAULT_TAKE_PROFIT_PCT: z.coerce.number().min(0.1).max(100).default(() => Number(envOrFallback('DEFAULT_TAKE_PROFIT_PCT') || 3.0)),
+  SLIPPAGE_TOLERANCE_PCT: z.coerce.number().min(0.01).max(10).default(() => Number(envOrFallback('SLIPPAGE_TOLERANCE_PCT') || 0.3)),
   // ── Market Watch & Interval ──────────────────────────────────────────────────
 
   WATCH_PAIRS: z
@@ -161,16 +164,21 @@ export function isValidApiKey(k?: string): boolean {
 import fs from 'fs';
 import path from 'path';
 
-export const SETTINGS_FILE_PATH = path.resolve(process.cwd(), 'data/settings.json');
+// Resolve package root reliably (works regardless of whether process.cwd() is alpha-autonomouse-client_v3 or root workspace)
+export const APP_ROOT = fs.existsSync(path.resolve(process.cwd(), 'src/config.ts')) || fs.existsSync(path.resolve(process.cwd(), 'dist/config.js'))
+  ? process.cwd()
+  : path.resolve(__dirname, '..');
+
+export const SETTINGS_FILE_PATH = path.resolve(APP_ROOT, 'data/settings.json');
 
 export function syncCredentialsToEnv(updates: Record<string, string | number | boolean | undefined>): void {
   try {
-    const envPath = path.resolve(process.cwd(), '.env');
+    const envPath = path.resolve(APP_ROOT, '.env');
     let content = '';
     if (fs.existsSync(envPath)) {
       content = fs.readFileSync(envPath, 'utf8');
     } else {
-      const examplePath = path.resolve(process.cwd(), '.env.example');
+      const examplePath = path.resolve(APP_ROOT, '.env.example');
       if (fs.existsSync(examplePath)) {
         content = fs.readFileSync(examplePath, 'utf8');
       }
@@ -230,6 +238,10 @@ if (network) {
   rawConfig.NETWORK = network as any;
   rawConfig.DECIBEL_NETWORK = network as any;
 }
+const apiBaseUrl = savedSettings.decibelApiBaseUrl || savedSettings.credentials?.decibelApiBaseUrl;
+if (apiBaseUrl) {
+  rawConfig.DECIBEL_API_BASE_URL = apiBaseUrl;
+}
 
 // AI Keys restoration
 if (savedSettings.ai) {
@@ -280,6 +292,13 @@ const savedMaxAlloc = savedSettings.trading?.maxAllocPct ?? savedSettings.maxAll
 if (savedMaxAlloc !== undefined) rawConfig.MAX_ALLOC_PCT = Number(savedMaxAlloc);
 const savedMaxOpen = savedSettings.trading?.maxOpenPositions ?? savedSettings.maxOpenPositions;
 if (savedMaxOpen !== undefined) rawConfig.MAX_OPEN_POSITIONS = Number(savedMaxOpen);
+const savedStopLoss = savedSettings.trading?.defaultStopLossPct ?? savedSettings.defaultStopLossPct;
+if (savedStopLoss !== undefined) (rawConfig as any).DEFAULT_STOP_LOSS_PCT = Number(savedStopLoss);
+const savedTakeProfit = savedSettings.trading?.defaultTakeProfitPct ?? savedSettings.defaultTakeProfitPct;
+if (savedTakeProfit !== undefined) (rawConfig as any).DEFAULT_TAKE_PROFIT_PCT = Number(savedTakeProfit);
+const savedSlippage = savedSettings.trading?.slippageTolerancePct ?? savedSettings.slippageTolerancePct;
+if (savedSlippage !== undefined) (rawConfig as any).SLIPPAGE_TOLERANCE_PCT = Number(savedSlippage);
+
 if (savedSettings.trading) {
   if (savedSettings.trading.paperTrading !== undefined) rawConfig.PAPER_TRADING = Boolean(savedSettings.trading.paperTrading);
   if (savedSettings.trading.watchPairs && savedSettings.trading.watchPairs.split(',').length >= 25) {
@@ -293,6 +312,9 @@ if (savedSettings.trading) {
   if (savedSettings.trading.maxPositionUsd !== undefined) rawConfig.MAX_POSITION_USD = Number(savedSettings.trading.maxPositionUsd);
   if (savedSettings.trading.minAllocPct !== undefined) rawConfig.MIN_ALLOC_PCT = Number(savedSettings.trading.minAllocPct);
   if (savedSettings.trading.maxAllocPct !== undefined) rawConfig.MAX_ALLOC_PCT = Number(savedSettings.trading.maxAllocPct);
+  if (savedSettings.trading.defaultStopLossPct !== undefined) (rawConfig as any).DEFAULT_STOP_LOSS_PCT = Number(savedSettings.trading.defaultStopLossPct);
+  if (savedSettings.trading.defaultTakeProfitPct !== undefined) (rawConfig as any).DEFAULT_TAKE_PROFIT_PCT = Number(savedSettings.trading.defaultTakeProfitPct);
+  if (savedSettings.trading.slippageTolerancePct !== undefined) (rawConfig as any).SLIPPAGE_TOLERANCE_PCT = Number(savedSettings.trading.slippageTolerancePct);
 }
 if (savedSettings.simlab?.key) {
   rawConfig.SIMLAB_KEY = savedSettings.simlab.key;
@@ -311,18 +333,15 @@ const hasSimLabKey = Boolean(rawConfig.SIMLAB_KEY && rawConfig.SIMLAB_KEY.trim()
 const operatingMode: 'STANDALONE' | 'SIMLAB_SUPERCHARGED' = hasSimLabKey ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE';
 
 // Determine Active AI Brain Provider (Honor saved settings choice first, then fallback to auto-detection)
-let activeAiProvider: 'gemini' | 'claude' | 'ollama' | 'local_rules' = 'local_rules';
+let activeAiProvider: 'gemini' | 'claude' | 'ollama' | 'local_rules' | string = 'local_rules';
 const savedAiProvider = (savedSettings.ai?.provider || savedSettings.aiProvider || '').toLowerCase().trim();
 const isAiExplicitlyDisabled = savedSettings.ai?.enabled === false || savedSettings.aiEnabled === false;
+const knownAiProviders = ['gemini', 'claude', 'anthropic', 'ollama', 'custom', 'huggingface', 'hf', 'openai', 'deepseek', 'groq', 'openrouter', 'local_rules'];
 
 if (isAiExplicitlyDisabled || savedAiProvider === 'local_rules') {
   activeAiProvider = 'local_rules';
-} else if (savedAiProvider === 'claude' || savedAiProvider === 'anthropic') {
-  activeAiProvider = 'claude';
-} else if (savedAiProvider === 'ollama') {
-  activeAiProvider = 'ollama';
-} else if (savedAiProvider === 'gemini') {
-  activeAiProvider = 'gemini';
+} else if (savedAiProvider && knownAiProviders.includes(savedAiProvider)) {
+  activeAiProvider = savedAiProvider === 'anthropic' ? 'claude' : (savedAiProvider === 'hf' ? 'huggingface' : savedAiProvider);
 } else {
   // Auto-detection based on valid API keys
   if (isValidApiKey(rawConfig.GEMINI_API_KEY)) {
@@ -557,6 +576,17 @@ export function updateDynamicSettings(updates: any): void {
       merged.decibelNetwork = network;
     }
 
+    const apiUrl = (updates.decibelApiBaseUrl || updates.decibelApiUrl || updates.credentials?.decibelApiBaseUrl || '').trim();
+    if (apiUrl) {
+      config.DECIBEL_API_BASE_URL = apiUrl;
+      merged.credentials.decibelApiBaseUrl = apiUrl;
+      merged.decibelApiBaseUrl = apiUrl;
+    } else if (existing.decibelApiBaseUrl || existing.credentials?.decibelApiBaseUrl) {
+      const keepUrl = existing.decibelApiBaseUrl || existing.credentials?.decibelApiBaseUrl;
+      merged.credentials.decibelApiBaseUrl = keepUrl;
+      merged.decibelApiBaseUrl = keepUrl;
+    }
+
     // 2. Client AI Brain Updates & Safe Key Retention
     if (
       updates.ai ||
@@ -728,28 +758,53 @@ export function updateDynamicSettings(updates: any): void {
         merged.maxAllocPct = config.MAX_ALLOC_PCT;
         merged.trading.maxAllocPct = config.MAX_ALLOC_PCT;
       }
-      if (tradingUpdates.maxOpenPositions !== undefined) {
-        const safeMaxOpen = Math.max(1, Number(tradingUpdates.maxOpenPositions));
+      const rawMaxOpen = tradingUpdates.maxOpenPositions !== undefined ? tradingUpdates.maxOpenPositions : tradingUpdates.maxConcurrentPositions;
+      if (rawMaxOpen !== undefined) {
+        const safeMaxOpen = Math.max(1, Number(rawMaxOpen));
         config.MAX_OPEN_POSITIONS = safeMaxOpen;
         merged.maxOpenPositions = safeMaxOpen;
         merged.trading.maxOpenPositions = safeMaxOpen;
+        merged.maxConcurrentPositions = safeMaxOpen;
+        merged.trading.maxConcurrentPositions = safeMaxOpen;
+      }
+      if (tradingUpdates.defaultStopLossPct !== undefined) {
+        const rawSl = Math.max(0.1, Number(tradingUpdates.defaultStopLossPct));
+        (config as any).DEFAULT_STOP_LOSS_PCT = rawSl;
+        merged.defaultStopLossPct = rawSl;
+        merged.trading.defaultStopLossPct = rawSl;
+      }
+      if (tradingUpdates.defaultTakeProfitPct !== undefined) {
+        const rawTp = Math.max(0.1, Number(tradingUpdates.defaultTakeProfitPct));
+        (config as any).DEFAULT_TAKE_PROFIT_PCT = rawTp;
+        merged.defaultTakeProfitPct = rawTp;
+        merged.trading.defaultTakeProfitPct = rawTp;
+      }
+      if (tradingUpdates.slippageTolerancePct !== undefined) {
+        const rawSlip = Math.max(0.01, Number(tradingUpdates.slippageTolerancePct));
+        (config as any).SLIPPAGE_TOLERANCE_PCT = rawSlip;
+        merged.slippageTolerancePct = rawSlip;
+        merged.trading.slippageTolerancePct = rawSlip;
       }
       if (tradingUpdates.paperTrading !== undefined) {
         config.PAPER_TRADING = Boolean(tradingUpdates.paperTrading);
+        merged.paperTrading = config.PAPER_TRADING;
         merged.trading.paperTrading = config.PAPER_TRADING;
       }
       if (tradingUpdates.watchPairs) {
         config.WATCH_PAIRS = tradingUpdates.watchPairs;
         watchPairs = config.WATCH_PAIRS.split(',').map((p) => p.trim()).filter(Boolean);
         merged.trading.watchPairs = config.WATCH_PAIRS;
+        merged.watchPairs = config.WATCH_PAIRS;
       }
       if (tradingUpdates.maxRiskPerTradePct !== undefined) {
         config.MAX_RISK_PER_TRADE_PCT = Number(tradingUpdates.maxRiskPerTradePct);
         merged.trading.maxRiskPerTradePct = config.MAX_RISK_PER_TRADE_PCT;
+        merged.maxRiskPerTradePct = config.MAX_RISK_PER_TRADE_PCT;
       }
       if (tradingUpdates.minConfidencePct !== undefined) {
         config.MIN_CONFIDENCE_PCT = Number(tradingUpdates.minConfidencePct);
         merged.trading.minConfidencePct = config.MIN_CONFIDENCE_PCT;
+        merged.minConfidencePct = config.MIN_CONFIDENCE_PCT;
       }
       if (tradingUpdates.mode || tradingUpdates.autonomousMode) {
         config.AUTONOMOUS_MODE = 'full';
@@ -813,6 +868,14 @@ export function updateDynamicSettings(updates: any): void {
       merged.security.adminPassword = updates.adminPassword;
     }
 
+    // 6b. Robust Island SMA Reversal Loop Settings
+    if (updates.robustReversalLoop) {
+      merged.robustReversalLoop = {
+        ...(existing.robustReversalLoop || {}),
+        ...updates.robustReversalLoop,
+      };
+    }
+
     // 7. Onboarding Status Guarantee (once onboarded, never reset)
     if (updates.onboarded !== undefined) {
       merged.onboarded = Boolean(updates.onboarded);
@@ -832,7 +895,9 @@ export function updateDynamicSettings(updates: any): void {
     syncCredentialsToEnv({
       DECIBEL_SUBACCOUNT_ADDRESS: config.DECIBEL_SUBACCOUNT_ADDRESS,
       DECIBEL_DELEGATE_KEY: config.DECIBEL_DELEGATE_KEY,
+      DECIBEL_NODE_API_KEY: config.DECIBEL_NODE_API_KEY,
       DECIBEL_NETWORK: config.NETWORK,
+      DECIBEL_API_BASE_URL: config.DECIBEL_API_BASE_URL,
       GEMINI_API_KEY: config.GEMINI_API_KEY,
       ANTHROPIC_API_KEY: config.ANTHROPIC_API_KEY,
       TELEGRAM_BOT_TOKEN: config.TELEGRAM_BOT_TOKEN,
@@ -844,8 +909,11 @@ export function updateDynamicSettings(updates: any): void {
     });
   } catch (err: any) {
     console.error('Failed to update persistent settings:', err.message);
+    throw err;
   }
 }
+
+const derivedAddressCache = new Map<string, string>();
 
 /**
  * Dynamically derives the Aptos public address from the configured DECIBEL_PRIVATE_KEY.
@@ -854,12 +922,15 @@ export function updateDynamicSettings(updates: any): void {
 export function getDerivedSignerAddress(privateKey?: string): string {
   const pk = privateKey || config.DECIBEL_PRIVATE_KEY || config.DECIBEL_DELEGATE_KEY;
   if (!pk) return '';
+  if (derivedAddressCache.has(pk)) return derivedAddressCache.get(pk)!;
   try {
     const { Account, Ed25519PrivateKey } = require('@aptos-labs/ts-sdk');
     const cleanPk = pk.replace(/^ed25519-priv-/, '').trim();
     const edPk = new Ed25519PrivateKey(cleanPk);
     const account = Account.fromPrivateKey({ privateKey: edPk });
-    return account.accountAddress.toString();
+    const addr = account.accountAddress.toString();
+    derivedAddressCache.set(pk, addr);
+    return addr;
   } catch {
     return '';
   }
@@ -868,9 +939,6 @@ export function getDerivedSignerAddress(privateKey?: string): string {
  * Auto-probed on VPS / Cloud or local network without requiring manual UI entry.
  */
 export const DEFAULT_SIMLAB_CANDIDATE_URLS: string[] = [
-  'https://simlab.measmony.me',
-  'https://alphaforge.measmony.me',
-  'https://alphaauto.measmony.me',
   'http://localhost:4000',
   'http://127.0.0.1:4000',
 ];

@@ -147,6 +147,7 @@ export class RiskGuard {
   ): RiskValidationResult {
     const directives = standaloneEngine.getDirectives();
     const action = signal.action;
+    let isCounterTrendTrade = false;
 
     // ── 0. Basic Sanity Check ──────────────────────────────────────────────────
     if (action !== 'LONG' && action !== 'SHORT') {
@@ -176,14 +177,52 @@ export class RiskGuard {
           return this.reject(reason, directives, accountEquity, availableMargin);
         }
 
-        // Confluence Gate: Fast dynamic SMA momentum must align with trade direction
+        // Confluence Gate: Fast dynamic SMA momentum alignment
         if (pairRolling && pairRolling.smaAlignment !== 'NEUTRAL') {
           const isOpposingLong = action === 'LONG' && pairRolling.smaAlignment === 'BEARISH';
           const isOpposingShort = action === 'SHORT' && pairRolling.smaAlignment === 'BULLISH';
           if (isOpposingLong || isOpposingShort) {
-            const reason = `🛑 Blocked by Rolling-Window Confluence Sentinel: Dynamic SMA(${pairRolling.fastPeriod}/${pairRolling.slowPeriod}) alignment is ${pairRolling.smaAlignment}, opposing ${action}. Decoupled chop trap avoided.`;
+            const sigConfidence = signal.confidence || aiEval.confidenceScore || 0;
+            if (sigConfidence < 75) {
+              const reason = `🛑 Blocked by Rolling-Window Confluence Sentinel: Dynamic SMA(${pairRolling.fastPeriod}/${pairRolling.slowPeriod}) alignment is ${pairRolling.smaAlignment}, opposing ${action} with moderate confidence (${sigConfidence}% < 75%).`;
+              logger.warn(`[Risk Guard] ${reason}`);
+              return this.reject(reason, directives, accountEquity, availableMargin);
+            }
+            isCounterTrendTrade = true;
+            logger.info(`⚖️ [Risk Guard] ${signal.symbol} Dynamic SMA(${pairRolling.fastPeriod}/${pairRolling.slowPeriod}) opposes ${action}, but strong conviction (${sigConfidence}% >= 75%) permits execution with 0.5x margin dampener.`);
+          }
+        }
+
+        // Pre-Trade Retest Gate: Fast Robust Island SMA Retest & Pure Freshness Mandate (Option A)
+        const { getActiveStrategy, getSimPairDirective } = require('../strategy/manager');
+        const activeStrat = getActiveStrategy();
+        const pairDir = typeof getSimPairDirective === 'function' ? getSimPairDirective(signal.symbol) : undefined;
+        if (activeStrat?.layer1?.fastSmaRetestEnabled && pairRolling) {
+          // 1. Pure Freshness Mandate: Hard Veto if barsSinceCross > maxBars (default <= 4)
+          const maxBars = activeStrat?.layer1?.maxBarsSinceCrossover ?? 4;
+          const barsSinceCross = (typeof pairRolling.barsSinceCross === 'number')
+            ? pairRolling.barsSinceCross
+            : (pairDir?.barsSinceCross);
+
+          if (typeof barsSinceCross === 'number' && barsSinceCross > maxBars) {
+            const reason = `🛑 Blocked by Robust Island Pure Freshness Gate: ${signal.symbol} trend age is ${barsSinceCross} bars (> ${maxBars} bars limit). Awaiting fresh crossover cycle.`;
             logger.warn(`[Risk Guard] ${reason}`);
             return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+
+          // 2. Strict Fast SMA Retest Tolerance (±0.35% trampoline)
+          const isLong = action === 'LONG';
+          const isShort = action === 'SHORT';
+          const retestPass = isLong ? pairRolling.priceRetestLong : pairRolling.priceRetestShort;
+          
+          if (retestPass === false) {
+            const tol = activeStrat.layer1.fastSmaRetestTolerancePct ?? 0.35;
+            const dist = pairRolling.priceVsFastSmaPct !== undefined ? `${pairRolling.priceVsFastSmaPct.toFixed(2)}%` : 'unconfirmed';
+            const reason = `🛑 Blocked by Robust Island Fast SMA Retest Gate: ${signal.symbol} ${action} price extended from Fast SMA(${pairRolling.fastPeriod}) (${dist} away, tol ±${tol}%). Waiting for dynamic trampoline retest.`;
+            logger.warn(`[Risk Guard] ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          } else {
+            logger.info(`🎯 [Risk Guard] ${signal.symbol} Fast SMA Pullback Retest CONFIRMED by Sim Lab Alpha Bundle for ${action} (age: ${barsSinceCross ?? 'fresh'} bars).`);
           }
         }
       }
@@ -300,10 +339,55 @@ export class RiskGuard {
           }
         }
       } catch {}
+
+      // Quantum Einsteinian Microstructure & Hoax Collapse Check
+      try {
+        const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+        const { getSimPairDirective } = require('../strategy/manager');
+        const b = getLastSyncedBundle();
+        const simDir = getSimPairDirective(signal.symbol);
+        const qMicro = (simDir as any)?.quantumMicrostructure;
+        const of = simDir?.orderflow;
+
+        if (b?.quantumDirectives?.active || qMicro) {
+          const cvdTrend = of?.cvdTrend;
+          const imb = of?.orderflowImbalancePct;
+          const tbr = (of as any)?.takerBuyRatio;
+          
+          // Hard veto if fake gravity well detected or adverse hoax collapse
+          const isBearishHoax = action === 'LONG' && (
+            qMicro?.isFakeGravityWell ||
+            qMicro?.isHoaxCollapse ||
+            cvdTrend === 'SELL' ||
+            cvdTrend === 'STRONG_SELL' ||
+            (typeof imb === 'number' && imb < -25) ||
+            (typeof tbr === 'number' && tbr < 0.44)
+          );
+
+          const isBullishHoax = action === 'SHORT' && (
+            qMicro?.isFakeGravityWell ||
+            qMicro?.isHoaxCollapse ||
+            cvdTrend === 'BUY' ||
+            cvdTrend === 'STRONG_BUY' ||
+            (typeof imb === 'number' && imb > 25) ||
+            (typeof tbr === 'number' && tbr > 0.56)
+          );
+
+          if (isBearishHoax) {
+            const reason = `🛑 Blocked by Quantum Microstructure Guard: Bearish Hoax Collapse on ${signal.symbol}. Bid mass evaporated with net negative CVD (${cvdTrend || 'SELL'}) and seller dominance.`;
+            logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+          if (isBullishHoax) {
+            const reason = `🛑 Blocked by Quantum Microstructure Guard: Bullish Hoax Collapse / Squeeze on ${signal.symbol}. Ask mass evaporated with net positive CVD (${cvdTrend || 'BUY'}) and buyer dominance.`;
+            logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+            return this.reject(reason, directives, accountEquity, availableMargin);
+          }
+        }
+      } catch {}
     }
 
     // ── 1. Asymmetric Regime Directional Hurdle Gate ───────────────────────────
-    let isCounterTrendTrade = false;
     const COUNTER_TREND_CONFIDENCE_HURDLE = 85;
 
     const isBearRegime = Boolean(
@@ -495,51 +579,58 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    const clientMinPosUsd = (config as any).MIN_POSITION_USD || 35.0;
-    const stratMinMargin = Math.max(
-      clientMinPosUsd,
-      activeDirectives?.strategy?.layer5?.minMarginUsd ??
-      (activeDirectives?.strategy as any)?.minMarginUsd ??
-      20.0,
-    );
+    const isReversalLoop = signal.strategyName === 'Robust Island SMA Reversal Loop';
+    const clientMinPosUsd = isReversalLoop ? ((signal as any).customMarginUsd || 30.0) : ((config as any).MIN_POSITION_USD || 35.0);
+    const stratMinMargin = isReversalLoop
+      ? ((signal as any).customMarginUsd || 30.0)
+      : Math.max(
+          clientMinPosUsd,
+          activeDirectives?.strategy?.layer5?.minMarginUsd ??
+          (activeDirectives?.strategy as any)?.minMarginUsd ??
+          20.0,
+        );
 
     let targetAllocUsd: number;
-    // Dynamic Percentage Sizing: Respects client working budget and pair tier allocation %
-    const pairAllocPct = (typeof pairDir?.tierAllocPct === 'number')
-      ? pairDir.tierAllocPct
-      : (typeof (activeDirectives?.strategy?.maxAllocPct) === 'number' ? activeDirectives.strategy.maxAllocPct : config.MAX_ALLOC_PCT);
-    const effectiveAllocPct = Math.min(pairAllocPct, config.MAX_ALLOC_PCT);
+    if (isReversalLoop) {
+      targetAllocUsd = Math.min((signal as any).customMarginUsd || 30.0, remainingBudget);
+    } else {
+      // Dynamic Percentage Sizing: Respects client working budget and pair tier allocation %
+      const pairAllocPct = (typeof pairDir?.tierAllocPct === 'number')
+        ? pairDir.tierAllocPct
+        : (typeof (activeDirectives?.strategy?.maxAllocPct) === 'number' ? activeDirectives.strategy.maxAllocPct : config.MAX_ALLOC_PCT);
+      const effectiveAllocPct = Math.min(pairAllocPct, config.MAX_ALLOC_PCT);
 
-    const baseTargetAlloc = Math.min(
-      remainingBudget,
-      maxBudget * (effectiveAllocPct / 100),
-      userMaxPosUsd,
-    );
-    targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
+      const baseTargetAlloc = Math.min(
+        remainingBudget,
+        maxBudget * (effectiveAllocPct / 100),
+        userMaxPosUsd,
+      );
+      targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
 
-    // Kronos Confidence-Calibrated Sizing Multiplier (0.3x for chop up to 1.0x for high conviction)
-    if (typeof pairDir?.confidenceSizing?.positionMultiplier === 'number') {
-      const kronosMult = Math.max(0.3, Math.min(1.0, pairDir.confidenceSizing.positionMultiplier));
-      targetAllocUsd = Number((targetAllocUsd * kronosMult).toFixed(2));
-      if (kronosMult !== 1.0) {
-        logger.info(`[Risk Guard] ${signal.symbol} — Kronos confidence sizing multiplier applied: ${kronosMult.toFixed(2)}x (Confidence: ${pairDir?.confidenceSizing?.confidenceScore || 'N/A'}, Adjusted Allocation: $${targetAllocUsd.toFixed(2)})`);
+      // Kronos Confidence-Calibrated Sizing Multiplier (0.3x for chop up to 1.0x for high conviction)
+      if (typeof pairDir?.confidenceSizing?.positionMultiplier === 'number') {
+        const kronosMult = Math.max(0.3, Math.min(1.0, pairDir.confidenceSizing.positionMultiplier));
+        targetAllocUsd = Number((targetAllocUsd * kronosMult).toFixed(2));
+        if (kronosMult !== 1.0) {
+          logger.info(`[Risk Guard] ${signal.symbol} — Kronos confidence sizing multiplier applied: ${kronosMult.toFixed(2)}x (Confidence: ${pairDir?.confidenceSizing?.confidenceScore || 'N/A'}, Adjusted Allocation: $${targetAllocUsd.toFixed(2)})`);
+        }
       }
-    }
-    // Counter-trend asymmetric sizing dampener (0.5x margin allocation)
-    if (isCounterTrendTrade) {
-      targetAllocUsd = Number((targetAllocUsd * 0.5).toFixed(2));
-      logger.info(`⚖️ [Risk Guard] ${signal.symbol} — Counter-trend 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
-    }
-
-    // Rolling-Window Transitional Regime sizing dampener (0.5x margin allocation)
-    try {
-      const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
-      const pairRolling = getPairRollingDirectives(signal.symbol);
-      if (pairRolling?.wfeDirective === 'REDUCE_SIZE_HALF') {
+      // Counter-trend asymmetric sizing dampener (0.5x margin allocation)
+      if (isCounterTrendTrade) {
         targetAllocUsd = Number((targetAllocUsd * 0.5).toFixed(2));
-        logger.info(`🔬 [Risk Guard] ${signal.symbol} — Rolling-Window Transitional WFE (${pairRolling.wfe.toFixed(2)}) 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
+        logger.info(`⚖️ [Risk Guard] ${signal.symbol} — Counter-trend 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
       }
-    } catch {}
+
+      // Rolling-Window Transitional Regime sizing dampener (0.5x margin allocation)
+      try {
+        const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
+        const pairRolling = getPairRollingDirectives(signal.symbol);
+        if (pairRolling?.wfeDirective === 'REDUCE_SIZE_HALF') {
+          targetAllocUsd = Number((targetAllocUsd * 0.5).toFixed(2));
+          logger.info(`🔬 [Risk Guard] ${signal.symbol} — Rolling-Window Transitional WFE (${pairRolling.wfe.toFixed(2)}) 0.5x margin dampener applied: New Target Alloc $${targetAllocUsd.toFixed(2)}`);
+        }
+      } catch {}
+    }
 
     // Enforce strategy minimum margin floor
     targetAllocUsd = Math.max(targetAllocUsd, stratMinMargin);
@@ -554,49 +645,70 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    // Adaptive Leverage Sovereign [Min 5x, Max 12x] Clamp:
-    // Client enforces sovereign minLeverage (default 5x) and maxLeverage (default 12x)
+    // Adaptive Leverage Sovereign [Min 10x, Max 15x] Clamp:
+    // Client enforces sovereign minLeverage (default 10x) and maxLeverage (default 15x)
     // Strictly respects exchange maximum leverage caps
     const marketAuth = AUTHORITATIVE_DECIBEL_MARKETS[normSym];
-    const exchangeMaxLev = marketAuth?.maxLeverage || 12;
+    const exchangeMaxLev = marketAuth?.maxLeverage || 20;
 
-    const clientMinLev = (config as any).MIN_LEVERAGE || 5;
-    const clientMaxLev = Math.min((config as any).MAX_LEVERAGE || 12, exchangeMaxLev);
+    const clientMinLev = (config as any).MIN_LEVERAGE || 10;
+    const clientMaxLev = Math.min((config as any).MAX_LEVERAGE || 15, exchangeMaxLev);
 
     const simLabSuggestedLev = pairDir?.confidenceSizing?.recommendedLeverage || pairDir?.maxLeverage || signal.suggestedLeverage || activeDirectives?.strategy?.leverage || clientMinLev;
     const candidateLev = Math.max(clientMinLev, Math.min(simLabSuggestedLev, clientMaxLev));
     const leverage = Math.min(candidateLev, exchangeMaxLev);
 
     // ── Risk-Parity Hard Cap: Maximum Dollar Loss at Stop Loss (UNCONDITIONAL) ──
-    const entryPrice = signal.entryPrice || signal.limitPrice || 0;
-    const stopLossPrice = signal.stopLoss || 0;
+    const entryPrice = signal.entryPrice || signal.limitPrice || (signal as any).suggestedEntry || 0;
+    const stopLossPrice = signal.stopLoss || (signal as any).suggestedStopLoss || 0;
     const rawSlDistPct = (entryPrice > 0 && stopLossPrice > 0)
       ? Math.abs(entryPrice - stopLossPrice) / entryPrice
       : 0.02;
     const bufferedSlDistPct = rawSlDistPct + 0.0030; // 30 bps slippage & taker fee buffer
 
-    // Maximum loss at SL is strictly capped by the risk policy ($0.85 hard cap or configured equity %)
-    const configuredRiskPct = Math.min((config.MAX_RISK_PER_TRADE_PCT && config.MAX_RISK_PER_TRADE_PCT <= 5) ? config.MAX_RISK_PER_TRADE_PCT : 1.5, 3.0);
-    const maxLossPerTradeUsd = Math.min(
-      (config as any).MAX_LOSS_PER_TRADE_USD || 0.85,
-      Math.max(0.50, accountEquity * (configuredRiskPct / 100))
+    // Client Settings Page Sovereignty:
+    // Respects user's configured MAX_RISK_PER_TRADE_PCT and BUDGET_USD / accountEquity
+    const userRiskPct = (typeof config.MAX_RISK_PER_TRADE_PCT === 'number' && config.MAX_RISK_PER_TRADE_PCT > 0)
+      ? Math.min(Math.max(config.MAX_RISK_PER_TRADE_PCT, 0.5), 5.0)
+      : 2.0;
+
+    const effectiveCapitalBase = Math.max(
+      Number(config.BUDGET_USD) || 100.0,
+      accountEquity > 0 ? accountEquity : 100.0
     );
 
+    let userAuthorizedLossCeiling = Number((effectiveCapitalBase * (userRiskPct / 100)).toFixed(2));
+
+    // If explicit MAX_LOSS_PER_TRADE_USD is set in config, respect it
+    if (typeof (config as any).MAX_LOSS_PER_TRADE_USD === 'number' && (config as any).MAX_LOSS_PER_TRADE_USD > 0) {
+      userAuthorizedLossCeiling = (config as any).MAX_LOSS_PER_TRADE_USD;
+    }
+
     if (bufferedSlDistPct > 0 && leverage > 0) {
-      const maxSafeAllocForSl = maxLossPerTradeUsd / (bufferedSlDistPct * leverage);
+      const projectedLossAtMinMargin = stratMinMargin * bufferedSlDistPct * leverage;
       
-      // CRITICAL RISK GATE: If minimum required margin exceeds safe allocation, REJECT the trade!
-      if (stratMinMargin > maxSafeAllocForSl) {
-        const reason = `🛑 [HARD RISK REJECTION] Minimum margin ($${stratMinMargin.toFixed(2)}) exceeds safe allocation ` +
-          `($${maxSafeAllocForSl.toFixed(2)}) to guarantee max loss strictly ≤ $${maxLossPerTradeUsd.toFixed(2)} at ${(bufferedSlDistPct * 100).toFixed(2)}% SL distance. Trade aborted to protect capital.`;
+      // ALLOWANCE FOR ROUND-LOT MINIMUM: Allow stratMinMargin ($35) if projected loss is within
+      // user risk ceiling with a 1.25x round-lot tolerance (or baseline floor $4.50)
+      const maxPermissibleLoss = Math.max(userAuthorizedLossCeiling * 1.25, 4.50);
+
+      if (projectedLossAtMinMargin > maxPermissibleLoss) {
+        const reason = `🛑 [HARD RISK REJECTION] Minimum margin ($${stratMinMargin.toFixed(2)}) at ${leverage}x leverage ` +
+          `would risk $${projectedLossAtMinMargin.toFixed(2)} on stop out, which strictly exceeds the user risk ceiling ` +
+          `of $${userAuthorizedLossCeiling.toFixed(2)} (${userRiskPct}% of $${effectiveCapitalBase.toFixed(2)}). Trade aborted to protect capital.`;
         logger.warn(reason);
         return this.reject(reason, directives, accountEquity, availableMargin);
       }
 
+      // Max safe allocation guaranteeing stop loss does not exceed userAuthorizedLossCeiling
+      const maxSafeAllocForSl = Math.max(
+        stratMinMargin,
+        userAuthorizedLossCeiling / (bufferedSlDistPct * leverage)
+      );
+
       if (targetAllocUsd > maxSafeAllocForSl) {
         logger.info(
           `🛡️ [RISK PARITY CAP] ${signal.symbol} — Allocation capped from $${targetAllocUsd.toFixed(2)} to $${maxSafeAllocForSl.toFixed(2)} ` +
-          `to guarantee max SL loss is strictly ≤ $${maxLossPerTradeUsd.toFixed(2)} (${(bufferedSlDistPct * 100).toFixed(2)}% buffered SL dist @ ${leverage}x)`
+          `to guarantee max SL loss is strictly ≤ $${userAuthorizedLossCeiling.toFixed(2)} (${(bufferedSlDistPct * 100).toFixed(2)}% buffered SL dist @ ${leverage}x)`
         );
         targetAllocUsd = Number(maxSafeAllocForSl.toFixed(2));
       }

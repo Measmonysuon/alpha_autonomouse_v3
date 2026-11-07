@@ -37,6 +37,12 @@ async function runSetup(): Promise<void> {
     console.log(`   ✅ Delegate Key: Configured (${config.DECIBEL_DELEGATE_KEY.slice(0, 10)}...)`);
   }
 
+  if (config.DECIBEL_NODE_API_KEY) {
+    console.log(`   ✅ Aptos Gateway Node Key: Configured (${config.DECIBEL_NODE_API_KEY.slice(0, 10)}...)`);
+  } else {
+    console.log(`   ℹ️  No dedicated node key configured. Using reliable public Aptos Mainnet Fullnode fallback.`);
+  }
+
   console.log(`   ✅ Target Network: ${config.NETWORK}`);
   console.log(`   ✅ Paper Trading: ${config.PAPER_TRADING ? 'TRUE (Safe local testing)' : 'FALSE (Live mainnet)'}`);
   console.log(`   ✅ Allocated Budget: $${config.BUDGET_USD.toFixed(2)} USD`);
