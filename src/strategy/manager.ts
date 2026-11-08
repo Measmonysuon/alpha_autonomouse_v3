@@ -5,6 +5,7 @@
  */
 
 import fs from 'fs';
+import { writeJsonAtomicSync } from '../utils/atomic-write';
 import path from 'path';
 import { StrategyConfig, AIEvaluationResult, PairLayerOverrides, PairAutoTuneResult } from './types';
 import { PREBUILT_TEMPLATES, SIMLAB_PREMIUM_CHAMPION_TEMPLATE } from './templates';
@@ -98,7 +99,7 @@ function saveStorage(payload: StoragePayload): void {
   // 2. Mirror to JSON file for export / backup
   try {
     fs.mkdirSync(path.dirname(STRATEGIES_FILE), { recursive: true });
-    fs.writeFileSync(STRATEGIES_FILE, JSON.stringify(payload, null, 2), 'utf8');
+    writeJsonAtomicSync(STRATEGIES_FILE, payload);
   } catch (err: any) {
     logger.error(`Failed to save strategies file: ${err.message}`);
   }
@@ -277,7 +278,7 @@ export function updateStrategySyncConfig(partial: Partial<StrategySyncConfig>): 
   }
   try {
     fs.mkdirSync(path.dirname(STRATEGY_SYNC_CONFIG_FILE), { recursive: true });
-    fs.writeFileSync(STRATEGY_SYNC_CONFIG_FILE, JSON.stringify(activeStrategySyncConfig, null, 2), 'utf-8');
+    writeJsonAtomicSync(STRATEGY_SYNC_CONFIG_FILE, activeStrategySyncConfig);
     logger.info(
       `⚙️ [STRATEGY SYNC] Saved sync config: GlobalSync=${activeStrategySyncConfig.syncGlobalStrategy}, ` +
       `PairSync=${activeStrategySyncConfig.syncPairOverrides}`

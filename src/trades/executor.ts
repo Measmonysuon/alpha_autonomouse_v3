@@ -11,6 +11,7 @@
  */
 
 import fs from 'fs';
+import { writeJsonAtomicSync } from '../utils/atomic-write';
 import path from 'path';
 import { Account, Ed25519PrivateKey, Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
 import {
@@ -490,7 +491,7 @@ export class TradeExecutor {
         shadowTrades: this.shadowTradesCache.slice(-100),
         lastUpdated: Date.now(),
       };
-      fs.writeFileSync(TRADES_FILE_PATH, JSON.stringify(payload, null, 2), 'utf8');
+      writeJsonAtomicSync(TRADES_FILE_PATH, payload);
 
       // Mirror directly to SQLite database for ultra-fast queries
       for (const t of this.tradesCache) {

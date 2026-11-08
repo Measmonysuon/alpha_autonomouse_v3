@@ -105,6 +105,7 @@ export interface ClientTelemetryPayload {
 }
 
 let feederTimer: NodeJS.Timeout | null = null;
+let feederPushInFlight = false;
 let isInitialized = false;
 
 /**
@@ -414,7 +415,15 @@ export function startTelemetryFeeder(): void {
 
   // Periodic recurring push
   feederTimer = setInterval(async () => {
-    await pushTelemetry('periodic_sync').catch(() => { });
+    // Single-flight: skip this tick if the previous push is still running,
+    // so a slow Sim Lab endpoint can never cause stacked duplicate pushes.
+    if (feederPushInFlight) return;
+    feederPushInFlight = true;
+    try {
+      await pushTelemetry('periodic_sync').catch(() => { });
+    } finally {
+      feederPushInFlight = false;
+    }
   }, intervalMs);
 }
 

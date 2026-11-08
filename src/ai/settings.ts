@@ -4,6 +4,7 @@
  */
 
 import fs from 'fs';
+import { writeJsonAtomicSync } from '../utils/atomic-write';
 import path from 'path';
 import { logger } from '../utils/logger';
 import { config } from '../config';
@@ -112,7 +113,7 @@ export function saveAISettings(settings: Partial<AISettings>): AISettings {
 
   try {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+    writeJsonAtomicSync(SETTINGS_FILE, updated);
     cachedSettings = updated;
     logger.info(`💾 AI settings saved (Primary: ${updated.provider}/${updated.model}, Secondary: ${updated.secondaryProvider}/${updated.secondaryModel}, Enabled: ${updated.enabled})`);
   } catch (err) {

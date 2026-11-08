@@ -89,7 +89,9 @@ class TradeDatabase {
   private memoryTrades: Map<string, DbTrade> = new Map();
 
   constructor(customPath?: string) {
-    this.dbPath = customPath || path.join(process.cwd(), 'data', 'trades.db');
+    // TRADES_DB_PATH lets tests/tools use an isolated database so test runs
+    // can never write into the live trading database (production default unchanged).
+    this.dbPath = customPath || process.env.TRADES_DB_PATH || path.join(process.cwd(), 'data', 'trades.db');
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });

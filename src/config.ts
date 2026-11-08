@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { writeFileAtomicSync, writeJsonAtomicSync } from './utils/atomic-write';
 import { z } from 'zod';
 
 dotenv.config();
@@ -169,7 +170,11 @@ export const APP_ROOT = fs.existsSync(path.resolve(process.cwd(), 'src/config.ts
   ? process.cwd()
   : path.resolve(__dirname, '..');
 
-export const SETTINGS_FILE_PATH = path.resolve(APP_ROOT, 'data/settings.json');
+// ALPHA_SETTINGS_FILE lets tests/tools run against an isolated settings file
+// instead of the live deployment one (production default unchanged).
+export const SETTINGS_FILE_PATH = process.env.ALPHA_SETTINGS_FILE
+  ? path.resolve(process.env.ALPHA_SETTINGS_FILE)
+  : path.resolve(APP_ROOT, 'data/settings.json');
 
 export function syncCredentialsToEnv(updates: Record<string, string | number | boolean | undefined>): void {
   try {
@@ -197,7 +202,7 @@ export function syncCredentialsToEnv(updates: Record<string, string | number | b
       }
     }
 
-    fs.writeFileSync(envPath, content.trim() + '\n', 'utf8');
+    writeFileAtomicSync(envPath, content.trim() + '\n', 'utf8');
   } catch (err: any) {
     console.error('Failed to sync credentials to .env:', err.message);
   }
@@ -911,7 +916,7 @@ export function updateDynamicSettings(updates: any): void {
 
     // 8. Atomic Disk Write & .env Synchronization
     fs.mkdirSync(path.dirname(SETTINGS_FILE_PATH), { recursive: true });
-    fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(merged, null, 2), 'utf8');
+    writeJsonAtomicSync(SETTINGS_FILE_PATH, merged);
 
     syncCredentialsToEnv({
       DECIBEL_SUBACCOUNT_ADDRESS: config.DECIBEL_SUBACCOUNT_ADDRESS,

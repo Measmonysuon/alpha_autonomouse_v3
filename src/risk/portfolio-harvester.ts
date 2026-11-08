@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { writeJsonAtomicSync } from '../utils/atomic-write';
 import path from 'path';
 import { tradeExecutor, TradeRecord } from '../trades/executor';
 import { mcpClient } from '../mcp/client';
@@ -223,7 +224,7 @@ export class PortfolioHarvester {
       }
       data.harvester = this.config;
       fs.mkdirSync(path.dirname(SETTINGS_FILE_PATH), { recursive: true });
-      fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(data, null, 2), 'utf8');
+      writeJsonAtomicSync(SETTINGS_FILE_PATH, data);
     } catch (err: any) {
       logger.error(`Failed to persist harvester config: ${err.message}`);
     }
@@ -1054,7 +1055,7 @@ export class PortfolioHarvester {
     try {
       const EVALUATIONS_FILE_PATH = path.resolve(process.cwd(), 'data/harvest-evaluations.json');
       fs.mkdirSync(path.dirname(EVALUATIONS_FILE_PATH), { recursive: true });
-      fs.writeFileSync(EVALUATIONS_FILE_PATH, JSON.stringify(records.slice(-200), null, 2), 'utf-8');
+      writeJsonAtomicSync(EVALUATIONS_FILE_PATH, records.slice(-200));
     } catch (err: any) {
       logger.error(`❌ [HARVEST EVAL] Failed to save evaluations: ${err.message}`);
     }

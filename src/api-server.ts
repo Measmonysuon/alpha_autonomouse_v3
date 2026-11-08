@@ -341,6 +341,7 @@ export function getLivePricesMap(): Record<string, number> {
 }
 
 let liveTickerTimer: NodeJS.Timeout | null = null;
+let liveTickerInFlight = false;
 const sseStateClients = new Set<http.ServerResponse>();
 const recentLogs: LogEntry[] = [];
 const sseClients = new Set<http.ServerResponse>();
@@ -863,7 +864,13 @@ export function startLiveTickerLoop(): void {
   onChainPipeline.start();
   fetchLiveBulkTickers().catch(() => {});
   liveTickerTimer = setInterval(() => {
-    fetchLiveBulkTickers().catch(() => {});
+    // Single-flight: the 1.2s cadence must never overlap a slow bulk fetch,
+    // otherwise identical upstream calls stack up under network latency.
+    if (liveTickerInFlight) return;
+    liveTickerInFlight = true;
+    fetchLiveBulkTickers()
+      .catch(() => {})
+      .finally(() => { liveTickerInFlight = false; });
   }, config.FAST_PRICE_TICKER_MS || 1200);
 }
 startLiveTickerLoop();

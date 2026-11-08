@@ -11,6 +11,7 @@
  */
 
 import axios from 'axios';
+import { writeJsonAtomicSync } from '../utils/atomic-write';
 import { config, watchPairs, isClientConfigured, DEFAULT_SIMLAB_CANDIDATE_URLS } from '../config';
 import { logger } from '../utils/logger';
 import { standaloneEngine, StrategyDirectives } from '../engine/standalone-engine';
@@ -77,6 +78,7 @@ export class SimLabSuperchargeClient {
   private secret = '';
   private rawToken = '';
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private heartbeatInFlight: boolean = false;
   private consecutiveFailures = 0;
   private featureFlags: SimLabFeatureFlags = {
     syncMacroRegime: true,
@@ -195,7 +197,7 @@ export class SimLabSuperchargeClient {
         features: this.featureFlags,
       };
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify(current, null, 2), 'utf8');
+      writeJsonAtomicSync(settingsPath, current);
     } catch {}
   }
 
@@ -740,7 +742,15 @@ export class SimLabSuperchargeClient {
     // Configured telemetry interval stream (default 30s)
     const intervalMs = Math.max(10000, Number(config.SIM_TELEMETRY_INTERVAL_MS) || 30000);
     this.heartbeatTimer = setInterval(async () => {
-      await this.sendHeartbeat().catch(() => {});
+      // Single-flight: never stack overlapping heartbeats if a send runs
+      // longer than the interval (slow network must not duplicate calls).
+      if (this.heartbeatInFlight) return;
+      this.heartbeatInFlight = true;
+      try {
+        await this.sendHeartbeat().catch(() => {});
+      } finally {
+        this.heartbeatInFlight = false;
+      }
     }, intervalMs);
   }
 

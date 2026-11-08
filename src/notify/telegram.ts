@@ -11,6 +11,7 @@
  */
 
 import fs from 'fs';
+import { writeJsonAtomicSync } from '../utils/atomic-write';
 import path from 'path';
 import axios from 'axios';
 import { config, SETTINGS_FILE_PATH } from '../config';
@@ -114,7 +115,7 @@ export class TelegramNotifier {
         updatedAt: Date.now(),
       };
 
-      fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(current, null, 2), 'utf8');
+      writeJsonAtomicSync(SETTINGS_FILE_PATH, current);
       logger.info(`📱 [TELEGRAM] Settings updated! Enabled: ${this.enabled}`);
     } catch (err: any) {
       logger.error(`Failed to save Telegram settings: ${err.message}`);
