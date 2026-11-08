@@ -547,9 +547,9 @@ export function buildStreamStatePayload() {
     aiProvider: config.ACTIVE_AI_PROVIDER,
     aiModel: config.GEMINI_MODEL || (config.ACTIVE_AI_PROVIDER === 'gemini' ? 'gemini-2.5-flash' : 'local-rules'),
     aiEnabled: config.ACTIVE_AI_PROVIDER !== 'local_rules' && Boolean(config.GEMINI_API_KEY || config.ANTHROPIC_API_KEY || config.OLLAMA_BASE_URL),
-    budgetUsd: config.BUDGET_USD || 200,
-    minPositionUsd: config.MIN_POSITION_USD || 100,
-    maxPositionUsd: config.MAX_POSITION_USD || 150,
+    budgetUsd: config.BUDGET_USD ?? 0,
+    minPositionUsd: config.MIN_POSITION_USD ?? 0,
+    maxPositionUsd: config.MAX_POSITION_USD ?? 0,
     minLeverage: config.MIN_LEVERAGE || 5,
     maxLeverage: config.MAX_LEVERAGE || 12,
     minAllocPct: config.MIN_ALLOC_PCT || 35,
@@ -561,9 +561,9 @@ export function buildStreamStatePayload() {
     slippageTolerancePct: (config as any).SLIPPAGE_TOLERANCE_PCT || 0.3,
     maxRiskPct: config.MAX_RISK_PER_TRADE_PCT || 2.0,
     riskSettings: {
-      budgetUsd: config.BUDGET_USD || 30,
-      minPositionUsd: config.MIN_POSITION_USD || 35,
-      maxPositionUsd: config.MAX_POSITION_USD || 150,
+      budgetUsd: config.BUDGET_USD ?? 0,
+      minPositionUsd: config.MIN_POSITION_USD ?? 0,
+      maxPositionUsd: config.MAX_POSITION_USD ?? 0,
       minLeverage: config.MIN_LEVERAGE || 5,
       maxLeverage: config.MAX_LEVERAGE || 12,
       minAllocPct: config.MIN_ALLOC_PCT || 35,
@@ -1541,9 +1541,9 @@ export function startApiServer(): http.Server {
           gasAptBalance,
           network: config.NETWORK,
           paperTrading: config.PAPER_TRADING,
-          budgetUsd: config.BUDGET_USD,
-          minPositionUsd: config.MIN_POSITION_USD || 35,
-          maxPositionUsd: config.MAX_POSITION_USD || 150,
+          budgetUsd: config.BUDGET_USD ?? 0,
+          minPositionUsd: config.MIN_POSITION_USD ?? 0,
+          maxPositionUsd: config.MAX_POSITION_USD ?? 0,
           minLeverage: config.MIN_LEVERAGE || 5,
           maxLeverage: config.MAX_LEVERAGE || 12,
           minAllocPct: config.MIN_ALLOC_PCT || 35,
@@ -1555,9 +1555,9 @@ export function startApiServer(): http.Server {
           slippageTolerancePct: (config as any).SLIPPAGE_TOLERANCE_PCT || 0.3,
           maxRiskPct: config.MAX_RISK_PER_TRADE_PCT || 2.0,
           riskSettings: {
-            budgetUsd: config.BUDGET_USD || 30,
-            minPositionUsd: config.MIN_POSITION_USD || 35,
-            maxPositionUsd: config.MAX_POSITION_USD || 150,
+            budgetUsd: config.BUDGET_USD ?? 0,
+            minPositionUsd: config.MIN_POSITION_USD ?? 0,
+            maxPositionUsd: config.MAX_POSITION_USD ?? 0,
             minLeverage: config.MIN_LEVERAGE || 5,
             maxLeverage: config.MAX_LEVERAGE || 12,
             minAllocPct: config.MIN_ALLOC_PCT || 35,
@@ -1764,9 +1764,9 @@ export function startApiServer(): http.Server {
         aiProvider: config.ACTIVE_AI_PROVIDER,
         aiModel: config.GEMINI_MODEL || (config.ACTIVE_AI_PROVIDER === 'gemini' ? 'gemini-2.5-flash' : 'local-rules'),
         aiEnabled: config.ACTIVE_AI_PROVIDER !== 'local_rules' && Boolean(config.GEMINI_API_KEY || config.ANTHROPIC_API_KEY || config.OLLAMA_BASE_URL),
-        budgetUsd: config.BUDGET_USD || 30,
-        minPositionUsd: config.MIN_POSITION_USD || 35,
-        maxPositionUsd: config.MAX_POSITION_USD || 150,
+        budgetUsd: config.BUDGET_USD ?? 0,
+        minPositionUsd: config.MIN_POSITION_USD ?? 0,
+        maxPositionUsd: config.MAX_POSITION_USD ?? 0,
         minLeverage: config.MIN_LEVERAGE || 5,
         maxLeverage: config.MAX_LEVERAGE || 12,
         minAllocPct: config.MIN_ALLOC_PCT || 35,
@@ -1778,9 +1778,9 @@ export function startApiServer(): http.Server {
         slippageTolerancePct: (config as any).SLIPPAGE_TOLERANCE_PCT || 0.3,
         maxRiskPct: config.MAX_RISK_PER_TRADE_PCT || 2.0,
         riskSettings: {
-          budgetUsd: config.BUDGET_USD || 30,
-          minPositionUsd: config.MIN_POSITION_USD || 35,
-          maxPositionUsd: config.MAX_POSITION_USD || 150,
+          budgetUsd: config.BUDGET_USD ?? 0,
+          minPositionUsd: config.MIN_POSITION_USD ?? 0,
+          maxPositionUsd: config.MAX_POSITION_USD ?? 0,
           minLeverage: config.MIN_LEVERAGE || 5,
           maxLeverage: config.MAX_LEVERAGE || 12,
           minAllocPct: config.MIN_ALLOC_PCT || 35,
@@ -2539,7 +2539,8 @@ function triggerBackgroundOnChainSync(): void {
           isValidApiKey(config.ANTHROPIC_API_KEY) ||
           isValidApiKey(config.HF_TOKEN) ||
           Boolean(saved.ai?.apiKey || saved.aiApiKey || saved.ai?.geminiApiKey || saved.ai?.anthropicApiKey || saved.ai?.hfToken);
-        const resolvedApiBaseUrl = config.DECIBEL_API_BASE_URL || saved.decibelApiBaseUrl || saved.credentials?.decibelApiBaseUrl || 'https://api.decibel.trade';
+        const rawApiBaseUrl = config.DECIBEL_API_BASE_URL || saved.decibelApiBaseUrl || saved.credentials?.decibelApiBaseUrl || '';
+        const resolvedApiBaseUrl = (rawApiBaseUrl && !rawApiBaseUrl.includes('api.decibel.trade')) ? rawApiBaseUrl : 'https://api.mainnet.aptoslabs.com/decibel';
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
@@ -2583,9 +2584,9 @@ function triggerBackgroundOnChainSync(): void {
               secondaryCustomBaseUrl: saved.ai?.secondaryCustomBaseUrl ?? saved.secondaryCustomBaseUrl ?? '',
               hasSecondaryApiKey: Boolean(saved.ai?.secondaryApiKey || saved.secondaryApiKey || saved.secondaryAiApiKey),
               trading: {
-                budgetUsd: config.BUDGET_USD,
-                minPositionUsd: config.MIN_POSITION_USD ?? saved.trading?.minPositionUsd ?? 35,
-                maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 150,
+                budgetUsd: config.BUDGET_USD ?? 0,
+                minPositionUsd: config.MIN_POSITION_USD ?? saved.trading?.minPositionUsd ?? 0,
+                maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 0,
                 maxOpenPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
                 maxConcurrentPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
                 paperTrading: config.PAPER_TRADING,
@@ -2601,9 +2602,9 @@ function triggerBackgroundOnChainSync(): void {
                 defaultTakeProfitPct: activeTp,
                 slippageTolerancePct: activeSlippage,
               },
-              budgetUsd: config.BUDGET_USD,
-              minPositionUsd: config.MIN_POSITION_USD ?? saved.trading?.minPositionUsd ?? 35,
-              maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 150,
+              budgetUsd: config.BUDGET_USD ?? 0,
+              minPositionUsd: config.MIN_POSITION_USD ?? saved.trading?.minPositionUsd ?? 0,
+              maxPositionUsd: (config as any).MAX_POSITION_USD ?? saved.trading?.maxPositionUsd ?? saved.maxPositionUsd ?? 0,
               minLeverage: config.MIN_LEVERAGE ?? 5,
               maxLeverage: config.MAX_LEVERAGE ?? 12,
               minAllocPct: config.MIN_ALLOC_PCT ?? 35,
@@ -2686,6 +2687,12 @@ function triggerBackgroundOnChainSync(): void {
           telegramTestResult,
         }));
 
+        try {
+          broadcastState();
+        } catch (bErr: any) {
+          logger.warn(`broadcastState warning after settings save: ${bErr.message}`);
+        }
+
         setImmediate(() => {
           try {
             tradeExecutor.reinitializeSigner();
@@ -2697,6 +2704,46 @@ function triggerBackgroundOnChainSync(): void {
             logger.warn(`Post-settings reinitialization warning: ${e.message}`);
           }
         });
+        return;
+      }
+    }
+
+    // ── 9b. Dedicated Risk Guardrails Endpoint ─────────────────────────────────
+    if (pathname === '/api/settings/risk') {
+      if (req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          settings: {
+            budgetUsd: config.BUDGET_USD,
+            minPositionUsd: config.MIN_POSITION_USD,
+            maxPositionUsd: config.MAX_POSITION_USD,
+            minLeverage: config.MIN_LEVERAGE,
+            maxLeverage: config.MAX_LEVERAGE,
+            minAllocPct: config.MIN_ALLOC_PCT,
+            maxAllocPct: config.MAX_ALLOC_PCT,
+            defaultStopLossPct: (config as any).DEFAULT_STOP_LOSS_PCT || 1.5,
+            defaultTakeProfitPct: (config as any).DEFAULT_TAKE_PROFIT_PCT || 3.0,
+            maxOpenPositions: config.MAX_OPEN_POSITIONS,
+            slippageTolerancePct: (config as any).SLIPPAGE_TOLERANCE_PCT || 0.3,
+          }
+        }));
+        return;
+      }
+
+      if (req.method === 'POST') {
+        const body = await parseBody(req);
+        updateDynamicSettings({ trading: body, ...body });
+        try {
+          broadcastState();
+        } catch (bErr: any) {
+          logger.warn(`broadcastState warning after risk settings save: ${bErr.message}`);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Risk guardrails updated successfully!',
+        }));
         return;
       }
     }
@@ -2716,6 +2763,11 @@ function triggerBackgroundOnChainSync(): void {
         updateDynamicSettings({ ai: body, ...body });
         const updated = getAISettings();
         logger.info(`🤖 [AI SETTINGS] AI Intelligence updated. Provider: ${updated.provider}, Model: ${updated.model}, Enabled: ${updated.enabled}`);
+        try {
+          broadcastState();
+        } catch (bErr: any) {
+          logger.warn(`broadcastState warning after ai settings save: ${bErr.message}`);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -3912,6 +3964,7 @@ function triggerBackgroundOnChainSync(): void {
       if (req.method === 'POST') {
         const data = await parseBody(req);
         telegramNotifier.updateSettings(data.botToken, data.chatId, data.enabled !== false);
+        try { broadcastState(); } catch {}
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, settings: telegramNotifier.getSettings() }));
         return;

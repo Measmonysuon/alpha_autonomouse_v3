@@ -66,11 +66,13 @@ echo "  Batch-syncing authoritative markets, active strategy, and champion confi
 V3_DATA_FILES=(
   "$LOCAL_DIR/data/active-strategy.json"
   "$LOCAL_DIR/data/user-strategies.json"
-  "$LOCAL_DIR/data/settings.json"
 )
 [ -f "$LOCAL_DIR/data/decibel-markets.json" ] && V3_DATA_FILES+=("$LOCAL_DIR/data/decibel-markets.json")
 [ -f "$LOCAL_DIR/data/best-3-combinations-robust-sma-harvest.json" ] && V3_DATA_FILES+=("$LOCAL_DIR/data/best-3-combinations-robust-sma-harvest.json")
 rsync -avz -e "ssh $SSH_OPTS" "${V3_DATA_FILES[@]}" "$TARGET_HOST:$REMOTE_DIR/data/"
+
+# Seed settings.json ONLY if it does not already exist on Jetson (never overwrite existing live credentials)
+ssh $SSH_OPTS "$TARGET_HOST" "mkdir -p $REMOTE_DIR/data && [ -f $REMOTE_DIR/data/settings.json ] || cat > $REMOTE_DIR/data/settings.json" < "$LOCAL_DIR/data/settings.json"
 
 # 5. Stop previous instance and relaunch persistent container
 echo -e "\n${CYAN}--> [5/6] Relaunching persistent 24/7 container on Jetson (Port 5050)...${NC}"
@@ -92,9 +94,9 @@ ssh $SSH_OPTS "$TARGET_HOST" "docker run -d \
   -e SIMLAB_SERVER_URL=http://127.0.0.1:4000 \
   -e OLLAMA_BASE_URL=http://127.0.0.1:11434 \
   -e MIN_LEVERAGE=10 \
-  -e MAX_LEVERAGE=15 \
-  -e MIN_POSITION_USD=35 \
-  -e MAX_POSITION_USD=150 \
+  -e MAX_LEVERAGE=13 \
+  -e MIN_POSITION_USD=80 \
+  -e MAX_POSITION_USD=140 \
   -e MIN_ALLOC_PCT=35 \
   -e MAX_ALLOC_PCT=60 \
   -v $REMOTE_DIR/logs:/app/logs \

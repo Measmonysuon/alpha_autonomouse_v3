@@ -13,6 +13,7 @@
  */
 
 import https from 'https';
+import axios from 'axios';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -65,7 +66,7 @@ const OFFICIAL_DECIBEL_API_KEY = 'AG-BNHLODNFXTCKDYJYVH4EDAQ7F2KP7CKNQ';
 function resolveDecibelBaseUrl(): string {
   const envUrl = (process.env.DECIBEL_API_BASE_URL || config.DECIBEL_API_BASE_URL || '').trim();
   const isTestnet = config.NETWORK === 'testnet' || config.DECIBEL_NETWORK === 'testnet';
-  if (envUrl && !isTestnet && !envUrl.includes('testnet')) {
+  if (envUrl && !isTestnet && !envUrl.includes('testnet') && !envUrl.includes('api.decibel.trade')) {
     return envUrl;
   }
   return isTestnet ? 'https://api.testnet.decibel.trade' : 'https://api.mainnet.aptoslabs.com/decibel';
@@ -126,52 +127,38 @@ export class DecibelPriceFeed {
     return sym.toUpperCase().replace(/[-_/]/g, '').replace(/USDT?$|USDC$|PERP$/i, '');
   }
 
+  private getBaseUrl(): string {
+    return resolveDecibelBaseUrl();
+  }
+
   /**
-   * Internal HTTPS GET with robust request isolation
+   * Internal API GET with robust Axios transport (handles HTTP/HTTPS, proxies, redirects, and clean timeouts)
    */
   private async httpsGet<T>(path: string, timeoutMs = 6000): Promise<T> {
-    const url = `${DECIBEL_BASE_URL}${path}`;
+    const baseUrl = this.getBaseUrl();
+    const cleanBase = baseUrl.replace(/\/$/, '');
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${cleanBase}${cleanPath}`;
     const apiKey = this.getApiKey();
 
-    return new Promise((resolve, reject) => {
-      const req = https.get(
-        url,
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'User-Agent': 'DecibelAutonomousBot/3.0',
-            Accept: 'application/json',
-          },
+    try {
+      const response = await axios.get<T>(url, {
+        timeout: timeoutMs,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'User-Agent': 'DecibelAutonomousBot/3.0',
+          Accept: 'application/json',
         },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => {
-            data += chunk;
-          });
-          res.on('end', () => {
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              try {
-                const parsed = JSON.parse(data);
-                resolve(parsed as T);
-              } catch (err: any) {
-                reject(new Error(`Failed to parse JSON from ${path}: ${err.message}`));
-              }
-            } else {
-              reject(new Error(`Decibel API ${path} returned HTTP ${res.statusCode}: ${data.slice(0, 150)}`));
-            }
-          });
-        }
-      );
-
-      req.on('error', (err) => {
-        reject(err);
+        validateStatus: (status) => status >= 200 && status < 300,
       });
 
-      req.setTimeout(timeoutMs, () => {
-        req.destroy();
-        reject(new Error(`Timeout (${timeoutMs}ms) requesting ${path}`));
-      });
-    });
+      return response.data;
+    } catch (err: any) {
+      if (err.response) {
+        throw new Error(`Decibel API ${path} returned HTTP ${err.response.status}: ${JSON.stringify(err.response.data || '').slice(0, 150)}`);
+      }
+      throw new Error(`Decibel API ${path} request error: ${err.message || 'Network unreachable'}`);
+    }
   }
 
   /**
@@ -235,11 +222,28 @@ export class DecibelPriceFeed {
   }
 
   /**
-   * Fetch all 80+ market prices from Decibel DEX in a single sub-200ms round-trip
+   * Fetch all 80+ market prices from Decibel DEX:
+   * Priority 1: High-speed local Hub Relay from Sim Lab (0 external WAN calls)
+   * Priority 2: Direct on-chain query to Aptos Labs Decibel API if Hub Relay unavailable
    */
   public async fetchPrices(): Promise<boolean> {
     try {
-      const rawPrices = await this.httpsGet<any[]>('/api/v1/prices');
+      let rawPrices: any[] | null = null;
+
+      // 1. Priority 1: Hub Relay from Sim Lab (zero external API requests)
+      const simLabUrl = (config as any).SIM_LAB_URL || 'http://127.0.0.1:4000';
+      try {
+        const hubRes = await axios.get(`${String(simLabUrl).replace(/\/$/, '')}/api/pipeline/decibel-prices`, { timeout: 1200 });
+        if (hubRes.data?.success && Array.isArray(hubRes.data.prices) && hubRes.data.prices.length > 0) {
+          rawPrices = hubRes.data.prices;
+        }
+      } catch {}
+
+      // 2. Priority 2: Direct query to Aptos Labs Decibel API if Hub Relay unavailable
+      if (!rawPrices) {
+        rawPrices = await this.httpsGet<any[]>('/api/v1/prices');
+      }
+
       if (!Array.isArray(rawPrices) || rawPrices.length === 0) {
         return false;
       }
@@ -248,6 +252,16 @@ export class DecibelPriceFeed {
       const cutoff24h = now - 24 * 3600 * 1000;
 
       for (const p of rawPrices) {
+        // Handle pre-parsed DecibelPriceRecord from Hub Relay:
+        if (p.symbol && p.markPrice && p.marketAddr) {
+          this.priceCache.set(p.symbol, p);
+          this.priceCache.set(this.normalizeRaw(p.symbol), p);
+          this.priceCache.set(p.marketAddr.toLowerCase(), p);
+          const baseCoin = this.normalizeBase(p.symbol);
+          if (baseCoin) this.priceCache.set(baseCoin, p);
+          continue;
+        }
+
         if (!p.market) continue;
         const addr = p.market.toLowerCase();
         const sym = this.addrToSymbol.get(addr);
@@ -323,59 +337,10 @@ export class DecibelPriceFeed {
     } catch (err: any) {
       this.consecutiveErrors++;
       if (this.consecutiveErrors % 10 === 1) {
-        logger.warn(`⚠️ Decibel Price Feed polling error: ${err.message} (error count: ${this.consecutiveErrors}). Activating live fallback...`);
+        logger.warn(`⚠️ Decibel Price Feed polling error: ${err.message} (error count: ${this.consecutiveErrors}). Active failover to live Binance/Bybit perp feeds...`);
       }
-      this.populateLiveFailover();
       return false;
     }
-  }
-
-  private async populateLiveFailover(): Promise<void> {
-    try {
-      const axios = require('axios');
-      const now = Date.now();
-      const res = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana,ethereum,bitcoin,aptos,sui&vs_currencies=usd&include_24hr_change=true', {
-        timeout: 3000,
-        headers: { 'User-Agent': 'AlphaClientV3/1.0' },
-      });
-      const data = res.data;
-      if (data) {
-        const mappings: Record<string, string> = {
-          'SOL/USD': 'solana',
-          'ETH/USD': 'ethereum',
-          'BTC/USD': 'bitcoin',
-          'APT/USD': 'aptos',
-          'SUI/USD': 'sui',
-        };
-        for (const [sym, cgId] of Object.entries(mappings)) {
-          const item = data[cgId];
-          if (item && item.usd > 0) {
-            const norm = this.normalizeKey(sym);
-            const current = this.priceCache.get(norm);
-            const record: DecibelPriceRecord = {
-              symbol: sym,
-              marketAddr: current?.marketAddr || '0x_failover',
-              markPrice: item.usd,
-              oraclePrice: item.usd,
-              midPrice: item.usd,
-              fundingRateBps: current?.fundingRateBps || 5,
-              fundingRatePct: current?.fundingRatePct || 0.0005,
-              openInterest: current?.openInterest || 1000,
-              openInterestUsd: (current?.openInterest || 1000) * item.usd,
-              change24h: item.usd_24h_change || 0,
-              high24h: current?.high24h || item.usd * 1.05,
-              low24h: current?.low24h || item.usd * 0.95,
-              volume24hUsd: current?.volume24hUsd || 5000000,
-              updatedAt: now,
-            };
-            this.priceCache.set(sym, record);
-            this.priceCache.set(norm, record);
-            this.priceCache.set(this.normalizeRaw(sym), record);
-          }
-        }
-        this.ready = true;
-      }
-    } catch {}
   }
 
   /**

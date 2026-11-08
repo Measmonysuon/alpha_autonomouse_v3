@@ -687,6 +687,22 @@ export class DecibelMCPClient {
   private marketDetails: Map<string, MarketDetail> = new Map();
   private priceCache: Map<string, { data: MarketPrice; expiresAt: number }> = new Map();
   private lastPriceWarnLog: Map<string, number> = new Map();
+  private activeMcpCalls = 0;
+  private mcpWaitQueue: Array<() => void> = [];
+
+  private async throttleMcpCall<T>(fn: () => Promise<T>, maxConcurrent = 3): Promise<T> {
+    if (this.activeMcpCalls >= maxConcurrent) {
+      await new Promise<void>(resolve => this.mcpWaitQueue.push(resolve));
+    }
+    this.activeMcpCalls++;
+    try {
+      return await fn();
+    } finally {
+      this.activeMcpCalls--;
+      const next = this.mcpWaitQueue.shift();
+      if (next) next();
+    }
+  }
 
   constructor() {
     this.initTransport();
@@ -835,7 +851,7 @@ export class DecibelMCPClient {
       : { symbol };
 
     try {
-      raw = await this.call<any>(toolName, toolArgs, 8000);
+      raw = await this.throttleMcpCall(() => this.call<any>(toolName, toolArgs, 6000));
     } catch (err: any) {
       logger.debug(`MCP ${toolName} call failed for ${symbol}: ${err.message}`);
     }

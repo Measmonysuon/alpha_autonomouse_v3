@@ -86,8 +86,8 @@ function createCleanDataDir(targetDir) {
         decibelPrivateKey: '',
         decibelNetwork: 'mainnet',
         ai: { provider: 'gemini', geminiApiKey: '', ollamaBaseUrl: 'http://localhost:11434' },
-        budgetUsd: 30,
-        trading: { budgetUsd: 30, paperTrading: true },
+        budgetUsd: 0,
+        trading: { budgetUsd: 0, minPositionUsd: 0, maxPositionUsd: 0, paperTrading: true },
         isConfigured: false,
         onboarded: false,
         updatedAt: 0,
@@ -102,7 +102,17 @@ function createCleanDataDir(targetDir) {
     JSON.stringify({ trades: [], shadowTrades: [], lastUpdated: 0 }, null, 2),
     'utf8'
   );
-  ['decibel-markets.json', 'user-strategies.json', 'active-strategy.json', 'strategy-sync-config.json', 'macro-calendar.json', 'settings.example.json'].forEach((file) => {
+  fs.writeFileSync(
+    path.join(dataDir, 'active-strategy.json'),
+    JSON.stringify({ activeId: 'template_range_scalper', updatedAt: 0 }, null, 2),
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(dataDir, 'user-strategies.json'),
+    JSON.stringify({ activeId: 'template_range_scalper', customStrategies: [] }, null, 2),
+    'utf8'
+  );
+  ['decibel-markets.json', 'strategy-sync-config.json', 'macro-calendar.json', 'settings.example.json'].forEach((file) => {
     const src = path.join(ROOT_DIR, 'data', file);
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, path.join(dataDir, file));

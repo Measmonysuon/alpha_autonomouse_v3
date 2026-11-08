@@ -49,10 +49,10 @@ const configSchema = z.object({
   SIMLAB_KEY: z.string().optional().default(() => envOrFallback('SIMLAB_KEY') || ''),
   SIMLAB_SERVER_URL: z.string().optional().default(() => envOrFallback('SIMLAB_SERVER_URL') || ''),
 
-  // ── Trading Settings ─────────────────────────────────────────────────────────
-  BUDGET_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('BUDGET_USD') || 100.0)),
-  MIN_POSITION_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('MIN_POSITION_USD') || 35.0)),
-  MAX_POSITION_USD: z.coerce.number().min(1).default(() => Number(envOrFallback('MAX_POSITION_USD') || 150.0)),
+  // ── Trading Settings (Default $0.00 for pre-onboard safety until configured) ─
+  BUDGET_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('BUDGET_USD') || 0.0)),
+  MIN_POSITION_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('MIN_POSITION_USD') || 0.0)),
+  MAX_POSITION_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('MAX_POSITION_USD') || 0.0)),
   MAX_OPEN_POSITIONS: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MAX_OPEN_POSITIONS') || 3)),
   CLIENT_ID: z.string().default(() => {
     const fromEnv = envOrFallback('CLIENT_ID');
@@ -627,6 +627,23 @@ export function updateDynamicSettings(updates: any): void {
         }
         merged.ai.apiKey = rawKey;
         merged.aiApiKey = rawKey;
+      } else {
+        // Safe Key Retention: retain existing keys from config, env, or previous settings
+        if (prov === 'gemini') {
+          const keepKey = config.GEMINI_API_KEY || existing.ai?.geminiApiKey || existing.ai?.apiKey || existing.geminiApiKey || process.env.GEMINI_API_KEY || '';
+          if (keepKey && isValidApiKey(keepKey)) {
+            config.GEMINI_API_KEY = keepKey;
+            merged.ai.geminiApiKey = keepKey;
+            merged.ai.apiKey = keepKey;
+          }
+        } else if (prov === 'claude' || prov === 'anthropic') {
+          const keepKey = config.ANTHROPIC_API_KEY || existing.ai?.anthropicApiKey || existing.ai?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          if (keepKey && isValidApiKey(keepKey)) {
+            config.ANTHROPIC_API_KEY = keepKey;
+            merged.ai.anthropicApiKey = keepKey;
+            merged.ai.apiKey = keepKey;
+          }
+        }
       }
 
       if (updates.geminiKey && !updates.geminiKey.includes('••••') && updates.geminiKey.trim().length > 5) {
@@ -702,10 +719,14 @@ export function updateDynamicSettings(updates: any): void {
         config.ACTIVE_AI_PROVIDER = 'local_rules' as any;
         merged.ai.provider = 'local_rules';
         merged.aiProvider = 'local_rules';
+        merged.ai.enabled = false;
+        merged.aiEnabled = false;
       } else {
         config.ACTIVE_AI_PROVIDER = prov as any;
         merged.ai.provider = prov;
         merged.aiProvider = prov;
+        merged.ai.enabled = true;
+        merged.aiEnabled = true;
       }
 
       // Persist to ai-settings.json

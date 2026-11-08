@@ -214,13 +214,18 @@ export class TelegramNotifier {
       }
     } catch {}
 
+    const isNoFixedTp = Boolean((trade as any).noFixedTp);
+    const tpDisplay = isNoFixedTp
+      ? '<code>Dynamic 30% Harvest → 50% Midpoint Exit (No Fixed TP)</code>'
+      : `<code>$${trade.takeProfit.toFixed(4)}</code> (2.5x ATR)`;
+
     const msg = `
 🚀 <b>TRADE OPENED${paperTag}</b>
 ━━━━━━━━━━━━━━━━━━
 <b>Pair:</b> <code>${trade.symbol}</code>
 <b>Direction:</b> ${sideIcon} (${trade.leverage}x)
 <b>Entry Price:</b> <code>$${trade.entryPrice}</code>
-<b>Take Profit:</b> <code>$${trade.takeProfit.toFixed(4)}</code> (2.5x ATR)
+<b>Take Profit:</b> ${tpDisplay}
 <b>Stop Loss:</b> <code>$${trade.stopLoss.toFixed(4)}</code> (1.5x ATR)${robustSmaLine}${trailingLine}
 <b>Allocated:</b> <code>$${trade.allocatedUsd.toFixed(2)} USD</code>
 <b>Position Size:</b> <code>$${trade.sizeUsd.toFixed(2)} USD</code>
@@ -234,7 +239,11 @@ export class TelegramNotifier {
     const isWin = (trade.pnlUsd ?? 0) > 0;
     const reason = ((trade as any).exitReason || (trade as any).lastRatchetReason || '').toUpperCase();
     let headerIcon = isWin ? '🎯 <b>TAKE PROFIT HIT</b>' : '🛑 <b>STOP LOSS TRIGGERED</b>';
-    if (reason.includes('FAST SMA') || reason.includes('HARVEST MASTER') || reason.includes('TRAIL')) {
+    let displayReason = (trade as any).exitReason;
+    if (reason.includes('DYNAMIC_ISLAND') || reason.includes('50%_TOUCH')) {
+      headerIcon = '🎯 <b>ROBUST ISLAND 50% MIDPOINT TAKE PROFIT (100% Full Close)</b>';
+      displayReason = 'Robust Island 50% Midpoint Touch Exit (Champion V3)';
+    } else if (reason.includes('FAST SMA') || reason.includes('HARVEST MASTER') || reason.includes('TRAIL')) {
       headerIcon = '🌾 <b>HARVESTMASTER FAST SMA TRAIL HIT</b>';
     }
     const pnlSign = (trade.pnlUsd ?? 0) >= 0 ? '+' : '';
@@ -248,7 +257,7 @@ ${headerIcon}${paperTag}
 <b>Realized PnL:</b> <b>${pnlSign}$${trade.pnlUsd?.toFixed(2)} USD</b> (${pnlSign}${trade.pnlPct}%)
 <b>Entry Price:</b> <code>$${trade.entryPrice}</code>
 <b>Strategy:</b> <code>${trade.strategyName || 'Standalone'}</code>
-${(trade as any).exitReason ? `<b>Exit Reason:</b> <code>${(trade as any).exitReason}</code>\n` : ''}
+${displayReason ? `<b>Exit Reason:</b> <code>${displayReason}</code>\n` : ''}
 `;
     await this.sendMessage(msg);
   }

@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { StrategyConfig, AIEvaluationResult, PairLayerOverrides, PairAutoTuneResult } from './types';
-import { PREBUILT_TEMPLATES } from './templates';
+import { PREBUILT_TEMPLATES, SIMLAB_PREMIUM_CHAMPION_TEMPLATE } from './templates';
 import { logger } from '../utils/logger';
 import { dbClient } from '../db/database';
 import { config } from '../config';
@@ -60,14 +60,25 @@ interface StoragePayload {
 }
 
 function loadStorage(): StoragePayload {
-  const activeId = 'champion_confirmed_retest_harvest30';
-  const customStrategies: StrategyConfig[] = [PREBUILT_TEMPLATES[0]];
+  const defaultActiveId = PREBUILT_TEMPLATES[0].id;
+  let activeId = defaultActiveId;
+  let customStrategies: StrategyConfig[] = [];
 
   try {
-    dbClient.setActiveStrategyId(activeId);
-    dbClient.saveCustomStrategy(PREBUILT_TEMPLATES[0], true);
+    const savedActiveId = dbClient.getActiveStrategyId();
+    if (savedActiveId) {
+      if (savedActiveId === SIMLAB_PREMIUM_CHAMPION_TEMPLATE.id) {
+        activeId = isSimLabConnected() ? SIMLAB_PREMIUM_CHAMPION_TEMPLATE.id : defaultActiveId;
+      } else {
+        activeId = savedActiveId;
+      }
+    }
+    const saved = dbClient.getAllCustomStrategies();
+    if (Array.isArray(saved) && saved.length > 0) {
+      customStrategies = saved;
+    }
   } catch (err: any) {
-    logger.warn(`Failed to seed champion strategy in SQLite: ${err.message}`);
+    logger.debug(`Strategy hydration: ${err.message}`);
   }
 
   return { activeId, customStrategies };
@@ -96,7 +107,7 @@ function saveStorage(payload: StoragePayload): void {
 let storageCache: StoragePayload = loadStorage();
 
 // Top Proven Autonomous Strategies Calibrated by Port 4000 Sim Lab
-export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [PREBUILT_TEMPLATES[0]];
+export const TOP_SIM_LAB_STRATEGIES: StrategyConfig[] = [SIMLAB_PREMIUM_CHAMPION_TEMPLATE];
 
 // In-memory synchronized strategies from Sim Lab (Port 4000) with Win Rate 50%+
 let simStrategiesCache: StrategyConfig[] = [...TOP_SIM_LAB_STRATEGIES];
@@ -152,16 +163,31 @@ export function getAllStrategies(): {
   custom: StrategyConfig[];
   activeId: string;
 } {
+  const isConnected = isSimLabConnected();
+  const simList = isConnected
+    ? (simStrategiesCache.length > 0 ? simStrategiesCache : [SIMLAB_PREMIUM_CHAMPION_TEMPLATE])
+    : [];
+
   return {
     templates: PREBUILT_TEMPLATES,
-    sim: [PREBUILT_TEMPLATES[0]],
-    custom: [PREBUILT_TEMPLATES[0]],
-    activeId: 'champion_confirmed_retest_harvest30',
+    sim: simList,
+    custom: storageCache.customStrategies.filter(s => !s.isSimLab || isConnected),
+    activeId: getActiveStrategy().id,
   };
 }
 
 export function getStrategyById(id?: string): StrategyConfig | undefined {
-  return PREBUILT_TEMPLATES[0];
+  if (!id) return getActiveStrategy();
+  if (isSimLabConnected()) {
+    if (id === SIMLAB_PREMIUM_CHAMPION_TEMPLATE.id) return SIMLAB_PREMIUM_CHAMPION_TEMPLATE;
+    const sim = simStrategiesCache.find(s => s.id === id);
+    if (sim) return sim;
+  }
+  const custom = storageCache.customStrategies.find((s) => s.id === id && (!s.isSimLab || isSimLabConnected()));
+  if (custom) return custom;
+  const prebuilt = PREBUILT_TEMPLATES.find((t) => t.id === id);
+  if (prebuilt) return prebuilt;
+  return undefined;
 }
 
 // ─── Strategy Studio Sim Lab Synchronization Controls ───────────────────────
@@ -412,8 +438,16 @@ export function applySimPairDirectives(directives: Record<string, any>): void {
         ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, config.MAX_LEVERAGE) } : {}),
         ...(typeof dir.slMultiplier === 'number' ? { slMultiplier: Math.max(0.8, Math.min(2.5, dir.slMultiplier)) } : {}),
         ...(typeof dir.minConfidenceGate === 'number' ? { minConfidenceGate: Math.max(50, Math.min(95, dir.minConfidenceGate)) } : {}),
-        ...(dir.assignedStrategyId ? { assignedStrategyId: dir.assignedStrategyId } : {}),
-        ...(dir.assignedStrategyName ? { assignedStrategyName: dir.assignedStrategyName } : {}),
+        ...(dir.assignedStrategyId ? {
+          assignedStrategyId: dir.assignedStrategyId === 'champion_robust_island_sma_v2'
+            ? 'champion_confirmed_retest_harvest30'
+            : dir.assignedStrategyId
+        } : {}),
+        ...(dir.assignedStrategyName ? {
+          assignedStrategyName: (dir.assignedStrategyName.includes('Champion V2') || dir.assignedStrategyId === 'champion_robust_island_sma_v2')
+            ? 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3'
+            : dir.assignedStrategyName
+        } : {}),
         ...(dir.assignedTier ? { assignedTier: dir.assignedTier } : {}),
         ...(typeof dir.tierAllocPct === 'number' ? { tierAllocPct: dir.tierAllocPct } : {}),
         ...(typeof dir.sandboxTradesRemaining === 'number' ? { sandboxTradesRemaining: dir.sandboxTradesRemaining } : {}),
@@ -467,32 +501,49 @@ export function getActiveStrategy(): StrategyConfig {
   const userMinAlloc = config.MIN_ALLOC_PCT || 20;
   const userMaxAlloc = (config as any).MAX_POSITION_ALLOC_PCT || config.MAX_ALLOC_PCT || 40;
 
-  const base = PREBUILT_TEMPLATES[0];
-  return {
-    ...base,
-    id: 'champion_confirmed_retest_harvest30',
-    targetAssets: ['SOL/USD', 'ETH/USD'],
-    layer5: {
-      ...base.layer5,
-      enabled: true,
-      leverage: safeLev,
-      minLeverage: 10,
-      maxLeverage: 15,
-      minAllocPct: userMinAlloc,
-      maxAllocPct: userMaxAlloc,
-      enforcePostOnly: true,
-      makerFillTimeoutMs: 300000,
-      allowTakerFallback: false,
-      fastSmaTrailingStopEnabled: true,
-      fastSmaTrailingBufferPct: 0.15,
-      breakevenFeeBufferPct: 0.30,
-      dynamicTakeProfit1R: 1.25,
-      dynamicTakeProfit2R: 2.50,
-      stagnationProfitHarvestR: 0.50,
-      dynamicGapLambda: 0.30,
-      dynamicGapExitLambda: 0.50,
-    },
-  };
+  // 1. Sim Lab Supercharged Mode: Only active if SIMLAB_KEY is connected & global sync is on
+  if (isSimLabConnected() && activeStrategySyncConfig.syncGlobalStrategy) {
+    if (simStrategiesCache.length > 0) {
+      const activeSim = simStrategiesCache.find(s => s.id === storageCache.activeId) || simStrategiesCache[0];
+      if (activeSim) return activeSim;
+    }
+    // Return Sim Lab Flagship Champion V3
+    return {
+      ...SIMLAB_PREMIUM_CHAMPION_TEMPLATE,
+      targetAssets: ['SOL/USD', 'ETH/USD'],
+      layer5: {
+        ...SIMLAB_PREMIUM_CHAMPION_TEMPLATE.layer5,
+        enabled: true,
+        leverage: safeLev,
+        minLeverage: 10,
+        maxLeverage: 15,
+        minAllocPct: userMinAlloc,
+        maxAllocPct: userMaxAlloc,
+        enforcePostOnly: true,
+        makerFillTimeoutMs: 300000,
+        allowTakerFallback: false,
+        fastSmaTrailingStopEnabled: true,
+        fastSmaTrailingBufferPct: 0.15,
+        breakevenFeeBufferPct: 0.30,
+        dynamicTakeProfit1R: 1.25,
+        dynamicTakeProfit2R: 2.50,
+        stagnationProfitHarvestR: 0.50,
+        dynamicGapLambda: 0.30,
+        dynamicGapExitLambda: 0.50,
+      },
+    };
+  }
+
+  // 2. Standalone Mode: Strictly resolve from standalone templates or user custom
+  const savedId = storageCache.activeId;
+  const custom = storageCache.customStrategies.find((s) => s.id === savedId && !s.isSimLab);
+  if (custom) return custom;
+
+  const prebuilt = PREBUILT_TEMPLATES.find((t) => t.id === savedId);
+  if (prebuilt) return prebuilt;
+
+  // Standalone fallback: Always Template #0 (Chop-Resilient Mean-Reversion Scalper)
+  return PREBUILT_TEMPLATES[0];
 }
 
 export function getActiveStrategyOriginInfo(): StrategyOriginInfo {
@@ -986,11 +1037,17 @@ export function setActiveStrategy(id: string): boolean {
     logger.warn(`Cannot set active strategy — ID ${id} not found`);
     return false;
   }
+
+  if (exists.isSimLab && !isSimLabConnected()) {
+    logger.warn(`🔒 Strategy "${exists.name}" is locked to Sim Lab Supercharge mode. Connect a valid SIMLAB_KEY to unlock.`);
+    return false;
+  }
+
   storageCache.activeId = id;
   saveStorage(storageCache);
 
   // If activating a specific Sim Lab strategy preset, apply it as current sim directives
-  const simStrat = simStrategiesCache.find(s => s.id === id);
+  const simStrat = isSimLabConnected() ? simStrategiesCache.find(s => s.id === id) : null;
   if (simStrat) {
     applySimStrategyDirectives({
       activeStrategyId: simStrat.id,
@@ -1053,7 +1110,7 @@ export function saveCustomStrategy(config: StrategyConfig): StrategyConfig {
 }
 
 export function deleteCustomStrategy(id: string): boolean {
-  if (PREBUILT_TEMPLATES.some((t) => t.id === id)) {
+  if (PREBUILT_TEMPLATES.some((t) => t.id === id) || id === SIMLAB_PREMIUM_CHAMPION_TEMPLATE.id) {
     logger.warn(`🛡️ Cannot delete prebuilt institutional template: ${id}`);
     return false;
   }
@@ -1061,7 +1118,7 @@ export function deleteCustomStrategy(id: string): boolean {
   storageCache.customStrategies = storageCache.customStrategies.filter((s) => s.id !== id);
   if (storageCache.customStrategies.length < initialLen) {
     if (storageCache.activeId === id && !simStrategiesCache.some((s) => s.id === id)) {
-      storageCache.activeId = 'champion_confirmed_retest_harvest30';
+      storageCache.activeId = PREBUILT_TEMPLATES[0].id;
     }
     dbClient.deleteCustomStrategy(id);
     saveStorage(storageCache);

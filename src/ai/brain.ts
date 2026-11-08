@@ -59,7 +59,7 @@ export class LocalAIBrain {
   }
 
   public getProvider(): string {
-    return this.activeProvider;
+    return config.ACTIVE_AI_PROVIDER || this.activeProvider;
   }
 
   /**
@@ -73,6 +73,7 @@ export class LocalAIBrain {
     directives?: StrategyDirectives,
   ): Promise<AIBrainEvaluation> {
     const role = isSimLabConnected ? 'SECOND_OPINION' : 'PRIMARY_VALIDATOR';
+    const effectiveProvider = config.ACTIVE_AI_PROVIDER || this.activeProvider;
 
     if (signal.action === 'HOLD') {
       return {
@@ -81,7 +82,7 @@ export class LocalAIBrain {
         action: 'HOLD',
         sentiment: 'NEUTRAL',
         reasoning: 'No active technical setup to evaluate.',
-        provider: this.activeProvider,
+        provider: effectiveProvider,
         role,
         riskFlags: ['NO_TECHNICAL_SIGNAL'],
       };
@@ -91,7 +92,9 @@ export class LocalAIBrain {
     if (!isSimLabConnected) {
       const { loadAISettings } = require('./settings');
       const aiSettings = loadAISettings();
-      const prov = (aiSettings.enabled && aiSettings.provider) ? aiSettings.provider : this.activeProvider;
+      const prov = (aiSettings.enabled && aiSettings.provider && aiSettings.provider !== 'local_rules')
+        ? aiSettings.provider
+        : effectiveProvider;
       if (prov && prov !== 'local_rules') {
         try {
           return await this.dispatchProviderCall(prov, signal, 'PRIMARY_VALIDATOR', directives);
@@ -360,15 +363,18 @@ export class LocalAIBrain {
     }
 
     // F. Multi-Model AI Reasoning & Tactical Conviction Booster
+    const primaryProv = (config.ACTIVE_AI_PROVIDER && config.ACTIVE_AI_PROVIDER !== 'local_rules')
+      ? config.ACTIVE_AI_PROVIDER
+      : this.activeProvider;
     let baseEval: AIBrainEvaluation;
     try {
-      baseEval = await this.dispatchProviderCall(this.activeProvider, signal, role, directives);
+      baseEval = await this.dispatchProviderCall(primaryProv, signal, role, directives);
     } catch (err: any) {
       const { loadAISettings } = require('./settings');
       const s = loadAISettings();
       if (s.secondaryEnabled && s.secondaryProvider && s.secondaryProvider !== 'local_rules') {
         logger.warn(
-          `⚠️ [AI BRAIN] Primary AI provider (${this.activeProvider.toUpperCase()}) failed: ${err.message}. Triggering Second Tier AI Brand (${s.secondaryProvider.toUpperCase()})...`
+          `⚠️ [AI BRAIN] Primary AI provider (${primaryProv.toUpperCase()}) failed: ${err.message}. Triggering Second Tier AI Brand (${s.secondaryProvider.toUpperCase()})...`
         );
         try {
           baseEval = await this.dispatchProviderCall(
@@ -387,7 +393,7 @@ export class LocalAIBrain {
         }
       } else {
         logger.warn(
-          `⚠️ [AI BRAIN] ${this.activeProvider.toUpperCase()} call failed: ${err.message}. Falling back to Local Math Rules.`,
+          `⚠️ [AI BRAIN] ${primaryProv.toUpperCase()} call failed: ${err.message}. Falling back to Local Math Rules.`,
         );
         baseEval = this.evaluateWithLocalRules(signal, role, directives);
       }

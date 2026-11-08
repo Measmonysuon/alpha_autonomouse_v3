@@ -245,10 +245,13 @@ export async function buildTelemetryPayload(
   });
 
   // 5. Open Positions & Gas / Collateral Status
-  let gasApt = 0;
+  const cachedOnChain = tradeExecutor.getCachedOnChainBalance();
+  let gasApt = cachedOnChain.aptBalance || 0;
   try {
-    const onChain = await timeoutPromise(tradeExecutor.fetchOnChainBalance(), 1500, { balanceUsd: 0, aptBalance: 0 });
-    gasApt = onChain.aptBalance;
+    const onChain = await timeoutPromise(tradeExecutor.fetchOnChainBalance(), 3500, cachedOnChain);
+    if (onChain && typeof onChain.aptBalance === 'number' && onChain.aptBalance > 0) {
+      gasApt = onChain.aptBalance;
+    }
   } catch { }
 
   const openPositions = openTrades.map((t) => ({
@@ -307,7 +310,8 @@ export async function buildTelemetryPayload(
     isConfigured: isClientConfigured(),
     nodeHealth: getNodeHealthState(),
     onChain: {
-      aptBalance: isClientConfigured() ? gasApt : 0,
+      aptBalance: isClientConfigured() ? (gasApt > 0 ? gasApt : (cachedOnChain.aptBalance || 0)) : 0,
+      balanceUsd: isClientConfigured() ? (cachedOnChain.balanceUsd || 0) : 0,
       subaccount: isClientConfigured() ? (config.DECIBEL_SUBACCOUNT_ADDRESS || '') : '',
       signerAddress: isClientConfigured() ? (tradeExecutor.getSignerAddress() || getDerivedSignerAddress() || config.DECIBEL_OWNER_ADDRESS || '') : '',
     },

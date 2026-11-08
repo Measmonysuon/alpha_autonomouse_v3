@@ -278,13 +278,9 @@ export class RiskGuard {
             return this.reject(reason, directives, accountEquity, availableMargin);
           }
 
-          // 4. Adopt Optimal Limit Entry & Dynamic Protection TP/SL
-          if (simDir.dynamicProtection?.recommendedTpPrice && simDir.dynamicProtection.recommendedTpPrice > 0) {
-            signal.takeProfit = simDir.dynamicProtection.recommendedTpPrice;
-            if (simDir.dynamicProtection.recommendedSlPrice && simDir.dynamicProtection.recommendedSlPrice > 0) {
-              signal.stopLoss = simDir.dynamicProtection.recommendedSlPrice;
-            }
-          }
+          // 4. Adopt Optimal Limit Entry from Kronos (Passive Maker Offset Only)
+          // Strict Invariant: Kronos NEVER touches Take-Profit (TP) or Stop-Loss (SL)!
+          // Robust Island Champion V3 architecture (Entry #1 Retest, Fast SMA Trail, and Exit #3 Dynamic Gap Harvest) is 100% sovereign.
           if (simDir.optimalEntry?.limitPrice && simDir.optimalEntry.limitPrice > 0) {
             signal.limitPrice = simDir.optimalEntry.limitPrice;
             signal.entryPrice = simDir.optimalEntry.limitPrice;
@@ -541,6 +537,12 @@ export class RiskGuard {
     }
 
     // ── 4. Budget & Allocation Ceiling ─────────────────────────────────────────
+    if (config.BUDGET_USD <= 0) {
+      const reason = `🛑 Budget Locked: Configured trading budget is $0.00. Set an authorized budget ceiling in Settings before live trading.`;
+      logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
+      return this.reject(reason, directives, accountEquity, availableMargin);
+    }
+
     // Live capital guard: The working budget ceiling can never exceed real on-chain account equity when available.
     const effectiveBudget = (accountEquity > 0)
       ? Math.min(config.BUDGET_USD, accountEquity)
@@ -656,7 +658,11 @@ export class RiskGuard {
 
     const simLabSuggestedLev = pairDir?.confidenceSizing?.recommendedLeverage || pairDir?.maxLeverage || signal.suggestedLeverage || activeDirectives?.strategy?.leverage || clientMinLev;
     const candidateLev = Math.max(clientMinLev, Math.min(simLabSuggestedLev, clientMaxLev));
-    const leverage = Math.min(candidateLev, exchangeMaxLev);
+    let leverage = Math.min(candidateLev, exchangeMaxLev);
+    // Strict safety ceiling: Do NOT allow clientMinLev to elevate past explicit pair max leverage cap
+    if (pairDir?.maxLeverage && pairDir.maxLeverage > 0) {
+      leverage = Math.min(leverage, pairDir.maxLeverage);
+    }
 
     // ── Risk-Parity Hard Cap: Maximum Dollar Loss at Stop Loss (UNCONDITIONAL) ──
     const entryPrice = signal.entryPrice || signal.limitPrice || (signal as any).suggestedEntry || 0;
@@ -672,10 +678,9 @@ export class RiskGuard {
       ? Math.min(Math.max(config.MAX_RISK_PER_TRADE_PCT, 0.5), 5.0)
       : 2.0;
 
-    const effectiveCapitalBase = Math.max(
-      Number(config.BUDGET_USD) || 100.0,
-      accountEquity > 0 ? accountEquity : 100.0
-    );
+    const effectiveCapitalBase = accountEquity > 0
+      ? (config.BUDGET_USD > 0 ? Math.min(config.BUDGET_USD, accountEquity) : accountEquity)
+      : Math.max(0, Number(config.BUDGET_USD) || 0);
 
     let userAuthorizedLossCeiling = Number((effectiveCapitalBase * (userRiskPct / 100)).toFixed(2));
 

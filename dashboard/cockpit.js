@@ -997,7 +997,7 @@
     // 8. Check Max Concurrent Positions / Budget
     const openCount = (activePositions || []).filter(p => p && (!p.status || p.status.toLowerCase() === 'open') && (Number(p.entryPrice) > 0 || Number(p.sizeBase) > 0)).length;
     const maxPositions = Number(state?.maxConcurrentPositions || state?.maxOpenPositions || 1);
-    const budgetVal = Number(state?.budgetUsd || 200);
+    const budgetVal = Number(state?.budgetUsd ?? 0);
     const isConcurrentFull = openCount >= maxPositions;
     const isBudgetLow = budgetVal <= 0;
 
@@ -2080,15 +2080,15 @@
     if (auditModeText) auditModeText.textContent = isSupercharged ? 'SIMLAB_SUPERCHARGED' : 'PURE_STANDALONE';
 
     const maxPositions = Number(state.maxConcurrentPositions || state.maxOpenPositions || state.riskSettings?.maxOpenPositions || 1);
-    const minPosUsd = Number(state.minPositionUsd || state.riskSettings?.minPositionUsd || 100);
-    const maxPosUsd = Number(state.maxPositionUsd || state.riskSettings?.maxPositionUsd || 150);
+    const minPosUsd = Number(state.minPositionUsd ?? state.riskSettings?.minPositionUsd ?? 0);
+    const maxPosUsd = Number(state.maxPositionUsd ?? state.riskSettings?.maxPositionUsd ?? 0);
     const minLev = Number(state.minLeverage || state.riskSettings?.minLeverage || 5);
     const maxLev = Number(state.maxLeverage || state.riskSettings?.maxLeverage || 10);
     const minAlloc = Number(state.minAllocPct || state.riskSettings?.minAllocPct || 50);
     const maxAlloc = Number(state.maxAllocPct || state.riskSettings?.maxAllocPct || 70);
     const stopLossPct = Number(state.defaultStopLossPct || state.riskSettings?.defaultStopLossPct || 1.5);
     const takeProfitPct = Number(state.defaultTakeProfitPct || state.riskSettings?.defaultTakeProfitPct || 3.0);
-    const budgetVal = Number(state.budgetUsd || 200);
+    const budgetVal = Number(state.budgetUsd ?? 0);
 
     function makeChecklistRow(icon, iconCol, phaseLbl, badgeTxt, badgeCol, desc) {
       const plainLen = String(desc || '').replace(/<[^>]*>/g, '').length;
@@ -2180,8 +2180,8 @@
     const riskLossCeiling = getEl('cockpit-risk-loss-ceiling');
     if (riskLossCeiling) {
       const riskPct = state.maxRiskPct || 2.0;
-      const dollarRisk = Math.max(2.50, budgetVal * (riskPct / 100));
-      riskLossCeiling.textContent = `${riskPct.toFixed(1)}% Max Risk ($${dollarRisk.toFixed(2)})`;
+      const dollarRisk = budgetVal > 0 ? Math.max(2.50, budgetVal * (riskPct / 100)) : 0;
+      riskLossCeiling.textContent = budgetVal > 0 ? `${riskPct.toFixed(1)}% Max Risk ($${dollarRisk.toFixed(2)})` : 'Locked (Budget $0.00)';
     }
 
     const riskLeverage = getEl('cockpit-risk-leverage');
@@ -2211,7 +2211,7 @@
           { ts: now - 14000, level: 'info', msg: `[DECIBEL DEX] Connected to CLOB orderbook (${activeMkt.symbol} mark $${formatPrice(activeMkt.price)})` },
           { ts: now - 10000, level: 'info', msg: `[CONFLUENCE] Evaluating 6-layer strategy for ${activeMkt.symbol} (Score: ${activeMkt.confidence}%)` },
           { ts: now - 6000, level: 'info', msg: `[HARVEST MASTER] Autonomous ratchet armed at +1.4R (${activePos ? 'RUNNER_LOCKED' : 'MONITORING'})` },
-          { ts: now - 3000, level: 'info', msg: `[RISK GUARD] Position limit 0/${maxPositions} active. Loss ceiling $${Math.max(2.5, (state.budgetUsd || 200) * 0.02).toFixed(2)}` },
+          { ts: now - 3000, level: 'info', msg: `[RISK GUARD] Position limit 0/${maxPositions} active. Loss ceiling $${budgetVal > 0 ? Math.max(2.5, budgetVal * 0.02).toFixed(2) : '0.00'}` },
           { ts: now, level: 'info', msg: `[COCKPIT] Real-time multi-book SSE stream active (${(state.operatingMode || 'STANDALONE')})` },
         ];
       }

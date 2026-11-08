@@ -1196,6 +1196,7 @@ export class TradeExecutor {
         return { success: false, error: risk.reason };
       }
 
+      const directivesAny = risk.directivesUsed as any;
       const side = signal.action === 'LONG' ? 'buy' : 'sell';
       const isPaper = config.PAPER_TRADING || !this.aptosAccount;
       const tradeId = `decibel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1237,7 +1238,6 @@ export class TradeExecutor {
             }
           }
 
-          const directivesAny = risk.directivesUsed as any;
           const regime = directivesAny?.regime || 'IDIOSYNCRATIC_CRYPTO';
           const scoreFloor = directivesAny?.scoreFloor || 70;
 
@@ -1300,7 +1300,7 @@ export class TradeExecutor {
 
           // Strict Take-Profit Directional Invariant: Ensure TP is mathematically sound before on-chain DEX arming
           const isLongEntry = signal.action === 'LONG';
-          const isNoFixedTpSignal = Boolean((signal as any).noFixedTp);
+          const isNoFixedTpSignal = Boolean((signal as any).noFixedTp || directivesAny?.strategy?.layer5?.noFixedTp || directivesAny?.layer5?.noFixedTp || directivesAny?.noFixedTp);
           if (!isNoFixedTpSignal) {
             if (isLongEntry) {
               if (!signal.takeProfit || signal.takeProfit <= signal.entryPrice) {
@@ -1473,7 +1473,7 @@ export class TradeExecutor {
         routing: liveResult?.isMaker ? 'MAKER_POST_ONLY' : (isPaper ? 'PAPER' : 'TAKER_IOC'),
         onChainTpSlSecured: isPaper ? true : tpSlSecured,
         harvest30Done: false,
-        noFixedTp: Boolean((signal as any).noFixedTp),
+        noFixedTp: Boolean((signal as any).noFixedTp || directivesAny?.strategy?.layer5?.noFixedTp || directivesAny?.layer5?.noFixedTp || directivesAny?.noFixedTp),
         gap30Price: (signal as any).gap30Price,
         gap50Price: (signal as any).gap50Price,
         peakPrice: signal.entryPrice,

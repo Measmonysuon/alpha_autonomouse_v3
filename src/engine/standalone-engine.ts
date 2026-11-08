@@ -734,66 +734,69 @@ function generateFallbackKlines(symbol: string, interval = '15m', limit = 60): K
   return bars;
 }
 
+function reconcileWithDecibel(bars: KlineBar[], symbol: string): KlineBar[] {
+  if (!bars || bars.length === 0) return bars;
+  const decibelPx = decibelPriceFeed.getPrice(symbol);
+  const livePx = decibelPx?.markPrice || 0;
+  if (livePx > 0) {
+    const lastBar = bars[bars.length - 1];
+    lastBar.close = livePx;
+    lastBar.high = Math.max(lastBar.high, livePx);
+    lastBar.low = Math.min(lastBar.low, livePx);
+  }
+  return bars;
+}
+
 export async function fetchPublicKlines(symbol: string, interval = '15m', limit = 60): Promise<KlineBar[]> {
   const norm = symbol.toUpperCase().replace(/[-_/]/g, '');
   const cleanBase = norm.replace(/USD[T]?$/, '');
-  const binanceSym = `${cleanBase}USDT`;
-  const bybitSym = `${cleanBase}USDT`;
+  const binanceSym = (cleanBase === 'KPEPE' || cleanBase === 'PEPE') ? '1000PEPEUSDT' : `${cleanBase}USDT`;
+  const bybitSym = (cleanBase === 'KPEPE' || cleanBase === 'PEPE') ? '1000PEPEUSDT' : `${cleanBase}USDT`;
   const okxSym = `${cleanBase}-USDT`;
   const bybitInterval = interval === '1h' ? '60' : interval === '5m' ? '5' : interval === '15m' ? '15' : '15';
   const okxInterval = interval === '1h' ? '1H' : interval === '5m' ? '5m' : interval === '15m' ? '15m' : '15m';
   const intervalMs = interval === '1h' ? 60 * 60 * 1000 : interval === '5m' ? 5 * 60 * 1000 : 15 * 60 * 1000;
   const cacheKey = `${cleanBase}_${interval}`;
+  const minRequiredBars = Math.min(limit, 5);
 
-  // 1. In-memory cache first if fresh (< 2 mins)
+  // 1. In-memory cache first if fresh (< 30s for live responsive candlestick streaming)
   const existing = realKlinesCache.get(cacheKey);
-  if (existing && existing.bars.length >= 10 && (Date.now() - existing.fetchedAt < 120000)) {
-    return existing.bars;
+  if (existing && existing.bars.length >= minRequiredBars && (Date.now() - existing.fetchedAt < 30000)) {
+    return reconcileWithDecibel(existing.bars, symbol);
   }
 
-  // 2. Preloaded authentic real_klines.json cache (0ms instant access, 34 genuine asset pairs)
-  const pairBars = preloadedAuthenticKlines[symbol] || 
-                   preloadedAuthenticKlines[norm] || 
-                   preloadedAuthenticKlines[`${cleanBase}/USD`] ||
-                   preloadedAuthenticKlines[`${symbol.replace(/USD[T]?$/, '')}/USD`];
-  if (Array.isArray(pairBars) && pairBars.length >= 10) {
-    const bars: KlineBar[] = pairBars.map((k: any) => ({
-      openTime: Number(k.t || k.openTime),
-      open: Number(k.o || k.open),
-      high: Number(k.h || k.high),
-      low: Number(k.l || k.low),
-      close: Number(k.c || k.close),
-      volume: Number(k.v || k.volume || 1000),
-      closeTime: Number((k.t || k.openTime) + intervalMs),
-    }));
-    // Reconcile with live Decibel price
-    const decibelPx = decibelPriceFeed.getPrice(symbol);
-    const livePx = decibelPx?.markPrice || BASELINE_PRICES[norm] || BASELINE_PRICES[cleanBase] || 0;
-    if (livePx > 0 && bars.length > 0) {
-      const lastBar = bars[bars.length - 1];
-      const lastClose = lastBar.close;
-      if (lastClose > 0 && Math.abs(livePx - lastClose) / lastClose < 0.65) {
-        const ratio = livePx / lastClose;
-        for (let i = 0; i < bars.length; i++) {
-          bars[i].open *= ratio;
-          bars[i].high *= ratio;
-          bars[i].low *= ratio;
-          bars[i].close *= ratio;
-        }
+  // 2. Primary Live Network: Binance Public API (exact same authoritative live source as Client V1 & Sim Lab)
+  try {
+    const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${interval}&limit=${limit}`;
+    const res = await axios.get(url, {
+      timeout: 4000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
+    });
+    if (Array.isArray(res.data) && res.data.length > 0) {
+      const bars: KlineBar[] = res.data.map((k: any) => ({
+        openTime: Number(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5]),
+        closeTime: Number(k[6]),
+      }));
+      if (bars.length >= minRequiredBars) {
+        reconcileWithDecibel(bars, symbol);
+        realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
+        return bars;
       }
-      bars[bars.length - 1].close = livePx;
-      bars[bars.length - 1].high = Math.max(bars[bars.length - 1].high, livePx);
-      bars[bars.length - 1].low = Math.min(bars[bars.length - 1].low, livePx);
     }
-    realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
-    return bars;
+  } catch (err: any) {
+    logger.debug(`[${symbol}] Binance ${interval} klines: ${err.message}. Trying Bybit...`);
   }
 
-  // 3. Primary Network: Bybit Linear Public API (fastest, supports most crypto perps)
+  // 3. Secondary Network: Bybit Linear Public API (fastest, supports most crypto perps)
   try {
     const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${bybitSym}&interval=${bybitInterval}&limit=${limit}`;
     const res = await axios.get(url, {
-      timeout: 5000,
+      timeout: 4000,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
     });
     const list = res.data?.result?.list;
@@ -808,46 +811,21 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
         volume: parseFloat(k[5]),
         closeTime: Number(k[0]) + intervalMs,
       }));
-      if (bars.length >= 10) {
+      if (bars.length >= minRequiredBars) {
+        reconcileWithDecibel(bars, symbol);
         realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
         return bars;
       }
     }
   } catch (err: any) {
-    logger.debug(`[${symbol}] Bybit ${interval} klines: ${err.message}. Trying Binance...`);
+    logger.debug(`[${symbol}] Bybit ${interval} klines: ${err.message}. Trying OKX...`);
   }
 
-  // 4. Secondary Network: Binance Public API
-  try {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${interval}&limit=${limit}`;
-    const res = await axios.get(url, {
-      timeout: 5000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
-    });
-    if (Array.isArray(res.data) && res.data.length > 0) {
-      const bars: KlineBar[] = res.data.map((k: any) => ({
-        openTime: Number(k[0]),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        closeTime: Number(k[6]),
-      }));
-      if (bars.length >= 10) {
-        realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
-        return bars;
-      }
-    }
-  } catch (err: any) {
-    logger.debug(`[${symbol}] Binance ${interval} klines: ${err.message}. Trying OKX...`);
-  }
-
-  // 5. Tertiary: OKX Public API
+  // 4. Tertiary Network: OKX Public API
   try {
     const url = `https://www.okx.com/api/v5/market/candles?instId=${okxSym}&bar=${okxInterval}&limit=${limit}`;
     const res = await axios.get(url, {
-      timeout: 5000,
+      timeout: 4000,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AlphaBot/3.0)' },
     });
     const list = res.data?.data;
@@ -862,16 +840,17 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
         volume: parseFloat(k[5]),
         closeTime: Number(k[0]) + intervalMs,
       }));
-      if (bars.length >= 10) {
+      if (bars.length >= minRequiredBars) {
+        reconcileWithDecibel(bars, symbol);
         realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
         return bars;
       }
     }
   } catch (err: any) {
-    logger.debug(`[${symbol}] OKX ${interval} klines: ${err.message}.`);
+    logger.debug(`[${symbol}] OKX ${interval} klines: ${err.message}. Trying Sim Lab...`);
   }
 
-  // 6. Quaternary: Query Sim Lab Central Brain (Port 4000) or host gateway
+  // 5. Quaternary: Query Sim Lab Central Brain (Port 4000) or host gateway
   try {
     const simBases = [
       process.env.SIMLAB_SERVER_URL,
@@ -904,7 +883,8 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
             volume: Number(k.volume || k.v || 100),
             closeTime: Number(k.closeTime || ((k.openTime || k.t) + intervalMs)),
           }));
-          if (bars.length >= 10) {
+          if (bars.length >= minRequiredBars) {
+            reconcileWithDecibel(bars, symbol);
             realKlinesCache.set(cacheKey, { bars, fetchedAt: Date.now() });
             return bars;
           }
@@ -913,20 +893,55 @@ export async function fetchPublicKlines(symbol: string, interval = '15m', limit 
     }
   } catch {}
 
-  // 7. Return cached real klines if available
-  const cachedExisting = realKlinesCache.get(cacheKey);
-  if (cachedExisting && cachedExisting.bars.length >= 10) {
-    return cachedExisting.bars;
+  // 6. Air-Gap Offline Fallback (preloadedAuthenticKlines from real_klines.json)
+  try {
+    const rawPreloaded = preloadedAuthenticKlines[cleanBase] || preloadedAuthenticKlines[norm] || preloadedAuthenticKlines[symbol];
+    if (Array.isArray(rawPreloaded) && rawPreloaded.length >= minRequiredBars) {
+      const decibelPx = decibelPriceFeed.getPrice(symbol);
+      const livePx = decibelPx?.markPrice || 0;
+      const lastRawClose = Number(rawPreloaded[rawPreloaded.length - 1].c || rawPreloaded[rawPreloaded.length - 1].close || 1);
+      const ratio = (livePx > 0 && lastRawClose > 0) ? livePx / lastRawClose : 1.0;
+
+      let base15mBars: KlineBar[] = rawPreloaded.map((k: any) => ({
+        openTime: Number(k.t || k.openTime),
+        open: Number(k.o || k.open) * ratio,
+        high: Number(k.h || k.high) * ratio,
+        low: Number(k.l || k.low) * ratio,
+        close: Number(k.c || k.close) * ratio,
+        volume: Number(k.v || k.volume || 100),
+        closeTime: Number(k.closeTime || (Number(k.t || k.openTime) + 15 * 60 * 1000)),
+      }));
+
+      if (interval === '1h') {
+        const hourlyBars: KlineBar[] = [];
+        for (let i = 0; i < base15mBars.length; i += 4) {
+          const chunk = base15mBars.slice(i, i + 4);
+          if (chunk.length === 0) continue;
+          hourlyBars.push({
+            openTime: chunk[0].openTime,
+            open: chunk[0].open,
+            high: Math.max(...chunk.map(c => c.high)),
+            low: Math.min(...chunk.map(c => c.low)),
+            close: chunk[chunk.length - 1].close,
+            volume: chunk.reduce((acc, c) => acc + c.volume, 0),
+            closeTime: chunk[chunk.length - 1].closeTime,
+          });
+        }
+        if (hourlyBars.length >= 5) {
+          base15mBars = hourlyBars;
+        }
+      }
+
+      reconcileWithDecibel(base15mBars, symbol);
+      return base15mBars.slice(-limit);
+    }
+  } catch (err: any) {
+    logger.debug(`[${symbol}] Air-gap fallback klines error: ${err.message}`);
   }
 
+  // 7. Last Resort: Synthetic algorithmic waveform fallback
   const finalBars = generateFallbackKlines(symbol, interval, limit);
-  const decibelPx = decibelPriceFeed.getPrice(symbol);
-  if (decibelPx && decibelPx.markPrice > 0 && finalBars.length > 0) {
-    const lastBar = finalBars[finalBars.length - 1];
-    lastBar.close = decibelPx.markPrice;
-    if (decibelPx.markPrice > lastBar.high) lastBar.high = decibelPx.markPrice;
-    if (decibelPx.markPrice < lastBar.low) lastBar.low = decibelPx.markPrice;
-  }
+  reconcileWithDecibel(finalBars, symbol);
   return finalBars;
 }
 

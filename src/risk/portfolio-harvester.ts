@@ -367,9 +367,10 @@ export class PortfolioHarvester {
         }
 
         // Must achieve at least +0.20% peak gain before any reversal harvest can fire
-        const hadProfit = isLong
-          ? (trade.peakPrice >= trade.entryPrice * 1.002)
-          : (trade.peakPrice <= trade.entryPrice * 0.998);
+        const minExpansionPct = 0.0050; // Meaningful post-breakaway expansion required (>= +0.50%)
+        const hadSubstantialProfit = isLong
+          ? (trade.peakPrice >= trade.entryPrice * (1 + minExpansionPct))
+          : (trade.peakPrice <= trade.entryPrice * (1 - minExpansionPct));
 
         let gap30 = trade.gap30Price;
         let gap50 = trade.gap50Price;
@@ -389,9 +390,9 @@ export class PortfolioHarvester {
         } catch {}
 
         if (gap30 && gap50) {
-          // Tier 1: Price reverses/retraces back down (LONG) or up (SHORT) into Amber Band (30% Gap Level) after profit expansion
+          // Tier 1: Price reverses/retraces back down (LONG) or up (SHORT) into Amber Band (30% Gap Level) after substantial profit expansion
           const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
-          if (isTier1Reached && hadProfit && !trade.harvest30Done) {
+          if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
             logger.info(
               `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to 30% Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing 30% partial close & locking BE+0.30%!`,
             );
@@ -401,10 +402,11 @@ export class PortfolioHarvester {
           }
 
           // Tier 2: Price reverses further to 50% Gap Midpoint Touch -> 100% Terminal Take Profit All!
+          // Invariant: Must have already banked Tier 1 (30% cash) to qualify as a valid midpoint harvest runner close
           const isTier2Reached = isLong ? (currentPrice <= gap50) : (currentPrice >= gap50);
-          if (isTier2Reached && (trade.harvest30Done || hadProfit)) {
+          if (isTier2Reached && trade.harvest30Done) {
             logger.info(
-              `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached 50% Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing 100% Full Take Profit Close!`,
+              `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached 50% Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)} and 30% bank. Executing 100% Full Take Profit Close!`,
             );
             tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
               logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
