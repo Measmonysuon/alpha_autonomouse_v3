@@ -835,7 +835,7 @@
 
     const sym = mkt.symbol || '';
     const symNorm = sym.toUpperCase().replace(/[-_/]/g, '');
-    const conf = Number(mkt.confidence || 50);
+    const conf = Number((mkt.confidence !== undefined && mkt.confidence !== null) ? mkt.confidence : 0);
 
     // 1. Check genuine on-chain open position (immune to recently closed ghost trades)
     const pos = (window._cockpitRecentlyClosed?.has(sym.replace('-', '/').toUpperCase()))
@@ -1037,10 +1037,31 @@
       };
     }
 
-    // 9. Check Confluence Score vs. Required Execution Gate
+    // 9. Check Initial Scanning State vs. Confluence Score
+    if (mkt.trend === 'SCANNING' || mkt.action === 'SCANNING' || conf === 0) {
+      return {
+        status: 'STANDBY',
+        badgeText: 'SCANNING',
+        badgeClass: 'cockpit-tag-gray',
+        shortReason: 'Analyzing Market Data',
+        reason: 'Fetching 15m/1h klines and calculating multi-factor confluence',
+        minGate,
+        phases: {
+          phase1: { icon: '⏳', iconCol: '#38bdf8', badge: 'SCANNING', badgeCol: '#38bdf8', desc: 'Fetching authentic klines.' },
+          phase2: { icon: '⏳', iconCol: '#8492a6', badge: 'COMPUTING', badgeCol: '#8492a6', desc: 'Calculating EMA/RSI/SMC confluence.' },
+          phase3: { icon: '✓', iconCol: '#10b981', badge: 'STANDBY', badgeCol: '#10b981', desc: 'Net EV ≥ 1.40x gate armed.' },
+          phase4: { icon: '✓', iconCol: '#10b981', badge: 'PASSED', badgeCol: '#10b981', desc: 'Risk controls ready.' },
+          phase5: { icon: '⏳', iconCol: '#8492a6', badge: 'STANDBY', badgeCol: '#8492a6', desc: 'Order engine standing by.' },
+        }
+      };
+    }
+
+    // 10. Check Confluence Score vs. Required Execution Gate
     if (conf < minGate) {
       const gateDiff = minGate - conf;
-      const act = conf >= 60 ? 'LONG BIAS' : (conf >= 45 ? 'WATCH' : 'STANDBY');
+      const isBear = mkt.trend === 'BEARISH' || mkt.action === 'SHORT' || mkt.candidateAction === 'SHORT';
+      const biasWord = isBear ? 'SHORT BIAS' : 'LONG BIAS';
+      const act = conf >= 60 ? biasWord : (conf >= 45 ? 'WATCH' : 'STANDBY');
       return {
         status: 'AWAITING_GATE',
         badgeText: conf >= 70 ? `ARMED ${conf}%` : act,
@@ -1134,7 +1155,7 @@
       const imb = Number((m.imbalance !== undefined && !isNaN(Number(m.imbalance))) ? m.imbalance : 0.0);
       const imbSign = imb >= 0 ? '+' : '';
 
-      const conf = Number(m.confidence || 50);
+      const conf = Number((m.confidence !== undefined && m.confidence !== null) ? m.confidence : 0);
 
       // Dedicated trigger evaluation per pair with transparent reason why it did or did not trigger
       const triggerEval = m.triggerEval || evaluatePairTrigger(m, window.lastState, activePositions, activeOrders, m.pairRolling);
@@ -1194,7 +1215,7 @@
             <span style="color:var(--cp-muted, #8492a6); font-size:9px; margin-left:2px;">${imb >= 0 ? 'BID' : 'ASK'}</span>
           </td>
           <td class="${confFlashClass}" style="padding:5px 10px;">
-            <span style="font-weight:900; color:${confBadgeColor};">${conf}%</span>
+            <span style="font-weight:900; color:${confBadgeColor};">${conf > 0 ? `${conf}%` : '--'}</span>
           </td>
           <td style="text-align:right; padding:4px 10px;" class="${actFlashClass}">
             <span class="cockpit-tag tag ${actionTagClass} ${actionTagClass.replace('cockpit-', '')}" style="font-size:9px; padding:2px 7px; font-weight:800; border-radius:4px; display:inline-block;">${actionText}</span>
@@ -1652,13 +1673,14 @@
     const elCap = getEl('cockpit-top-capital');
     if (elCap) {
       const equity = Number(state.accountEquityUsd || 0);
-      elCap.textContent = equity > 0 ? `$${equity.toFixed(2)}` : (state.budgetUsd ? `$${Number(state.budgetUsd).toFixed(2)} (BUDGET)` : '--');
+      const bVal = Number(state.budgetUsd ?? 0);
+      elCap.textContent = equity > 0 ? `$${equity.toFixed(2)}` : (bVal > 0 ? `$${bVal.toFixed(2)} (BUDGET)` : '$0.00 (BUDGET)');
     }
 
     // Authoritative PnL & Win Rate pulling from DB trade history
     const st = state.stats || window.lastStats || {};
     const pnl = Number(st.netPnlUsd ?? st.totalPnlUsd ?? st.realizedPnlUsd ?? 0);
-    const budget = Number(state.budgetUsd || state.accountEquityUsd || 30);
+    const budget = Number(state.budgetUsd ?? state.accountEquityUsd ?? 0);
     const pnlPct = budget > 0 ? (pnl / budget) * 100 : Number(st.returnPct ?? 0);
 
     const elPnl = getEl('cockpit-top-pnl');
@@ -1901,7 +1923,7 @@
       if (elEntrySub) elEntrySub.textContent = `Size: ${activePos.sizeBase ? activePos.sizeBase.toFixed(3) : (activePos.size || '--')} · Notional: $${activePos.allocatedUsd ? (activePos.allocatedUsd * (activePos.leverage || 5)).toFixed(1) : '--'}`;
 
       if (activePos.noFixedTp || (activePos.gap50Price && activePos.gap50Price > 0)) {
-        if (elTpLabel) elTpLabel.textContent = 'Robust Island Dynamic Exit';
+        if (elTpLabel) elTpLabel.textContent = isSupercharged ? 'Sim Lab Dynamic Exit' : 'Dynamic Gap Exit';
         if (elTp) elTp.textContent = activePos.gap50Price > 0 ? `$${formatPrice(activePos.gap50Price)} (50% Midpoint)` : 'Dynamic Gap Runner';
         if (elTpSub) elTpSub.textContent = activePos.harvest30Done
           ? '✓ 30% Cash Banked · Holding 70% to 50% Touch'
@@ -1918,7 +1940,7 @@
       if (elSoftSub) elSoftSub.textContent = (activePos.isBreakeven || activePos.breakevenMoved) ? `✓ BE +${beBufferPct.toFixed(2)}% LOCKED` : `Armed at +${accelR.toFixed(2)}R Advance`;
 
       const hardCeilingPct = Number(state.riskCeilingPct || state.maxRiskPct || state.riskSettings?.maxRiskPct || 30.0);
-      const budgetVal = Number(state.budgetUsd || 100);
+      const budgetVal = Number(state.budgetUsd ?? 0);
       const allocPctVal = Number(state.maxAllocPct || 35);
       const defaultOpenMargin = budgetVal * (allocPctVal / 100);
       const posMargin = Number(
@@ -1927,7 +1949,7 @@
         activePos.initialMargin ||
         (activePos.sizeBase && activePos.entryPrice ? (activePos.sizeBase * activePos.entryPrice) / (activePos.leverage || 5) : 0)
       ) || defaultOpenMargin;
-      const hardCeilingUsd = Math.max(1.00, posMargin * (hardCeilingPct / 100));
+      const hardCeilingUsd = budgetVal > 0 ? Math.max(1.00, posMargin * (hardCeilingPct / 100)) : 0;
       const posSl = Number(activePos.stopLoss || 0);
       const slDistPct = (activePos.entryPrice > 0 && posSl > 0)
         ? Math.abs(((activePos.entryPrice - posSl) / activePos.entryPrice) * 100)
@@ -1957,7 +1979,7 @@
       if (elSoftSub) elSoftSub.textContent = `Armed at +${accelR.toFixed(2)}R Advance`;
 
       const hardCeilingPct = Number(state.riskCeilingPct || state.maxRiskPct || state.riskSettings?.maxRiskPct || 30.0);
-      const budgetVal = Number(state.budgetUsd || 100);
+      const budgetVal = Number(state.budgetUsd ?? 0);
       const allocPctVal = Number(state.maxAllocPct || 35);
       const defaultOpenMargin = budgetVal * (allocPctVal / 100);
       const ordMargin = Number(
@@ -1965,7 +1987,7 @@
         activeLimitOrder.margin ||
         (activeLimitOrder.size && activeLimitOrder.price ? (activeLimitOrder.size * activeLimitOrder.price) / 5 : 0)
       ) || defaultOpenMargin;
-      const hardCeilingUsd = Math.max(1.00, ordMargin * (hardCeilingPct / 100));
+      const hardCeilingUsd = budgetVal > 0 ? Math.max(1.00, ordMargin * (hardCeilingPct / 100)) : 0;
 
       if (elHardLabel) elHardLabel.textContent = 'Soft SL Ratchet';
       if (elHard) elHard.textContent = `$${formatPrice(ordEstSl)}`;
@@ -1985,10 +2007,10 @@
       if (elSoftSub) elSoftSub.textContent = `Triggers after +${accelR.toFixed(2)}R Advance`;
 
       const hardCeilingPct = Number(state.riskCeilingPct || state.maxRiskPct || state.riskSettings?.maxRiskPct || 30.0);
-      const budgetVal = Number(state.budgetUsd || 100);
+      const budgetVal = Number(state.budgetUsd ?? 0);
       const allocPctVal = Number(state.maxAllocPct || 35);
       const openMarginUsd = budgetVal * (allocPctVal / 100);
-      const hardCeilingUsd = Math.max(1.00, openMarginUsd * (hardCeilingPct / 100));
+      const hardCeilingUsd = budgetVal > 0 ? Math.max(1.00, openMarginUsd * (hardCeilingPct / 100)) : 0;
       const estSlPrice = isMktLong ? activeMkt.price * (1 - slPct / 100) : activeMkt.price * (1 + slPct / 100);
 
       if (elHardLabel) elHardLabel.textContent = 'Soft SL Ratchet';
@@ -2198,10 +2220,18 @@
     const streamBox = getEl('cockpit-event-stream-box');
     if (streamBox) {
       let logs = [];
-      if (Array.isArray(state?.recentLogs) && state.recentLogs.length > 0) {
-        logs = state.recentLogs;
-      } else if (Array.isArray(window.recentLogs) && window.recentLogs.length > 0) {
-        logs = window.recentLogs;
+      const rawLogs = (Array.isArray(state?.recentLogs) && state.recentLogs.length > 0)
+        ? state.recentLogs
+        : (Array.isArray(window.recentLogs) ? window.recentLogs : []);
+
+      // In standalone mode, filter out any proprietary Sim Lab model logs
+      if (!isSupercharged) {
+        logs = rawLogs.filter(l => {
+          const msg = String(l?.msg || l?.message || '');
+          return !msg.includes('Robust Island') && !msg.includes('SMA Reversal Engine');
+        });
+      } else {
+        logs = rawLogs;
       }
 
       // If empty on boot, provide active telemetry stream so it's NEVER blank!

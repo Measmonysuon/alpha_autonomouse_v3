@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { config } from '../config';
+import { isSimLabConnected } from '../strategy/manager';
 
 export interface SmaPairConfig {
   fastPeriod: number;
@@ -58,8 +59,11 @@ export class SmaReversalEngine {
 
   public start(): void {
     if (this.isRunning) return;
+    if (!isSimLabConnected()) {
+      return; // Strictly disabled in standalone mode. Unlocks only when Sim Lab Supercharge is active.
+    }
     this.isRunning = true;
-    logger.info(`🌊 Robust Island Fast SMA Reversal Engine started (10s cadence, $30 Margin @ 10x Lev)`);
+    logger.info(`⚡ Fast SMA Reversal Engine started (10s cadence, $30 Margin @ 10x Lev)`);
 
     this.pollTimer = setInterval(() => {
       this.pollTick().catch(err => {
@@ -78,10 +82,13 @@ export class SmaReversalEngine {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    logger.info(`🛑 Robust Island Fast SMA Reversal Engine stopped.`);
+    logger.info(`🛑 Fast SMA Reversal Engine stopped.`);
   }
 
   public getTelemetry(): any {
+    if (!this.isRunning || !isSimLabConnected()) {
+      return null;
+    }
     const pairsSummary: Record<string, any> = {};
     for (const [sym, state] of this.pairStates.entries()) {
       pairsSummary[sym] = {

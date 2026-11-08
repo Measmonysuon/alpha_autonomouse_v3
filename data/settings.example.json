@@ -16,9 +16,10 @@
     "apiKey": ""
   },
   "trading": {
-    "budgetUsd": 30,
-    "maxPositionUsd": 10,
-    "maxLeverage": 5,
+    "budgetUsd": 0,
+    "minPositionUsd": 0,
+    "maxPositionUsd": 0,
+    "maxLeverage": 10,
     "paperTrading": true
   },
   "telegram": {

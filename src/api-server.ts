@@ -287,7 +287,7 @@ export function seedMarketsForPairs(): void {
     const slowP = simDir?.slowPeriod || smaProf.slow;
     const initImb = simDir?.orderflow?.orderflowImbalancePct !== undefined
       ? Number(simDir.orderflow.orderflowImbalancePct)
-      : Number((0.85 * 1.8 + Math.sin(sym.charCodeAt(0)) * 3.2).toFixed(1));
+      : 0.0;
 
     if (!agentState.markets[sym] || agentState.markets[sym].markPrice === 0) {
       agentState.markets[sym] = {
@@ -295,30 +295,30 @@ export function seedMarketsForPairs(): void {
         markPrice: basePrice,
         price: basePrice,
         oraclePrice: (decibelPx && decibelPx.oraclePrice > 0) ? decibelPx.oraclePrice : basePrice,
-        change24h: 0.85,
+        change24h: 0.0,
         volume24hUsd: basePrice * 45000,
-        high24h: basePrice * 1.025,
-        low24h: basePrice * 0.985,
+        high24h: basePrice * 1.005,
+        low24h: basePrice * 0.995,
         trend: 'SCANNING',
-        action: 'WAIT',
-        confidence: 65,
+        action: 'SCANNING',
+        confidence: 0,
         riskLevel: 'LOW',
-        fundingRate: 0.01,
+        fundingRate: 0.0,
         fastPeriod: fastP,
         slowPeriod: slowP,
         robustIsland: {
           fastPeriod: fastP,
           slowPeriod: slowP,
-          currentFastSma: simDir?.currentFastSma || basePrice * 1.002,
-          currentSlowSma: simDir?.currentSlowSma || basePrice * 0.998,
-          smaSpreadPct: simDir?.smaSpreadPct !== undefined ? Number(simDir.smaSpreadPct) : 0.40,
-          smaAlignment: simDir?.smaAlignment || 'BULLISH_STACK',
+          currentFastSma: simDir?.currentFastSma || basePrice,
+          currentSlowSma: simDir?.currentSlowSma || basePrice,
+          smaSpreadPct: simDir?.smaSpreadPct !== undefined ? Number(simDir.smaSpreadPct) : 0.0,
+          smaAlignment: simDir?.smaAlignment || 'NEUTRAL',
           wfe: simDir?.wfe !== undefined ? Number(simDir.wfe) : 0.88,
           robustScore: simDir?.robustScore !== undefined ? Number(simDir.robustScore) : 85,
           source: simDir?.fastPeriod ? 'SIM_LAB' : 'DEFAULT_PRESET',
         },
         imbalance: initImb,
-        candlestick: { rsi14: 52, ema9: basePrice * 1.002, ema21: basePrice * 0.998, rvol: 1.1, adx14: 22 },
+        candlestick: { rsi14: 50, ema9: basePrice, ema21: basePrice, rvol: 1.0, adx14: 20 },
         updatedAt: Date.now(),
       };
     }
@@ -1381,11 +1381,12 @@ export function startApiServer(): http.Server {
           apiKey: '',
         },
         aiApiKey: '',
-        budgetUsd: 30,
+        budgetUsd: 0,
         trading: {
-          budgetUsd: 30,
+          budgetUsd: 0,
           paperTrading: false,
-          maxPositionUsd: 9,
+          minPositionUsd: 0,
+          maxPositionUsd: 0,
           maxLeverage: 5,
         },
         telegram: {

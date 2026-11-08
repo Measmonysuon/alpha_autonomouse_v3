@@ -9413,7 +9413,7 @@
             </div>
             <div class="stat-pod-mini-item">
               <div class="stat-pod-mini-label">30D Volume</div>
-              <div class="stat-pod-mini-val" id="stat-volume" style="color:#a78bfa">—</div>
+              <div class="stat-pod-mini-val" id="stat-volume" style="color:#a78bfa">$0.00</div>
               <div class="stat-pod-mini-sub">Decibel DEX</div>
             </div>
           </div>
@@ -12292,7 +12292,7 @@
       const isConfigured = isAppConfigured;
 
       const budget = isConfigured
-        ? Number(state?.budgetUsd ?? lastState?.budgetUsd ?? 30)
+        ? Number(state?.budgetUsd ?? lastState?.budgetUsd ?? 0)
         : 0;
       const budgetUsed = isConfigured ? Number(stats?.budgetUsedUsd ?? 0) : 0;
 
@@ -12300,7 +12300,7 @@
       const pnl = netPnl;
       const fees = Number(stats?.totalFeesUsd ?? 0);
       const grossPnl = Number(stats?.grossPnlUsd !== undefined ? stats.grossPnlUsd : (netPnl + fees));
-      const vol = Number(stats?.totalVolumeUsd ?? 5582);
+      const vol = Number(stats?.totalVolumeUsd ?? 0);
 
       const pnlEl = document.getElementById('stat-pnl');
       pnlEl.textContent = netPnl > 0 ? '+' + fmtUsd(netPnl) : (netPnl < 0 ? fmtUsd(netPnl) : '$0.00');
@@ -21163,7 +21163,7 @@
         slider.value = state.minConfidencePct ?? 80;
         if (sliderVal) sliderVal.textContent = (state.minConfidencePct ?? 80) + '%';
       }
-      const budget = isConfigured ? Number(state.budgetUsd ?? lastState?.budgetUsd ?? 30) : 0;
+      const budget = isConfigured ? Number(state.budgetUsd ?? lastState?.budgetUsd ?? 0) : 0;
       const budgetUsed = isConfigured ? Number(lastStats?.budgetUsedUsd ?? 0) : 0;
       updateBudgetRing(budgetUsed, budget);
     }
@@ -21173,7 +21173,7 @@
       const grid = document.getElementById('metrics-grid');
       if (!grid) return;
       const isConfigured = Boolean(state?.isConfigured);
-      const budget = isConfigured ? (state?.budgetUsd ?? state?.accountEquityUsd ?? (lastState?.budgetUsd ?? 30)) : 0;
+      const budget = isConfigured ? (state?.budgetUsd ?? state?.accountEquityUsd ?? (lastState?.budgetUsd ?? 0)) : 0;
       const metrics = [
         { label: 'Budget', value: '$' + budget.toFixed(2), sub: 'Total trading capital', color: 'var(--blue)' },
         { label: 'Allocation/Trade', value: (state.minAllocPct ?? 20) + '-' + (state.maxAllocPct ?? 40) + '%', sub: '$' + ((state.minAllocPct ?? 20) / 100 * budget).toFixed(2) + '-$' + ((state.maxAllocPct ?? 40) / 100 * budget).toFixed(2), color: 'var(--purple)' },
@@ -22565,7 +22565,7 @@
     }
 
     function onBudgetCeilingChange(val) {
-      let budget = parseFloat(val) || 30;
+      let budget = parseFloat(val) || 0;
       const maxWallet = window._lastKnownEquity || 0;
       const hintEl = document.getElementById('budget-ceiling-max-hint');
       const bEl = document.getElementById('set-budget-ceiling-usd');
@@ -22843,7 +22843,7 @@
 
         // Risk & Budget Parameters
         const maxWallet = window._lastKnownEquity || 0;
-        let budgetCeil = Number(trading.budgetUsd ?? s.budgetUsd ?? 30);
+        let budgetCeil = Number(trading.budgetUsd ?? s.budgetUsd ?? 0);
         if (document.getElementById('set-budget-ceiling-usd')) {
           const bEl = document.getElementById('set-budget-ceiling-usd');
           bEl.value = budgetCeil;
@@ -22854,10 +22854,10 @@
         }
         if (document.getElementById('set-min-leverage')) document.getElementById('set-min-leverage').value = trading.minLeverage ?? s.minLeverage ?? 5;
         if (document.getElementById('set-max-leverage')) document.getElementById('set-max-leverage').value = trading.maxLeverage ?? s.maxLeverage ?? 12;
-        if (document.getElementById('set-min-position-usd')) document.getElementById('set-min-position-usd').value = trading.minPositionUsd ?? s.minPositionUsd ?? 35;
+        if (document.getElementById('set-min-position-usd')) document.getElementById('set-min-position-usd').value = trading.minPositionUsd ?? s.minPositionUsd ?? 0;
         if (document.getElementById('set-max-position-usd')) {
           const posEl = document.getElementById('set-max-position-usd');
-          let posVal = trading.maxPositionUsd ?? s.maxPositionUsd ?? 150;
+          let posVal = trading.maxPositionUsd ?? s.maxPositionUsd ?? 0;
           posEl.value = posVal;
         }
         if (document.getElementById('set-min-alloc-pct')) document.getElementById('set-min-alloc-pct').value = trading.minAllocPct ?? s.minAllocPct ?? 35;
@@ -23245,9 +23245,10 @@
       }, 30000);
 
       try {
-        let budgetUsd = parseFloat(document.getElementById('set-budget-ceiling-usd')?.value) || 30;
-        let minPositionUsd = parseFloat(document.getElementById('set-min-position-usd')?.value) || 35;
-        let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 150;
+        const bInput = document.getElementById('set-budget-ceiling-usd')?.value;
+        let budgetUsd = bInput !== '' && bInput !== undefined ? (parseFloat(bInput) || 0) : 0;
+        let minPositionUsd = parseFloat(document.getElementById('set-min-position-usd')?.value) || 0;
+        let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 0;
         let minLeverage = parseFloat(document.getElementById('set-min-leverage')?.value) || 5;
         let maxLeverage = parseFloat(document.getElementById('set-max-leverage')?.value) || 12;
         let minAllocPct = parseFloat(document.getElementById('set-min-alloc-pct')?.value) || 35;
@@ -23434,8 +23435,9 @@
       }, 30000);
 
       try {
-        let budgetUsd = parseFloat(document.getElementById('set-budget-ceiling-usd')?.value) || 30;
-        let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 150;
+        const bInput = document.getElementById('set-budget-ceiling-usd')?.value;
+        let budgetUsd = bInput !== '' && bInput !== undefined ? (parseFloat(bInput) || 0) : 0;
+        let maxPositionUsd = parseFloat(document.getElementById('set-max-position-usd')?.value) || 0;
 
         let subaccountVal = (document.getElementById('set-decibel-subaccount')?.value || '').trim();
         const gasSignerVal = (document.getElementById('set-derived-gas-address')?.value || '').trim();
@@ -23467,7 +23469,7 @@
           secondaryModel: secModel,
           secondaryCustomBaseUrl: secUrl,
           budgetUsd: budgetUsd,
-          minPositionUsd: parseFloat(document.getElementById('set-min-position-usd')?.value) || 35,
+          minPositionUsd: parseFloat(document.getElementById('set-min-position-usd')?.value) || 0,
           maxPositionUsd: maxPositionUsd,
           minLeverage: parseFloat(document.getElementById('set-min-leverage')?.value) || 5,
           maxLeverage: parseFloat(document.getElementById('set-max-leverage')?.value) || 12,
@@ -26380,11 +26382,11 @@
       <div style="text-align:center; margin-bottom:20px;">
         <div
           style="display:inline-flex; align-items:center; gap:8px; padding:4px 12px; border-radius:20px; background:rgba(0,212,255,0.1); border:1px solid rgba(0,212,255,0.25); color:var(--cyan); font-size:11px; font-weight:800; letter-spacing:0.8px; margin-bottom:10px;">
-          <span>🎉 ACTIVATION COMPLETE</span> · <span>INITIAL BUDGET $30.00 ALLOCATED</span>
+          <span>🎉 ACTIVATION COMPLETE</span> · <span>BUDGET CEILING SAFE LOCKED ($0.00)</span>
         </div>
         <h2 style="font-size:22px; font-weight:800; color:#fff; margin:0 0 6px;">Select Your Operating Architecture</h2>
         <div style="font-size:13px; color:var(--text2); max-width:640px; margin:0 auto; line-height:1.5;">
-          Your Decibel subaccount is connected with an initial <b>$30.00 ceiling</b> ($0.00 used, $30.00 free). Select
+          Your Decibel subaccount is connected with a safe <b>$0.00 budget ceiling</b> (execution locked until configured). Select
           how you want your autonomous trading desk to operate:
         </div>
       </div>

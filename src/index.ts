@@ -17,7 +17,7 @@ import { superchargeClient } from './simlab/supercharge-client';
 import { tradeExecutor } from './trades/executor';
 import { portfolioHarvester } from './engine/harvester';
 import { startApiServer, agentState, registerScanTrigger, seedMarketsForPairs, broadcastState, DEFAULT_PAIR_PRICES } from './api-server';
-import { getSimPairDirective, getPairOverrides } from './strategy/manager';
+import { getSimPairDirective, getPairOverrides, isSimLabConnected } from './strategy/manager';
 import { evaluateAITrapShield, AITrapValidationResult } from './ai/trap-validator';
 import { cleanImmunityReason } from './risk/guard';
 import { startSimPipelineConsumer, stopSimPipelineConsumer } from './pipeline/sim-consumer';
@@ -82,12 +82,8 @@ function printBanner(): void {
 
 async function runTradingCycle(): Promise<void> {
   const isReady = isClientConfigured() || (config.PAPER_TRADING && isClientOnboarded());
-  if (!isReady) {
-    if (cycleCount % 6 === 0) {
-      logger.info('⏳ [AGENT PRE-ONBOARD] Waiting for operator credentials via Web Dashboard (http://localhost:5050)...');
-    }
-    cycleCount++;
-    return;
+  if (!isReady && cycleCount % 6 === 0) {
+    logger.info('⏳ [AGENT PRE-ONBOARD] Live market scanner active. Trade routing locked until operator credentials are configured via Web Dashboard (http://localhost:5050)...');
   }
 
   cycleCount++;
@@ -510,6 +506,25 @@ async function runTradingCycle(): Promise<void> {
 
           // 4. Decibel Execution & Risk Guard Validation
           if (aiEval.confirmed) {
+            // Execution Guard: Fail-closed lock if unconfigured or budget ceiling is 0
+            if (!isReady || config.BUDGET_USD <= 0) {
+              const lockReason = !isReady
+                ? 'Operator onboarding pending (credentials not configured)'
+                : 'Budget ceiling is $0.00 (fail-safe risk lock)';
+              logger.info(`🔒 [EXECUTION LOCKED] ${symbol} ${signal.action} setup detected (${confidence}%), but on-chain order routing is paused: ${lockReason}`);
+              tradeExecutor.recordShadowTrade({
+                symbol,
+                action: signal.action,
+                entryPrice: signal.entryPrice,
+                takeProfit: signal.takeProfit,
+                stopLoss: signal.stopLoss,
+                confidence: aiEval.confidenceScore,
+                vetoCategory: !isReady ? 'PRE_ONBOARD_LOCKED' : 'BUDGET_EXHAUSTED',
+                vetoReason: lockReason,
+              });
+              return;
+            }
+
             // Feature 4: Counterfactual Shadow Advisory Guard
             const shadowCheck = superchargeClient.checkCounterfactualAdvisory(symbol, signal.action);
             if (shadowCheck.vetoed) {
@@ -608,6 +623,9 @@ async function runTradingCycle(): Promise<void> {
 
   // 7. Stream Real On-Chain Telemetry to Sim Lab (Always active)
   superchargeClient.sendHeartbeat().catch(() => {});
+
+  // 8. Broadcast live updated market confluence to Web Dashboard clients
+  broadcastState();
 }
 
 async function bootstrap(): Promise<void> {
@@ -736,9 +754,11 @@ async function bootstrap(): Promise<void> {
   isRunning = true;
   logger.info(`🚀 Starting autonomous market scanner (polling every ${config.POLL_INTERVAL_MS / 1000}s)...`);
 
-  // Start dedicated 10s Fast SMA Reversal Engine for Top 3 Champion assets (SOL, SUI, ETH)
+  // Start dedicated 10s Fast SMA Reversal Engine only if Sim Lab Supercharge is connected
   try {
-    smaReversalEngine.start();
+    if (isSimLabConnected()) {
+      smaReversalEngine.start();
+    }
   } catch (err: any) {
     logger.error(`Failed to start SMA Reversal Engine: ${err.message}`);
   }
