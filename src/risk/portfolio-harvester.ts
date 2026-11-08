@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { writeJsonAtomicSync } from '../utils/atomic-write';
+import { writeJsonAtomicSync, updateJsonFileSync } from '../utils/atomic-write';
 import path from 'path';
 import { tradeExecutor, TradeRecord } from '../trades/executor';
 import { mcpClient } from '../mcp/client';
@@ -218,13 +218,9 @@ export class PortfolioHarvester {
 
   private saveConfig(): void {
     try {
-      let data: any = {};
-      if (fs.existsSync(SETTINGS_FILE_PATH)) {
-        data = JSON.parse(fs.readFileSync(SETTINGS_FILE_PATH, 'utf8'));
-      }
-      data.harvester = this.config;
-      fs.mkdirSync(path.dirname(SETTINGS_FILE_PATH), { recursive: true });
-      writeJsonAtomicSync(SETTINGS_FILE_PATH, data);
+      updateJsonFileSync(SETTINGS_FILE_PATH, (data: any) => {
+        data.harvester = this.config;
+      });
     } catch (err: any) {
       logger.error(`Failed to persist harvester config: ${err.message}`);
     }

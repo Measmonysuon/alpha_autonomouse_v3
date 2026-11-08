@@ -11,8 +11,8 @@
  */
 
 import axios from 'axios';
-import { writeJsonAtomicSync } from '../utils/atomic-write';
-import { config, watchPairs, isClientConfigured, DEFAULT_SIMLAB_CANDIDATE_URLS } from '../config';
+import { updateJsonFileSync } from '../utils/atomic-write';
+import { config, watchPairs, isClientConfigured, DEFAULT_SIMLAB_CANDIDATE_URLS, SETTINGS_FILE_PATH } from '../config';
 import { logger } from '../utils/logger';
 import { standaloneEngine, StrategyDirectives } from '../engine/standalone-engine';
 import { tradeExecutor } from '../trades/executor';
@@ -181,23 +181,17 @@ export class SimLabSuperchargeClient {
       logger.info('🔓 [MACRO REGIME] Macro Market Regime Sync disabled by user — standalone market regime active.');
     }
 
-    // Persist to data/settings.json
+    // Persist to data/settings.json via the single-writer helper (fresh
+    // read-modify-write on the canonical path — never a cwd-relative copy).
     try {
-      const fs = require('fs');
-      const path = require('path');
-      const settingsPath = path.resolve(process.cwd(), 'data/settings.json');
-      let current: any = {};
-      if (fs.existsSync(settingsPath)) {
-        current = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      }
-      current.simlab = {
-        ...(current.simlab || {}),
-        url: this.serverUrl,
-        key: this.rawToken,
-        features: this.featureFlags,
-      };
-      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-      writeJsonAtomicSync(settingsPath, current);
+      updateJsonFileSync(SETTINGS_FILE_PATH, (current: any) => {
+        current.simlab = {
+          ...(current.simlab || {}),
+          url: this.serverUrl,
+          key: this.rawToken,
+          features: this.featureFlags,
+        };
+      });
     } catch {}
   }
 

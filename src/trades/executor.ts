@@ -1716,7 +1716,24 @@ export class TradeExecutor {
         logger.warn(`⚠️ [ON-CHAIN] Gateway rate-limit/auth error (${err.message}). Instant 0s failover to Builder Proxy...`);
         triggerNodeKeyFailover(undefined, err.message);
         this.reinitAptos();
-        txRes = await sendTx();
+        // IDEMPOTENCY GUARD: a gateway error can occur after the transaction
+        // actually landed. Before re-submitting, check whether an order with
+        // our clientOrderId is already resting on-chain; if so, adopt it
+        // instead of placing a duplicate order.
+        const resting = await mcpClient.getOrders(symbol).catch(() => [] as any[]);
+        const landed = Array.isArray(resting)
+          ? resting.find((o: any) => (o.clientOrderId || o.client_order_id) === clientOrderId)
+          : undefined;
+        if (landed) {
+          logger.warn(`🛡️ [IDEMPOTENCY] Order ${clientOrderId} already resting on-chain after gateway error — adopting it, no duplicate submission.`);
+          txRes = {
+            txHash: landed.txHash || landed.tx_hash || landed.hash || '',
+            isCancelledByEngine: false,
+            cancelReason: '',
+          };
+        } else {
+          txRes = await sendTx();
+        }
       } else {
         throw err;
       }

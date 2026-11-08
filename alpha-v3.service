@@ -1,0 +1,18 @@
+[Unit]
+Description=Alpha Autonomous Client V3 (Decibel DEX)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/hatch/workspace/alpha-v3
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=HEALTH_PORT=5050
+Environment=HTTP_PROXY=http://hatch-egress-proxy:3128
+Environment=HTTPS_PROXY=http://hatch-egress-proxy:3128
+
+[Install]
+WantedBy=multi-user.target

@@ -36,3 +36,32 @@ export function writeFileAtomicSync(filePath: string, content: string, encoding:
 export function writeJsonAtomicSync(filePath: string, value: unknown): void {
   writeFileAtomicSync(filePath, JSON.stringify(value, null, 2), 'utf8');
 }
+
+/**
+ * Single-writer read-modify-write for shared JSON state files.
+ *
+ * Always re-reads the CURRENT on-disk contents, applies `mutator` to that
+ * fresh copy, and persists atomically — synchronously, so no other writer in
+ * this process can interleave between the read and the write. Every module
+ * that updates settings.json goes through here, which makes lost updates
+ * (one writer clobbering another's section with a stale copy) impossible.
+ *
+ * If the existing file is corrupt, this THROWS instead of silently resetting
+ * it to {}: a damaged settings file must surface as an error and be repaired,
+ * never quietly wiped.
+ */
+export function updateJsonFileSync<T extends Record<string, any>>(
+  filePath: string,
+  mutator: (current: T) => void,
+): T {
+  let current = {} as T;
+  if (fs.existsSync(filePath)) {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (raw.trim() !== '') {
+      current = JSON.parse(raw) as T;
+    }
+  }
+  mutator(current);
+  writeJsonAtomicSync(filePath, current);
+  return current;
+}
