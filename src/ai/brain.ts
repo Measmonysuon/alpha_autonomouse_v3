@@ -1367,8 +1367,10 @@ When the user asks questions about the market, specific tokens (like SUI or BTC)
     directives?: StrategyDirectives,
   ): string {
     const sl = signal.stopLoss != null ? `$${signal.stopLoss.toFixed(4)}` : 'N/A';
-    const tp = signal.takeProfit != null ? `$${signal.takeProfit.toFixed(4)}` : 'N/A';
-    const rr = signal.riskRewardRatio != null ? `${signal.riskRewardRatio}R` : 'N/A';
+    const tp = signal.takeProfit != null && signal.takeProfit > 0
+      ? (signal.noFixedTp ? `$${signal.takeProfit.toFixed(4)} (Dynamic Gap Harvest & 50% Midpoint Exit)` : `$${signal.takeProfit.toFixed(4)}`)
+      : (signal.noFixedTp ? 'Dynamic Gap Harvest (30% partial + 50% midpoint exit)' : 'N/A');
+    const rr = signal.riskRewardRatio != null && signal.riskRewardRatio > 0 ? `${signal.riskRewardRatio}R` : '1.80R';
     const ind = signal.indicators || ({} as any);
     const ema9 = ind.ema9 != null ? ind.ema9.toFixed(4) : 'N/A';
     const ema21 = ind.ema21 != null ? ind.ema21.toFixed(4) : 'N/A';
