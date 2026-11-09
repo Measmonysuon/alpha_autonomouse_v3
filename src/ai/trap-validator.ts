@@ -126,16 +126,26 @@ export function evaluateAITrapShield(
     modelUsedStr = (aiSet.secondaryModel || 'Qwen 2.5') + ' (Local Shield)';
   }
 
+  const bundle = getLastSyncedBundle();
+  const pairOrderflow = bundle?.pairDirectives?.[symbol]?.orderflow;
+  const hasSimLabMicrostructure = Boolean(isSimLab && pairOrderflow);
+  const l2DepthRatio = pairOrderflow?.l2DepthRatio ?? 1.0;
+  const vpinToxicity = pairOrderflow?.vpinToxicity ?? 0.18;
+  const isToxicFlow = Boolean(pairOrderflow?.isToxicFlow || vpinToxicity >= 0.35);
+  const entropy = pairOrderflow?.shannonEntropy ?? 0.85;
+
+  const bidAskImbalancePct = pairOrderflow?.orderflowImbalancePct !== undefined
+    ? pairOrderflow.orderflowImbalancePct
+    : (l2DepthRatio > 1.0 ? (l2DepthRatio - 1.0) * 50 : -( (1.0 / Math.max(0.01, l2DepthRatio)) - 1.0) * 50);
+
   const metrics: EvaluatedTrapMetrics = {
     priceChange24h: Number(change24h.toFixed(2)),
     oiChange24h: typeof oiChange24h === 'number' ? Number(oiChange24h.toFixed(2)) : undefined,
     fundingRate: typeof fundingRate === 'number' ? Number(fundingRate.toFixed(4)) : undefined,
     longShortRatio: typeof lsRatio === 'number' ? Number(lsRatio.toFixed(2)) : undefined,
-    spreadPct: 0.05,
-    bidAskImbalancePct: 0,
+    spreadPct: simDir?.orderbookSpreadPct ?? 0.05,
+    bidAskImbalancePct: Number(bidAskImbalancePct.toFixed(1)),
   };
-
-  const bundle = getLastSyncedBundle();
 
   // ── 1. HARD VETOS: Emergency Cooling & Directives ───────────────────────────
   // A. Shockwave or Risk Guard Active Cool-off
@@ -257,7 +267,6 @@ export function evaluateAITrapShield(
   }
 
   // ── 1E. QUANTUM DECOHERENCE & SPOOF WALL VETO ──────────────────────────────
-  const pairOrderflow = bundle?.pairDirectives?.[symbol]?.orderflow;
   const cvdSlope = pairOrderflow?.cvdTrend === 'BUY' ? 'ACCUMULATION' : (pairOrderflow?.cvdTrend === 'SELL' ? 'DISTRIBUTION' : (ind.cvdTrend === 'BUY' ? 'ACCUMULATION' : (ind.cvdTrend === 'SELL' ? 'DISTRIBUTION' : 'NEUTRAL')));
   const cvdResult = evaluateCVDConfirmation(candidateAction, undefined, {
     cvdSlope,
@@ -283,10 +292,81 @@ export function evaluateAITrapShield(
     return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
   }
 
-  // ── 2. TECHNICAL TRAP VALIDATION ───────────────────────────────────────────
-  // A. Rejection Wick Traps
+  // ── 1F. HEAVY MICROSTRUCTURE VETO #1: VPIN TOXICITY (Sim Lab Dominance) ──
+  if (hasSimLabMicrostructure && isToxicFlow) {
+    const isAdverseFlow = (candidateAction === 'LONG' && (pairOrderflow?.cvdTrend === 'SELL' || pairOrderflow?.cvdTrend === 'STRONG_SELL' || (pairOrderflow?.takerBuyRatio !== undefined && pairOrderflow.takerBuyRatio < 0.46))) ||
+                          (candidateAction === 'SHORT' && (pairOrderflow?.cvdTrend === 'BUY' || pairOrderflow?.cvdTrend === 'STRONG_BUY' || (pairOrderflow?.takerBuyRatio !== undefined && pairOrderflow.takerBuyRatio > 0.54)));
+    if (isAdverseFlow || vpinToxicity >= 0.40) {
+      const res: AITrapValidationResult = {
+        timestamp: Date.now(),
+        symbol,
+        candidateAction,
+        signalConfidence: signal.confidence,
+        verdict: 'TRAP_EVENT',
+        trapCategory: 'VPIN_ORDER_FLOW_TOXICITY',
+        vetoTrade: true,
+        confidence: 92,
+        convictionBonus: 0,
+        metricsEvaluated: metrics,
+        reasoning: `🛡️ [VPIN TOXICITY VETO] Adverse selection spike (VPIN ${vpinToxicity.toFixed(3)} >= 0.35, ${pairOrderflow?.cvdTrend || 'TOXIC'} flow). Informed institutional traders aggressively filling passive orders.`,
+        modelUsed: 'Sim Lab Multi-Venue Microstructure (Pillar 8)',
+      };
+      return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    }
+  }
 
-  const wickTol = simDir?.upperWickThresholdPct || directives?.bullTrapUpperWickPct || 45;
+  // ── 1G. HEAVY MICROSTRUCTURE VETO #2: ORDERBOOK SPOOF WALLS & RESTING DEPTH (Sim Lab Dominance) ──
+  if (hasSimLabMicrostructure) {
+    if (candidateAction === 'LONG' && (l2DepthRatio <= 0.50 || bidAskImbalancePct < -40)) {
+      const askMultiplier = (1 / Math.max(0.01, l2DepthRatio)).toFixed(2);
+      const res: AITrapValidationResult = {
+        timestamp: Date.now(),
+        symbol,
+        candidateAction,
+        signalConfidence: signal.confidence,
+        verdict: 'TRAP_EVENT',
+        trapCategory: 'ORDERBOOK_SPOOF',
+        vetoTrade: true,
+        confidence: 90,
+        convictionBonus: 0,
+        metricsEvaluated: metrics,
+        reasoning: `🛡️ [ORDERBOOK SPOOF VETO] Severe ask wall resistance (Asks are ${askMultiplier}x heavier than Bids, Imbalance ${bidAskImbalancePct.toFixed(1)}%). Buying into heavy resting sell liquidity without bid support.`,
+        modelUsed: 'Sim Lab Orderbook Depth Guard',
+      };
+      return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    }
+    if (candidateAction === 'SHORT' && (l2DepthRatio >= 2.0 || bidAskImbalancePct > 40)) {
+      const res: AITrapValidationResult = {
+        timestamp: Date.now(),
+        symbol,
+        candidateAction,
+        signalConfidence: signal.confidence,
+        verdict: 'TRAP_EVENT',
+        trapCategory: 'ORDERBOOK_SPOOF',
+        vetoTrade: true,
+        confidence: 90,
+        convictionBonus: 0,
+        metricsEvaluated: metrics,
+        reasoning: `🛡️ [ORDERBOOK SPOOF VETO] Severe bid wall support (Bids are ${l2DepthRatio.toFixed(2)}x heavier than Asks, Imbalance +${bidAskImbalancePct.toFixed(1)}%). Shorting into institutional buy wall.`,
+        modelUsed: 'Sim Lab Orderbook Depth Guard',
+      };
+      return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    }
+  }
+
+  // ── 2. TECHNICAL TRAP VALIDATION ───────────────────────────────────────────
+  // A. Adaptive Rejection Wick Traps
+  let wickTol = simDir?.upperWickThresholdPct || directives?.bullTrapUpperWickPct || 45;
+  if (hasSimLabMicrostructure) {
+    if (vpinToxicity > 0.28 || entropy > 0.92) {
+      wickTol = Math.max(30, wickTol - 10); // Dynamically tighten tolerance during turbulent flow
+    } else if (l2DepthRatio > 1.5 && candidateAction === 'LONG') {
+      wickTol = Math.min(50, wickTol + 5);  // Relax tolerance when solid bid cushion exists
+    } else if (l2DepthRatio < 0.67 && candidateAction === 'SHORT') {
+      wickTol = Math.min(50, wickTol + 5);
+    }
+  }
+
   if (candidateAction === 'LONG' && ind.upperWickPct > wickTol) {
     const res: AITrapValidationResult = {
       timestamp: Date.now(),
@@ -296,10 +376,10 @@ export function evaluateAITrapShield(
       verdict: 'TRAP_EVENT',
       trapCategory: 'BULL_TRAP',
       vetoTrade: true,
-      confidence: 82,
+      confidence: 85,
       convictionBonus: 0,
       metricsEvaluated: metrics,
-      reasoning: `🛡️ [BULL TRAP VETO] Upper rejection wick ${ind.upperWickPct.toFixed(1)}% exceeds ${wickTol}% tolerance. Heavy overhead supply detected.`,
+      reasoning: `🛡️ [BULL TRAP VETO] Upper rejection wick ${ind.upperWickPct.toFixed(1)}% exceeds dynamic ${wickTol}% tolerance. Heavy overhead supply detected.`,
       modelUsed: modelUsedStr,
     };
     return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
@@ -314,10 +394,10 @@ export function evaluateAITrapShield(
       verdict: 'TRAP_EVENT',
       trapCategory: 'BEAR_TRAP',
       vetoTrade: true,
-      confidence: 82,
+      confidence: 85,
       convictionBonus: 0,
       metricsEvaluated: metrics,
-      reasoning: `🛡️ [BEAR TRAP VETO] Lower absorption wick ${ind.lowerWickPct.toFixed(1)}% exceeds ${wickTol}% tolerance. Strong floor demand detected.`,
+      reasoning: `🛡️ [BEAR TRAP VETO] Lower absorption wick ${ind.lowerWickPct.toFixed(1)}% exceeds dynamic ${wickTol}% tolerance. Strong floor demand detected.`,
       modelUsed: modelUsedStr,
     };
     return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);

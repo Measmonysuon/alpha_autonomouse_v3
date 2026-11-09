@@ -94,6 +94,7 @@ export interface AlphaBundleResponse {
   strategy?: {
     activeStrategyId: string;
     activeStrategyName: string;
+    targetAssets?: string[];
     minConfidenceGate: number;    // e.g. 75 -> 85 during chop
     leverage: number;
     minAllocPct: number;
@@ -141,8 +142,23 @@ export interface AlphaBundleResponse {
         shortLiquidationUsd?: number;
         maxPainPrice?: number;
       };
-      cvdTrend?: 'BUY' | 'SELL' | 'NEUTRAL';
+      cvdTrend?: 'STRONG_BUY' | 'BUY' | 'NEUTRAL' | 'SELL' | 'STRONG_SELL';
       orderflowImbalancePct?: number;
+      takerBuyRatio?: number;
+      vpinToxicity?: number;
+      isToxicFlow?: boolean;
+      l2DepthRatio?: number;
+      l2BidDepthUsd?: number;
+      l2AskDepthUsd?: number;
+      shannonEntropy?: number;
+      totalOiUsd?: number;
+      binanceOiUsd?: number;
+      bybitOiUsd?: number;
+      hyperliquidOiUsd?: number;
+      coinbasePremiumPct?: number;
+      updatedAt?: number;
+      isFresh?: boolean;
+      isAvailable?: boolean;
     };
     smcPolicy?: any;
     accelerateBreakevenR?: number;
@@ -372,6 +388,7 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
       applySimStrategyDirectives({
         activeStrategyId: bundle.strategy.activeStrategyId,
         activeStrategyName: bundle.strategy.activeStrategyName,
+        targetAssets: bundle.strategy.targetAssets || (bundle as any).liveTargetAssets,
         minConfidenceGate: bundle.strategy.minConfidenceGate,
         leverage: safeLeverage,
         minAllocPct: Math.max(5, Math.round((bundle.strategy.minAllocPct || 15) * riskMultiplier)),

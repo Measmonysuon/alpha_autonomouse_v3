@@ -30,6 +30,7 @@ export interface SimStrategyDirectives {
   description?: string;
   strategyDescription?: string;
   author?: string;
+  targetAssets?: string[];
   fullStrategy?: any;
   minConfidenceGate?: number;
   leverage?: number;
@@ -308,6 +309,7 @@ export function applySimStrategyDirectives(strat: SimStrategyDirectives): void {
       isSimLab: true,
       isPrebuilt: false,
       author: strat.author || strat.fullStrategy?.author || 'AI Sim Lab (Port 4000)',
+      targetAssets: strat.targetAssets || strat.fullStrategy?.targetAssets || (strat as any).liveTargetAssets,
       winRatePct: strat.overallWinRatePct ?? strat.fullStrategy?.winRatePct ?? 60.0,
       layer1: strat.layer1 || strat.fullStrategy?.layer1 || baseTemplate.layer1,
       layer2: strat.layer2 || strat.fullStrategy?.layer2 || baseTemplate.layer2,
@@ -506,12 +508,21 @@ export function getActiveStrategy(): StrategyConfig {
   if (isSimLabConnected() && activeStrategySyncConfig.syncGlobalStrategy) {
     if (simStrategiesCache.length > 0) {
       const activeSim = simStrategiesCache.find(s => s.id === storageCache.activeId) || simStrategiesCache[0];
-      if (activeSim) return activeSim;
+      if (activeSim) {
+        if (cachedLastSimDirectives?.targetAssets && cachedLastSimDirectives.targetAssets.length > 0) {
+          activeSim.targetAssets = cachedLastSimDirectives.targetAssets;
+        }
+        return activeSim;
+      }
     }
+    const dynamicTargets = (cachedLastSimDirectives?.targetAssets && cachedLastSimDirectives.targetAssets.length > 0)
+      ? cachedLastSimDirectives.targetAssets
+      : ['SOL/USD', 'ETH/USD'];
+
     // Return Sim Lab Flagship Champion V3
     return {
       ...SIMLAB_PREMIUM_CHAMPION_TEMPLATE,
-      targetAssets: ['SOL/USD', 'ETH/USD'],
+      targetAssets: dynamicTargets,
       layer5: {
         ...SIMLAB_PREMIUM_CHAMPION_TEMPLATE.layer5,
         enabled: true,

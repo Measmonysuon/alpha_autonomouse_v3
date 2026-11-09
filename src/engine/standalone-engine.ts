@@ -17,7 +17,7 @@ import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { analyzeSMC, SMCAnalysis } from './smc-detector';
-import { getStrategyForPair, getPairOverrides, getActiveStrategy, getSimPairDirectives } from '../strategy/manager';
+import { getStrategyForPair, getPairOverrides, getActiveStrategy, getSimPairDirectives, getSimPairDirective } from '../strategy/manager';
 import type { LeverageMode, StrategyAttribution, StrategyConfig } from '../strategy/types';
 import { decibelPriceFeed } from '../pipeline/decibel-price-feed';
 
@@ -1209,12 +1209,17 @@ export class StandaloneTradingEngine {
     const ind = this.computeIndicators(klines, klines1h, dynamicSmaParams);
     const activeStrategy: StrategyConfig = getStrategyForPair(symbol);
     const pairOverrides = getPairOverrides(symbol);
+    let simPairDir = getSimPairDirective(symbol);
 
-    // Whitelisted Target Asset Enforcement (e.g. SOL/USD and ETH/USD only)
-    if (activeStrategy.targetAssets && activeStrategy.targetAssets.length > 0) {
+    // Whitelisted Target Asset Enforcement (Dynamic between Standalone & Sim Lab)
+    let effectiveTargetAssets = activeStrategy.targetAssets;
+    if (simPairDir?.targetAssets && Array.isArray(simPairDir.targetAssets) && simPairDir.targetAssets.length > 0) {
+      effectiveTargetAssets = simPairDir.targetAssets;
+    }
+    if (effectiveTargetAssets && effectiveTargetAssets.length > 0) {
       const normSym = symbol.toUpperCase().replace(/[-_/]/g, '');
-      const isTargetWhitelisted = activeStrategy.targetAssets.some(
-        (t) => t.toUpperCase().replace(/[-_/]/g, '') === normSym
+      const isTargetWhitelisted = effectiveTargetAssets.some(
+        (t) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')) || t.toUpperCase().replace(/[-_/]/g, '').includes(normSym)
       );
       if (!isTargetWhitelisted) {
         return {
@@ -1237,10 +1242,10 @@ export class StandaloneTradingEngine {
             isPullbackBounce: false, distToEma25Pct: 0, pullbackStatus: 'NORMAL',
             swingHigh: 0, swingLow: 0, trend1h: 'NEUTRAL', structureTrend: 'SIDEWAYS', lastPattern: 'NEUTRAL',
           },
-          reasons: [`Symbol ${symbol} held: Whitelisted target assets for ${activeStrategy.name} are strictly [${activeStrategy.targetAssets.join(', ')}]`],
+          reasons: [`Symbol ${symbol} held: Whitelisted target assets for ${activeStrategy.name} are strictly [${effectiveTargetAssets.join(', ')}]`],
           strategyName: activeStrategy.name,
           strategyTags: [activeStrategy.id],
-          entryRationale: `Selective Target Filter: Only ${activeStrategy.targetAssets.join(' and ')} active for execution.`,
+          entryRationale: `Selective Target Filter: Only ${effectiveTargetAssets.join(' and ')} active for execution.`,
           timestamp,
         };
       }
@@ -1393,7 +1398,7 @@ export class StandaloneTradingEngine {
 
     // Fetch live Sim Lab Pair Directives (including active Rebound Opportunity)
     const allSimDirs = getSimPairDirectives();
-    const simPairDir = allSimDirs[symbol] || allSimDirs[symbol?.toUpperCase()] || allSimDirs[symbol?.replace('/', '-')];
+    simPairDir = allSimDirs[symbol] || allSimDirs[symbol?.toUpperCase()] || allSimDirs[symbol?.replace('/', '-')] || simPairDir;
 
     // ── Direction Determination ───────────────────────────────────────────────
     let trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
