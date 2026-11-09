@@ -10157,16 +10157,52 @@
             <div class="settings-card"
               style="background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:22px;">
               <div
-                style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:12px;">
+                style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:12px; flex-wrap:wrap; gap:10px;">
                 <div style="font-size:15px; font-weight:700; color:#60a5fa; display:flex; align-items:center; gap:8px;">
                   <span>⚡</span> Decibel DEX Mainnet Credentials
                 </div>
-                <span
-                  style="font-size:11px; padding:3px 8px; border-radius:4px; background:rgba(96,165,250,0.12); color:#60a5fa; font-weight:700;">Aptos
-                  Perp DEX</span>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <!-- Referral Button (shown if user not yet onboarded) -->
+                  <a id="settings-decibel-referral-btn" href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer"
+                    title="Open Decibel DEX with referral code 53OP4B"
+                    style="display:none; align-items:center; gap:6px; padding:5px 12px; background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color:#ffffff; font-size:11px; font-weight:700; text-decoration:none; border-radius:6px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 2px 8px rgba(2,132,199,0.35); transition:all 0.15s ease; white-space:nowrap;"
+                    onmouseover="this.style.filter='brightness(1.15)'; this.style.transform='translateY(-1px)';"
+                    onmouseout="this.style.filter='none'; this.style.transform='none';">
+                    <span>💎</span>
+                    <span>Create Decibel Account (r/53OP4B)</span>
+                    <span style="font-size:11px; line-height:1;">↗</span>
+                  </a>
+                  <span
+                    style="font-size:11px; padding:3px 8px; border-radius:4px; background:rgba(96,165,250,0.12); color:#60a5fa; font-weight:700;">Aptos
+                    Perp DEX</span>
+                </div>
               </div>
 
               <div style="display:flex; flex-direction:column; gap:14px;">
+                <!-- Decibel Referral Onboarding Notice (Visible only when user is NOT yet onboarded) -->
+                <div id="settings-decibel-referral-banner"
+                  style="display:none; padding:12px 16px; background:linear-gradient(90deg, rgba(14,165,233,0.14) 0%, rgba(99,102,241,0.14) 100%); border:1px solid rgba(56,189,248,0.35); border-radius:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; box-shadow:0 4px 14px rgba(14,165,233,0.08);">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:20px; filter:drop-shadow(0 0 6px rgba(56,189,248,0.5));">💎</span>
+                    <div>
+                      <div style="font-size:12.5px; font-weight:700; color:#f8fafc; letter-spacing:0.2px; display:flex; align-items:center; gap:6px;">
+                        <span>Don't have a Decibel DEX account yet?</span>
+                        <span style="font-size:9.5px; font-weight:800; background:rgba(56,189,248,0.2); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:1px 5px; border-radius:3px;">REFERRAL DISCOUNT</span>
+                      </div>
+                      <div style="font-size:11px; color:#cbd5e1; margin-top:2px;">
+                        Register with referral code <strong style="color:#38bdf8;">53OP4B</strong> for reduced trading fees &amp; connect your Aptos wallet.
+                      </div>
+                    </div>
+                  </div>
+                  <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer"
+                    style="display:inline-flex; align-items:center; gap:6px; padding:7px 14px; background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color:#ffffff; font-size:11.5px; font-weight:700; text-decoration:none; border-radius:6px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 4px 12px rgba(2,132,199,0.35); transition:all 0.15s ease; white-space:nowrap;"
+                    onmouseover="this.style.filter='brightness(1.15)'; this.style.transform='translateY(-1px)';"
+                    onmouseout="this.style.filter='none'; this.style.transform='none';">
+                    <span>Open Decibel DEX</span>
+                    <span style="font-size:12px; line-height:1;">↗</span>
+                  </a>
+                </div>
+
                 <div>
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                     <label
@@ -10181,7 +10217,7 @@
                   <input type="text" id="set-decibel-subaccount" placeholder="0x..." readonly
                     onclick="if(this.readOnly){showToastNotification('🔒 Subaccount is locked to protect trading collateral. Click Unlock to edit.');}"
                     style="width:100%; background:rgba(16, 185, 129, 0.08); border:1px solid rgba(52, 211, 153, 0.4); color:#34d399; padding:9px 12px; border-radius:8px; font-size:13px; font-family:monospace; box-sizing:border-box; cursor:not-allowed;">
-                  <div style="font-size:11px; color:var(--text3); margin-top:3px;">Your Aptos mainnet account or subaccount address with trading collateral. Need an account? <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Open on Decibel (r/53OP4B) ↗</a></div>
+                  <div id="settings-decibel-referral-hint" style="font-size:11px; color:var(--text3); margin-top:3px;">Your Aptos mainnet account or subaccount address with trading collateral. Need an account? <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Open on Decibel (r/53OP4B) ↗</a></div>
                 </div>
 
                 <div>
@@ -12038,6 +12074,20 @@
     let isAppConfigured = localStorage.getItem('alpha_is_configured') === 'false' ? false : true;
 
     let isPaperActivated = false;
+    function updateDecibelReferralVisibility(isOnboarded) {
+      const btn = document.getElementById('settings-decibel-referral-btn');
+      const banner = document.getElementById('settings-decibel-referral-banner');
+      const hint = document.getElementById('settings-decibel-referral-hint');
+      const isBoarded = Boolean(isOnboarded);
+      if (btn) btn.style.display = isBoarded ? 'none' : 'inline-flex';
+      if (banner) banner.style.display = isBoarded ? 'none' : 'flex';
+      if (hint) {
+        hint.innerHTML = isBoarded
+          ? 'Your Aptos mainnet account or subaccount address with trading collateral.'
+          : 'Your Aptos mainnet account or subaccount address with trading collateral. Need an account? <a href="https://app.decibel.trade/r/53OP4B" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600;">Open on Decibel (r/53OP4B) ↗</a>';
+      }
+    }
+
     function updateOnboardingMenuLock(configured, paperActivated) {
       if (typeof paperActivated === 'boolean') {
         isPaperActivated = paperActivated;
@@ -12049,6 +12099,7 @@
         } catch (e) {}
       }
       const paperUnlocked = !isAppConfigured && isPaperActivated;
+      updateDecibelReferralVisibility(isAppConfigured && !paperUnlocked);
       const paperBanner = document.getElementById('paper-mode-banner');
       if (paperBanner) paperBanner.style.display = paperUnlocked ? 'flex' : 'none';
       if (!isAppConfigured && !paperUnlocked) {
@@ -22627,7 +22678,9 @@
         const res = await fetch(API + '/api/setup/status').then(r => r.json());
         const card = document.getElementById('onboarding-setup-card');
         const configured = Boolean(res.isConfigured);
-        updateOnboardingMenuLock(configured);
+        const onboarded = Boolean(res.onboarded);
+        updateOnboardingMenuLock(configured, res.paperActivated);
+        updateDecibelReferralVisibility(onboarded || (configured && !res.paperActivated));
         if (!card) return;
         if (configured) {
           card.style.display = 'none';
@@ -22782,6 +22835,15 @@
         const trading = s.trading || {};
         const tg = s.telegram || {};
         const sec = s.security || {};
+
+        // Decibel DEX Referral Button/Banner Visibility (Hide if user already onboarded)
+        const isUserOnboarded = Boolean(
+          s.onboarded === true ||
+          creds.onboarded === true ||
+          creds.hasRealKey === true ||
+          (creds.decibelSubaccount && creds.decibelSubaccount.length >= 10 && !creds.decibelSubaccount.includes('your_'))
+        );
+        updateDecibelReferralVisibility(isUserOnboarded);
 
         // Decibel DEX - Protected Subaccount Lock
         const subaccountEl = document.getElementById('set-decibel-subaccount');
