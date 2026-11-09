@@ -807,7 +807,7 @@ export class SimLabSuperchargeClient {
       keyId: this.keyId,
       clientId: config.CLIENT_ID || (cleanSubaccount ? `desk-${cleanSubaccount.slice(2, 10)}` : 'v3-standalone'),
       clientName: config.CLIENT_NAME || (isClientConfigured() ? 'Alpha Autonomous Client v3' : 'Alpha Client v3 (Pre-Onboard)'),
-      clientVersion: '3.0.0',
+      clientVersion: '3.4.0',
       operatingMode: this.isConnected ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
       isSimLabConnected: this.isConnected,
       timestamp: Date.now(),

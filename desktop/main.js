@@ -44,7 +44,7 @@ async function createWindow() {
     height: 920,
     minWidth: 1024,
     minHeight: 700,
-    title: 'Alpha Autonomous Client v3.0.0 — Decibel DEX Trading Hub',
+    title: 'Alpha Autonomous Client v3.4.0 — Decibel DEX Trading Hub',
     backgroundColor: '#090d16',
     show: false,
     webPreferences: {
@@ -133,7 +133,7 @@ function createTray() {
     },
   ]);
 
-  tray.setToolTip('Alpha Autonomous Client v3.0.0 (Trading Active)');
+  tray.setToolTip('Alpha Autonomous Client v3.4.0 (Trading Active)');
   tray.setContextMenu(contextMenu);
   tray.on('click', () => {
     if (mainWindow) {

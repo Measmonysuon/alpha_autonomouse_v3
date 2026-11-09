@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
- * ALPHA MASTER COCKPIT: 15M CANDLESTICK PHYSICS & LOB DEPTH ENGINE (v3.3.1)
+ * ALPHA MASTER COCKPIT: 15M CANDLESTICK PHYSICS & LOB DEPTH ENGINE (v3.4.0)
  * Strict 4-Color Institutional Broadcast Palette
  * Real Decibel DEX CLOB (Aptos Mainnet) On-Chain Stream
  * Dual-Engine Support: SIMLAB SUPERCHARGED & PURE STANDALONE

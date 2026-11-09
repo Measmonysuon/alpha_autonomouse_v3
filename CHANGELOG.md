@@ -5,6 +5,22 @@ All notable changes to Alpha Autonomous Client V3 will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-11-09
+
+### Added & Enhanced
+- **Decoupled Declarative Strategy Specification (Section XLII)**:
+  - Decoupled strategy configuration from hardcoded engine loops into declarative profiles (`active-strategy.json`).
+  - Dynamic Amber Band Harvest: Fast-moving momentum protection with accelerated break-even ratchets and partial harvest scaling.
+  - Retest Limit Orders: Order execution engine supports pullbacks and retest entries with adaptive limit pricing.
+- **Zero-Friction Paper Trading Onboarding**:
+  - Interactive onboarding wizard with paper trading mode toggle; Decibel API keys are optional in paper mode.
+  - Persistent paper mode status banner with 1-click modal to transition to live trading.
+  - Non-blocking navigation during onboarding: users can inspect live market setups without completing onboarding setup locks.
+  - Two-step safety confirmation modal with explicit risk acknowledgment before live execution activation.
+- **UI Versioning & Alignment**:
+  - Top header branding badge updated to `v3.4.0`.
+  - Native desktop application and telemetry client reporting aligned to `3.4.0`.
+
 ## [3.3.0] - 2026-10-31
 
 ### Security & Bug Fixes
