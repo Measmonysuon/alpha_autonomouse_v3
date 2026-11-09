@@ -8987,6 +8987,10 @@
 </head>
 
 <body>
+  <div id="paper-mode-banner" style="display:none; align-items:center; justify-content:center; gap:12px; background:rgba(52,211,153,0.12); border-bottom:1px solid rgba(52,211,153,0.4); color:#a7f3d0; font-size:12px; font-weight:600; padding:8px 14px; text-align:center;">
+    <span>📄 PAPER MODE — simulated trading only, no real funds at risk.</span>
+    <button onclick="switchTab('settings')" style="background:rgba(52,211,153,0.2); border:1px solid rgba(52,211,153,0.6); color:#d1fae5; font-size:11px; font-weight:700; border-radius:6px; padding:3px 10px; cursor:pointer;">Complete onboarding to enable live trading</button>
+  </div>
 
   <!-- Header -->
   <header>
@@ -9501,10 +9505,33 @@
 
           <div
             style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:18px;">
+            <!-- Trading Mode (Paper / Live) -->
+            <div class="form-group" style="margin-bottom:0; grid-column:1 / -1; background:rgba(52,211,153,0.07); border:1px solid rgba(52,211,153,0.3); border-radius:8px; padding:12px 14px;">
+              <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:13px; font-weight:700; color:#e2e8f0; margin-bottom:4px;">
+                <input type="checkbox" id="setup-paper-trading" checked onchange="onSetupPaperToggle(this.checked)" style="width:18px; height:18px; accent-color:#34d399; cursor:pointer;" />
+                📄 Paper Trading Mode
+                <span style="font-size:10px; font-weight:700; color:#34d399; background:rgba(52,211,153,0.12); padding:1px 6px; border-radius:4px;">RECOMMENDED</span>
+              </label>
+              <div id="setup-paper-hint" style="font-size:11px; color:var(--text3); line-height:1.5;">Paper mode is ON: simulated trades only, no real funds. The Decibel keys below are <b>optional</b> — activate now and complete onboarding later from Settings. Uncheck for LIVE on-chain trading (keys required).</div>
+            </div>
+            <script>
+              function onSetupPaperToggle(isPaper) {
+                var hint = document.getElementById('setup-paper-hint');
+                if (hint) hint.innerHTML = isPaper
+                  ? 'Paper mode is ON: simulated trades only, no real funds. The Decibel keys below are <b>optional</b> — activate now and complete onboarding later from Settings. Uncheck for LIVE on-chain trading (keys required).'
+                  : '⚠️ LIVE mode: real on-chain trading with real funds. A valid Delegate Signing Private Key and Decibel Subaccount are <b>required</b>.';
+                ['setup-subaccount-star', 'setup-delegate-star'].forEach(function (id) {
+                  var el = document.getElementById(id);
+                  if (el) el.style.display = isPaper ? 'none' : '';
+                });
+              }
+              document.addEventListener('DOMContentLoaded', function () { onSetupPaperToggle(true); });
+            </script>
+
             <!-- Field 1: Decibel Subaccount -->
             <div class="form-group" style="margin-bottom:0;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <label style="font-size:12px; font-weight:700; color:#e2e8f0; margin-bottom:0;">Decibel Subaccount / Account <span style="color:#ef4444;">*</span></label>
+                <label style="font-size:12px; font-weight:700; color:#e2e8f0; margin-bottom:0;">Decibel Subaccount / Account <span id="setup-subaccount-star" style="color:#ef4444;">*</span></label>
                 <span style="font-size:10px; font-weight:700; color:#34d399; background:rgba(52,211,153,0.12); padding:1px 6px; border-radius:4px;">Holds USDC Collateral</span>
               </div>
               <input type="text" id="setup-subaccount" oninput="onSetupSubaccountInput(this.value)" placeholder="0x... (from Decibel DEX)"
@@ -9516,7 +9543,7 @@
             <!-- Field 2: Delegate Private Key -->
             <div class="form-group" style="margin-bottom:0;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <label style="font-size:12px; font-weight:700; color:#e2e8f0; margin-bottom:0;">Delegate Signing Private Key <span style="color:#ef4444;">*</span></label>
+                <label style="font-size:12px; font-weight:700; color:#e2e8f0; margin-bottom:0;">Delegate Signing Private Key <span id="setup-delegate-star" style="color:#ef4444;">*</span></label>
                 <span style="font-size:10px; font-weight:700; color:#60a5fa; background:rgba(96,165,250,0.12); padding:1px 6px; border-radius:4px;">Order Signing Only</span>
               </div>
               <input type="password" id="setup-delegate-key" oninput="onDelegateKeyInput(this.value, 'setup')"
@@ -10390,6 +10417,10 @@
               </div>
 
               <div class="settings-guardrails-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+                <div style="grid-column:1 / -1; display:flex; align-items:center; justify-content:space-between; background:var(--bg3); border:1px solid rgba(52,211,153,0.35); border-radius:6px; padding:9px 12px;">
+                  <label for="set-paper-trading" style="font-size:12px; font-weight:700; color:#34d399; cursor:pointer;">📄 Paper Trading <span style="font-size:10px; color:var(--text3); font-weight:600;">(ON = simulated trades only · OFF = LIVE on-chain, real funds)</span></label>
+                  <input type="checkbox" id="set-paper-trading" checked onchange="onSettingsPaperToggle(this)" style="width:18px; height:18px; accent-color:#34d399; cursor:pointer;" />
+                </div>
                 <div>
                   <label
                     style="display:block; font-size:12px; font-weight:700; color:#34d399; margin-bottom:4px;">Budget
@@ -12006,14 +12037,21 @@
     // ── Tab routing & Pre-Onboard Menu Lock ─────────────────────────────────────────
     let isAppConfigured = localStorage.getItem('alpha_is_configured') === 'false' ? false : true;
 
-    function updateOnboardingMenuLock(configured) {
+    let isPaperActivated = false;
+    function updateOnboardingMenuLock(configured, paperActivated) {
+      if (typeof paperActivated === 'boolean') {
+        isPaperActivated = paperActivated;
+      }
       if (typeof configured === 'boolean') {
         isAppConfigured = configured;
         try {
           localStorage.setItem('alpha_is_configured', configured ? 'true' : 'false');
         } catch (e) {}
       }
-      if (!isAppConfigured) {
+      const paperUnlocked = !isAppConfigured && isPaperActivated;
+      const paperBanner = document.getElementById('paper-mode-banner');
+      if (paperBanner) paperBanner.style.display = paperUnlocked ? 'flex' : 'none';
+      if (!isAppConfigured && !paperUnlocked) {
         document.body.classList.add('pre-onboard-locked');
         document.querySelectorAll('.nav-item:not([data-tab="dashboard"])').forEach(el => {
           el.setAttribute('title', '🔒 Complete Onboarding Setup first to unlock');
@@ -12028,7 +12066,7 @@
 
     document.querySelectorAll('.nav-item[data-tab]').forEach(el => {
       el.addEventListener('click', (e) => {
-        if (isAppConfigured === false && el.dataset.tab !== 'dashboard') {
+        if (isAppConfigured === false && !isPaperActivated && el.dataset.tab !== 'dashboard') {
           e.preventDefault();
           e.stopPropagation();
           switchTab(el.dataset.tab);
@@ -12046,7 +12084,7 @@
       if (!tab) tab = 'dashboard';
 
       // Enforce Pre-Onboard Gate: Block other tabs only if explicitly confirmed unconfigured
-      if (isAppConfigured === false && tab !== 'dashboard') {
+      if (isAppConfigured === false && !isPaperActivated && tab !== 'dashboard') {
         if (typeof showToastNotification === 'function') {
           showToastNotification('🔒 Please complete Onboarding Setup first to unlock this section.');
         }
@@ -12285,9 +12323,9 @@
     function renderStats(statsData, state) {
       const stats = (statsData && statsData.stats) ? statsData.stats : statsData;
       if (typeof state?.isConfigured === 'boolean') {
-        updateOnboardingMenuLock(state.isConfigured);
+        updateOnboardingMenuLock(state.isConfigured, state.paperActivated);
       } else if (typeof lastState?.isConfigured === 'boolean') {
-        updateOnboardingMenuLock(lastState.isConfigured);
+        updateOnboardingMenuLock(lastState.isConfigured, lastState.paperActivated);
       }
       const isConfigured = isAppConfigured;
 
@@ -22852,6 +22890,7 @@
             if (hintEl) hintEl.textContent = `(Wallet balance: $${maxWallet.toFixed(2)})`;
           }
         }
+        if (document.getElementById('set-paper-trading')) document.getElementById('set-paper-trading').checked = (trading.paperTrading ?? s.paperTrading ?? true) !== false;
         if (document.getElementById('set-min-leverage')) document.getElementById('set-min-leverage').value = trading.minLeverage ?? s.minLeverage ?? 5;
         if (document.getElementById('set-max-leverage')) document.getElementById('set-max-leverage').value = trading.maxLeverage ?? s.maxLeverage ?? 12;
         if (document.getElementById('set-min-position-usd')) document.getElementById('set-min-position-usd').value = trading.minPositionUsd ?? s.minPositionUsd ?? 0;
@@ -22991,6 +23030,7 @@
           secondaryProvider: secProv,
           secondaryModel: secModel,
           secondaryCustomBaseUrl: secUrl,
+          paperTrading: document.getElementById('set-paper-trading')?.checked ?? true,
         };
         if (key && !key.startsWith('•')) {
           payload.aiApiKey = key;
@@ -23261,6 +23301,7 @@
           maxLeverage: maxLeverage,
           minAllocPct: minAllocPct,
           maxAllocPct: maxAllocPct,
+          paperTrading: document.getElementById('set-paper-trading')?.checked ?? true,
           defaultStopLossPct: parseFloat(document.getElementById('set-stop-loss-pct')?.value) || 1.5,
           defaultTakeProfitPct: parseFloat(document.getElementById('set-take-profit-pct')?.value) || 3.0,
           maxOpenPositions: parseInt(document.getElementById('set-max-open-positions')?.value, 10) || 3,
@@ -23468,6 +23509,7 @@
           secondaryProvider: secProv,
           secondaryModel: secModel,
           secondaryCustomBaseUrl: secUrl,
+          paperTrading: document.getElementById('set-paper-trading')?.checked ?? true,
           budgetUsd: budgetUsd,
           minPositionUsd: parseFloat(document.getElementById('set-min-position-usd')?.value) || 0,
           maxPositionUsd: maxPositionUsd,
@@ -26538,6 +26580,44 @@
 
     </div>
   </div>
+  <div id="live-confirm-modal" style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.78); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#0f172a; border:1px solid rgba(239,68,68,0.5); border-radius:12px; padding:22px; max-width:440px; width:92%;">
+      <div style="font-size:16px; font-weight:800; color:#f87171; margin-bottom:8px;">⚠️ Switch to LIVE trading?</div>
+      <p style="font-size:13px; color:#e2e8f0; line-height:1.6;">This turns Paper Trading <b>OFF</b>. Once you save settings, the agent will place <b>real on-chain orders</b> with real funds using your configured Decibel delegate key.</p>
+      <label style="display:flex; gap:8px; align-items:flex-start; font-size:12px; color:#e2e8f0; margin:12px 0;">
+        <input type="checkbox" id="live-confirm-check" onchange="onLiveConfirmCheck(this)" style="margin-top:2px;" /> I understand this enables real-money trading.
+      </label>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button onclick="cancelLiveSwitch()" style="background:var(--bg3); border:1px solid var(--border); color:#e2e8f0; font-size:12px; font-weight:700; border-radius:7px; padding:8px 14px; cursor:pointer;">Stay on Paper</button>
+        <button id="live-confirm-btn" onclick="confirmLiveSwitch()" disabled style="background:#dc2626; border:1px solid rgba(239,68,68,0.7); color:#fff; font-size:12px; font-weight:800; border-radius:7px; padding:8px 14px; cursor:pointer; opacity:0.55;">Switch to LIVE</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    function onSettingsPaperToggle(el) {
+      if (!el.checked) {
+        el.checked = true; // stay on paper until the switch is explicitly confirmed
+        var m = document.getElementById('live-confirm-modal');
+        if (m) m.style.display = 'flex';
+      }
+    }
+    function onLiveConfirmCheck(el) {
+      var b = document.getElementById('live-confirm-btn');
+      if (b) { b.disabled = !el.checked; b.style.opacity = el.checked ? '1' : '0.55'; }
+    }
+    function cancelLiveSwitch() {
+      var m = document.getElementById('live-confirm-modal');
+      if (m) m.style.display = 'none';
+      var c = document.getElementById('live-confirm-check');
+      if (c) c.checked = false;
+      onLiveConfirmCheck({ checked: false });
+    }
+    function confirmLiveSwitch() {
+      var t = document.getElementById('set-paper-trading');
+      if (t) t.checked = false;
+      cancelLiveSwitch();
+    }
+  </script>
 </body>
 
 </html>
