@@ -1247,16 +1247,10 @@ export class TradeExecutor {
           const limitPrice = signal.limitPrice;
           const allowTakerFallback = directivesAny?.layer5?.allowTakerFallback === true || signal.confidence >= 75;
 
-          // Dynamic maker fill timeout: adaptive by regime (30s trending/high-vol, 60s range, default 45s)
-          let defaultTimeoutMs = 45000;
-          if (regime === 'HIGH_VOLATILITY' || regime === 'TRENDING_BREAKOUT') {
-            defaultTimeoutMs = 30000;
-          } else if (regime === 'RANGE_BOUND' || regime === 'COMPRESSION') {
-            defaultTimeoutMs = 60000;
-          }
-
+          // 1 Full Candle Waiting Period (default 15m = 900,000ms / 5m = 300,000ms)
+          const defaultCandleWindowMs = 15 * 60 * 1000;
           const makerTimeoutMs = directivesAny?.makerFillTimeoutMs 
-            || (directivesAny?.optimalEntry?.ttlSeconds ? Math.min(300000, directivesAny.optimalEntry.ttlSeconds * 1000) : defaultTimeoutMs);
+            || (directivesAny?.optimalEntry?.ttlSeconds ? directivesAny.optimalEntry.ttlSeconds * 1000 : defaultCandleWindowMs);
 
           liveResult = await this.executeOnChain(
             signal.symbol,
@@ -1759,14 +1753,9 @@ export class TradeExecutor {
     }
 
     if (isMakerPostOnly) {
-      // Regime-Adaptive Dynamic Timeout (calibrated to 30s-60s to allow healthy pullbacks)
-      let adaptiveTimeoutMs = makerTimeoutMs ?? 45000;
-      if (regime === 'HIGH_VOLATILITY' || regime === 'TRENDING_BREAKOUT') {
-        adaptiveTimeoutMs = Math.min(adaptiveTimeoutMs, 30000);
-      } else if (regime === 'RANGE_BOUND' || regime === 'COMPRESSION') {
-        adaptiveTimeoutMs = Math.max(adaptiveTimeoutMs, 60000);
-      }
-      const timeoutMs = Math.max(30000, Math.min(300000, adaptiveTimeoutMs));
+      // 1 Full Candle Waiting Window: Honoring strategy/operator setting (default 15m = 900,000ms, floor 300,000ms = 5m)
+      const defaultCandleWindowMs = 15 * 60 * 1000;
+      const timeoutMs = Math.max(300000, makerTimeoutMs ?? defaultCandleWindowMs);
       const symUpper = symbol.replace('-', '/').toUpperCase();
       const baseConfidence = initialConfidence || 72;
       const minConfidenceGate = confidenceFloor || 68;
@@ -2359,7 +2348,7 @@ export class TradeExecutor {
   /**
    * Tier 1: 30% Dynamic Gap Harvest (Banks cash + covers fees, snaps SL to BE + 0.30%)
    */
-  public async execute30PercentHarvest(symbol: string): Promise<boolean> {
+  public async execute30PercentHarvest(symbol: string, closeRatio: number = 0.30): Promise<boolean> {
     const norm = (s: string) => (s || '').toUpperCase().replace(/[-_/]/g, '');
     const symKey = norm(symbol);
     const trade = this.tradesCache.find(
@@ -2371,22 +2360,25 @@ export class TradeExecutor {
     const symMark = trade.symbol.replace('-', '/').toUpperCase();
     this.markExecutionInFlight(symMark);
 
+    const safeRatio = Math.max(0.05, Math.min(0.95, closeRatio));
+    const remainRatio = 1 - safeRatio;
+
     try {
       if (!trade.isPaper && this.aptos && this.aptosAccount) {
-        logger.info(`⚡ [TIER 1 HARVEST] Executing 30% on-chain partial close for ${trade.symbol}...`);
-        const res = (await mcpClient.closePosition(trade.symbol, 0.30)) as any;
+        logger.info(`⚡ [TIER 1 HARVEST] Executing ${(safeRatio * 100).toFixed(0)}% on-chain partial close for ${trade.symbol}...`);
+        const res = (await mcpClient.closePosition(trade.symbol, safeRatio)) as any;
         if (res && res.error) {
           logger.warn(`⚠️ [TIER 1 HARVEST] On-chain partial close warning: ${res.error}`);
         }
       }
 
       trade.harvest30Done = true;
-      const bankedSizeBase = Number((trade.sizeBase * 0.30).toFixed(4));
-      trade.sizeBase = Number((trade.sizeBase * 0.70).toFixed(4));
+      const bankedSizeBase = Number((trade.sizeBase * safeRatio).toFixed(4));
+      trade.sizeBase = Number((trade.sizeBase * remainRatio).toFixed(4));
       trade.sizeUsd = Number((trade.sizeBase * trade.entryPrice).toFixed(2));
-      trade.allocatedUsd = Number((trade.allocatedUsd * 0.70).toFixed(2));
+      trade.allocatedUsd = Number((trade.allocatedUsd * remainRatio).toFixed(2));
 
-      // Snap Stop Loss to Breakeven + 0.30% fee cover
+      // Snap Stop Loss to Breakeven + fee cover buffer (defaults to +0.30%)
       const beFloor = Number((isLong
         ? trade.entryPrice * 1.003
         : trade.entryPrice * 0.997).toFixed(4));
@@ -2397,7 +2389,7 @@ export class TradeExecutor {
       const pnlPctEstimate = isLong
         ? ((trade.currentPrice || trade.entryPrice) - trade.entryPrice) / trade.entryPrice * 100 * trade.leverage
         : (trade.entryPrice - (trade.currentPrice || trade.entryPrice)) / trade.entryPrice * 100 * trade.leverage;
-      const bankedUsdEstimate = Number(((trade.allocatedUsd / 0.70 * 0.30) * pnlPctEstimate / 100).toFixed(2));
+      const bankedUsdEstimate = Number(((trade.allocatedUsd / remainRatio * safeRatio) * pnlPctEstimate / 100).toFixed(2));
       trade.partialRealizedPnlUsd = (trade.partialRealizedPnlUsd || 0) + Math.max(0, bankedUsdEstimate);
 
       if (!trade.lifecycleEvents) trade.lifecycleEvents = [];

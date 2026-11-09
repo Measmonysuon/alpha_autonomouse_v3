@@ -351,7 +351,9 @@ export class PortfolioHarvester {
 
       // ── Robust Island Dynamic Amber Band Gap Harvest (Tier 1: 30% Scale-Out -> Tier 2: 50% Full Exit) ──
       const normSym = trade.symbol.toUpperCase().replace(/[-_/]/g, '');
-      const isTargetAsset = normSym.includes('SOL') || normSym.includes('ETH');
+      const isTargetAsset = (activeStratL5 as any)?.targetAssets && (activeStratL5 as any).targetAssets.length > 0
+        ? (activeStratL5 as any).targetAssets.some((t: string) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')))
+        : (normSym.includes('SOL') || normSym.includes('ETH'));
       const isRobustHarvestTrade = Boolean(trade.noFixedTp || (isTargetAsset && activeStratL5?.noFixedTp));
 
       if (isRobustHarvestTrade && currentPrice > 0) {
@@ -363,8 +365,8 @@ export class PortfolioHarvester {
           if (currentPrice < trade.peakPrice) trade.peakPrice = currentPrice;
         }
 
-        // Must achieve at least +0.20% peak gain before any reversal harvest can fire
-        const minExpansionPct = 0.0050; // Meaningful post-breakaway expansion required (>= +0.50%)
+        // Dynamic minimum post-breakaway expansion required (defaults to >= +0.50%)
+        const minExpansionPct = (activeStratL5 as any)?.minExpansionPct ?? 0.0050;
         const hadSubstantialProfit = isLong
           ? (trade.peakPrice >= trade.entryPrice * (1 + minExpansionPct))
           : (trade.peakPrice <= trade.entryPrice * (1 - minExpansionPct));
@@ -372,38 +374,41 @@ export class PortfolioHarvester {
         let gap30 = trade.gap30Price;
         let gap50 = trade.gap50Price;
 
-        // Continuously refresh dynamic Amber Band SMAs from live telemetry
+        // Continuously refresh dynamic Amber Band SMAs from live telemetry or strategy lambdas
         try {
           const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
           const pairRolling = getPairRollingDirectives(trade.symbol);
           if (pairRolling?.currentFastSma && pairRolling?.currentSlowSma) {
             const innerSma = pairRolling.exit3FastSma ?? pairRolling.currentFastSma;
             const longerSma = pairRolling.exit3SlowSma ?? pairRolling.currentSlowSma;
-            gap30 = Number((0.70 * innerSma + 0.30 * longerSma).toFixed(4));
-            gap50 = Number((0.50 * innerSma + 0.50 * longerSma).toFixed(4));
+            const lambda30 = (activeStratL5 as any)?.dynamicGapLambda ?? 0.30;
+            const lambda50 = (activeStratL5 as any)?.dynamicGapExitLambda ?? 0.50;
+            gap30 = pairRolling.gap30Price ?? Number(((1 - lambda30) * innerSma + lambda30 * longerSma).toFixed(4));
+            gap50 = pairRolling.gap50Price ?? Number(((1 - lambda50) * innerSma + lambda50 * longerSma).toFixed(4));
             trade.gap30Price = gap30;
             trade.gap50Price = gap50;
           }
         } catch {}
 
         if (gap30 && gap50) {
-          // Tier 1: Price reverses/retraces back down (LONG) or up (SHORT) into Amber Band (30% Gap Level) after substantial profit expansion
+          // Tier 1: Price reverses/retraces back down (LONG) or up (SHORT) into Amber Band (Dynamic Gap Level 1) after substantial profit expansion
           const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
           if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
+            const partialRatio = (activeStratL5 as any)?.tp1CloseRatio ?? 0.30;
             logger.info(
-              `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to 30% Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing 30% partial close & locking BE+0.30%!`,
+              `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing ${(partialRatio * 100).toFixed(0)}% partial close & locking BE+0.30%!`,
             );
-            tradeExecutor.execute30PercentHarvest(trade.symbol).catch((err: any) => {
+            tradeExecutor.execute30PercentHarvest(trade.symbol, partialRatio).catch((err: any) => {
               logger.error(`execute30PercentHarvest failed: ${err.message}`);
             });
           }
 
           // Tier 2: Price reverses further to 50% Gap Midpoint Touch -> 100% Terminal Take Profit All!
-          // Invariant: Must have already banked Tier 1 (30% cash) to qualify as a valid midpoint harvest runner close
+          // Invariant: Must have already banked Tier 1 (cash bank) to qualify as a valid midpoint harvest runner close
           const isTier2Reached = isLong ? (currentPrice <= gap50) : (currentPrice >= gap50);
           if (isTier2Reached && trade.harvest30Done) {
             logger.info(
-              `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached 50% Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)} and 30% bank. Executing 100% Full Take Profit Close!`,
+              `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)} and cash bank. Executing 100% Full Take Profit Close!`,
             );
             tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
               logger.error(`execute50PercentTerminalClose failed: ${err.message}`);

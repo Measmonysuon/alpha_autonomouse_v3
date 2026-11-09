@@ -13,7 +13,7 @@
 # YOU MUST UPDATE THIS FILE to ensure zero code conflicts, redundancy, or regression.
 # ==============================================================================
 
-Last Updated: 2026-11-06 (Section XXXIV: Fleet Champion V3 Architecture, Pure Robust Island Exit #3, Rectified Reversal Corridor, & Sovereign Multi-Tier Risk Contract)
+Last Updated: 2026-11-09 (Section XLI: Robust Island #1 Entry Cross, #3 Amber Band Dynamic Harvest Exit, #4 Pullback Retest Limit Order, & 1-Candle Window Rectification)
 Operating DEX: Decibel DEX on Aptos Mainnet (CLOB Perp DEX)
 Network Protocol: Aptos Move Contracts (`0x50ead22afd6ffd9769e3b3d6e0e64a2a350d68e8b102c4e72e33d0b8cfdfdb06`)
 
@@ -4554,4 +4554,218 @@ UNIFIED MASTERDATAHUB INTERNAL STATE BUS, AND DYNAMIC PILLAR 5 MLOps STUDIO
 * **Live Verification on Jetson Port 4000**:
   - Tested: `/api/state` and `/api/stats` both return `totalPnlUsd: -2592.52`, `autoWins: 820`, `autoLosses: 591`, `cycleCount: 1`. Zero flickering.
 
+---
 
+## SECTION XL: COINGLASS DATA SOURCE GATING & ZERO-QUOTA PUBLIC MULTI-VENUE ORDERFLOW FAILOVER ARCHITECTURE
+
+### 1. Root Cause of CoinGlass Hardcoded Fallback
+* **Problem**: In the Sim Lab Dashboard, `🌊 Flow Sentinel & Kyle's λ` permanently displayed static figures:
+  - `+$26.0M (4h) | +$344.8M (24h)`
+  - Inflow Leaders: `['BTC', 'SOL', 'SUI', 'ETH', 'HYPE']`
+  - Quarantined Bleeders: `['UNI', 'LTC', 'XLM', 'NEAR', 'ENA', 'LDO']`
+* **Investigation & Findings**:
+  1. *CoinGlass V4 API Gating*: Comprehensive probing of the configured `COINGLASS_API_KEY` across all CoinGlass V4 and V3 endpoints revealed that netflow endpoints (`/api/spot/coin/netflow`, `/api/spot/netflow-list`, `/api/futures/netflow/statistics`), liquidation heatmaps, and open interest charts return HTTP 200 with `code: '401', msg: 'Upgrade plan'`.
+  2. *Hardcoded Catch Block in `netflow-sentinel.ts`*: Because CoinGlass blocked access, `netflow-sentinel.ts` lines 259–265 fell back to static constants (`btc4h = 26_000_000`, `btc24h = 344_830_000`, `DEFAULT_INFLOW_LEADERS`, `DEFAULT_OUTFLOW_BLEEDERS`). Even though assets like `NEAR` (+2.9%) and `UNI` (+1.7%) were pumping, they remained hardcoded as "bleeders" in quarantine.
+  3. *Static Initial Placeholders in `dashboard/index.html`*: Lines 9340–9366 contained static HTML matching the hardcoded constants.
+
+---
+
+### 2. Multi-Venue Zero-Quota Public Architecture
+To ensure the Master Data Hub is 100% accurate, dynamic, and resilient without depending on expensive closed API tiers:
+1. **Dynamic Netflow Synthesizer (`netflow-sentinel.ts`)**:
+   - **Binance 4h Taker Buy/Sell Volume (`fapi.binance.com/futures/data/takerlongshortRatio`)**: Fetches rolling 6 periods of 4-hour aggressive taker executions. Computes exact institutional capital flow: `(buyVol - sellVol) * btcPrice` for both 4h and 24h.
+   - **CryptoQuant On-Chain Custody Delta (`cryptoquant-client.ts`)**: Incorporates physical exchange reserve changes (`-450 BTC` cold storage accumulation drain $\approx -$34.2M).
+   - **Dynamic Inflow Leaders & Bleeder Ranking (`api.binance.com/api/v3/ticker/24hr`)**: Queries live 24h performance across the tracked liquid universe (`BTC`, `ETH`, `SOL`, `SUI`, `APT`, `AVAX`, `DOGE`, `BNB`, `XRP`, `NEAR`, `UNI`, `LTC`, `ENA`, `LDO`, `LINK`, `ADA`).
+     - Dynamically ranks assets by 24h momentum and directional capital flow (`quoteVolume * (priceChangePct / 100) * 0.15`).
+     - Top 5 positive performers $\rightarrow$ `inflowLeaders` (protected from shorts under TradFi Hedging).
+     - Bottom 5 negative performers $\rightarrow$ `outflowBleeders` (dynamically quarantined from long dip-buys).
+     - Aggregate netflow across all tracked pairs is derived dynamically from total directional capital delta.
+   - **Multi-Tier Cascade**: Attempts CoinGlass V4 first; upon 401 or network failure, seamlessly cascades to the dynamic public multi-venue synthesizer. Zero hardcoded fallbacks remain.
+
+2. **MultiVenue Failover in `coinglass/client.ts`**:
+   - `getUserSubscription()`: Auto-detects 401 tier restrictions and marks tier as `COMMUNITY_FREE` (logging multi-venue public failover).
+   - `getOpenInterest()`, `getLongShortRatio()`, `getTopTraderPositionRatio()`, `getAggregatedCVD()`, `getPredictedFundingRate()`: Automatically failover to `multiVenueProvider` (combining Binance, Bybit, and Hyperliquid) when CoinGlass returns null/401.
+   - `getTopCoins()`: Dynamically queries Binance 24h tickers to rank top volume and volatility candidates when CoinGlass returns empty.
+
+3. **Master World State & Dashboard Synchronization**:
+   - `world-state-orchestrator.ts`: Attached dynamic `netflow: netflowSentinel.getSyncTelemetry()` to `WorldStateAggregate` and updated BTC baseline reference price to live levels ($76k+ via CoinGecko benchmark).
+   - `dashboard/index.html`: Cleared static placeholders from Column 5; displays live multi-venue orderflow badge.
+
+---
+
+### 3. Live Verification on Jetson Port 4000
+* **API Endpoints Verified**:
+  - `GET /api/state` and `GET /api/macro/world-state` both stream dynamic real-world telemetry:
+    - `btcNetflow4hUsd`: `-$100.2M`
+    - `btcNetflow24hUsd`: `-$206.5M`
+    - `inflowLeaders`: `["NEAR", "SUI", "LINK", "ADA", "AVAX"]`
+    - `outflowBleeders`: `["LDO", "XRP", "APT", "LTC", "UNI"]`
+    - `regime`: `SIMULTANEOUS_OUTFLOW` (TradFi SPX -0.84%, NDX -1.15%, VIX 25.64; Crypto Netflow -$206.5M $\rightarrow$ `bannedSide: LONG`)
+* **Integrity**: 100% of indicators and sentinels across the Master Data Hub are driven by live external exchange and on-chain feeds. Zero static mock constants.
+
+---
+
+## SECTION XLI: AUTONOMOUS PULLBACK RETEST LIMIT ORDER ARCHITECTURE (#4), TRI-PILLAR EXECUTION MODEL, & 1-CANDLE RESTING WINDOW RECTIFICATION
+
+### 1. Macro Context & 3-Day Downtrend Forensic Audit (Nov 6–9, 2026)
+* **Dataset Audited**: 1,200 authentic 15m candles and 3,600 5m candles across Bybit linear perpetual feeds (Nov 6, 2026 01:45 UTC to Nov 9, 2026 04:45 UTC).
+* **Observed Price Action**:
+  - `SOL/USDT`: $90.02 → $87.58 (-2.71%)
+  - `ETH/USDT`: $2,237.71 → $2,142.11 (-4.27%)
+  - `BTC/USDT`: $76,082.60 → $74,986.20 (-1.44%)
+  - `SUI/USDT`: $0.8604 → $0.8346 (-3.00%)
+* **Root-Cause Analysis of Zero Limit Order Fills**:
+  1. *The Maker Offset Trap (`close * (1 + 0.0008)`)*: When short signals triggered on candle close, the engine placed ask limit orders 8 bps above the close. In a trending breakdown, subsequent candles dumped further; BTC reached +8 bps in the next 5m bar only 23.8% of the time, and ETH only 33.8%.
+  2. *The Premature 30s Regime Clamp in `executor.ts`*: Although the operator configured resting orders to wait for about 1 candle period, `executor.ts#L1764-L1768` contained `Math.min(adaptiveTimeoutMs, 30000)` under `HIGH_VOLATILITY` and `TRENDING_BREAKOUT` regimes, clamping the waiting window down to 30 seconds. Orders timed out and cancelled with `Maker order unfilled`.
+  3. *Universal Candle Gate Over-Filtering*: Any green relief candle without an upper wick ≥ 35% was vetoed as `UNCONFIRMED_PUMP_EXHAUSTION`, capping confidence at 45% (aborting >35% of all candles). When the bot waited for a red candle, price had already dumped far from dynamic resistance.
+  4. *EMA 21 Breakdown Overextension*: Distance to value was calculated exclusively against EMA 21. When price dumped >1.8% below EMA 21, confidence was capped at 55% as `CHASED_BREAKDOWN`, even when price was resting directly against Fast SMA resistance.
+
+---
+
+### 2. Side-by-Side Replay Matrix ($30 Margin @ 10x Lev = $300 Notional)
+
+| Performance Metric | Model A: Current Baseline | Model B: Fast SMA Fixed Retest | Model C: Flexible Cross + Sweet Spot |
+| :--- | :---: | :---: | :---: |
+| **Strategy Logic** | Limit @ Close + 8bps · EMA21 Envelope | Limit @ Fast SMA · ±0.35% Retest | Flexible Cross Lookback · Dynamic Sweet Spot Zone |
+| **Total Setups Detected** | 86 | 139 | **101** |
+| **Orders Filled** | 53 (61.6% in 30m, <10% in 45s) | 68 (48.9%) | **101 (100% Instant Fill)** |
+| **Unfilled Orders** | 33 | 71 | **0** |
+| **Win Rate %** | 49.1% | 54.4% | **49.5%** |
+| **Net Realized PnL ($)** | +$11.50 | +$25.60 | **+$23.01** |
+| **Profit Factor** | 1.37 | 1.82 | **1.71** |
+| **Max Drawdown ($)** | $12.45 | $9.80 | **$8.42** |
+| **30% Gap Harvest Rate** | 41.5% | 50.0% | **47.5%** |
+| **Catastrophic Hard SL Rate** | 22.6% | 14.7% | **11.9%** |
+
+*Per-Pair Real Performance Breakdown in Model C*:
+- `SOL/USDT`: Model A lost -$6.76 (WR 37.5%) → Model C produced +$8.65 (WR 55.2%, 29/29 filled).
+- `ETH/USDT`: Model A made +$6.19 → Model C produced +$11.67 (WR 54.5%, 22/22 filled).
+- `BTC/USDT`: Model A lost -$3.60 (WR 25.0%) → Model C produced +$0.87 (WR 34.8%, 23/23 filled).
+- `SUI/USDT`: Model A made +$15.67 → Model C produced +$1.82 (Model B produced +$8.79, WR 68.4%).
+
+---
+
+### 3. Parameter Grid Search & Asset-Specific Sweet Spots
+128-combination parameter grid sweep across candidate SMAs (8–21), tolerance bands (±0.15% to ±0.50%), and upper wick thresholds (15%–30%):
+* **Rank #4 Gold Standard**: SMA 21 (or 18) with ±0.15% tolerance and ≥20% wick delivered **69.7% Win Rate**, **3.81 Profit Factor**, and **$4.35 Max Drawdown**.
+* **Per-Asset Volatility Calibration**:
+  - `SOL/USD`: Fast SMA **9** / Slow SMA **36** (Retest tolerance ±0.25%, 58.1% WR, +$7.94 PnL).
+  - `ETH/USD`: Fast SMA **12** / Slow SMA **48** (Retest tolerance ±0.25%, 60.0% WR, +$12.62 PnL).
+  - `BTC/USD`: Fast SMA **10** / Slow SMA **40** (Retest tolerance ±0.20%, 50.0% WR, +$9.73 PnL).
+  - `SUI/USD`: Fast SMA **21** / Slow SMA **84** (Retest tolerance ±0.35%, 71.0% WR, +$26.94 PnL, PF 4.10).
+
+---
+
+### 4. Consolidated Tri-Pillar Execution Architecture
+
+1. **#1 Entry Trigger — Robust Island Fast/Slow SMA Cross & Alignment**:
+   - Primary directional bias and entry trigger driven by Robust Island SMA Crossover and Alignment (`smaFast < smaSlow` for Short, `smaFast > smaSlow` for Long).
+   - Flexible Cross Confirmed lookback: `barsSinceCross <= 24` or expanding spread $\ge 0.08\%$.
+2. **#3 Exit — Amber Band Dynamic Gap Harvest (Pure Exit #3)**:
+   - Dynamic 30% gap harvest ($\lambda = 0.30$) banks 30% partial profit → locks Stop Loss to Breakeven +0.30% buffer → trails to 50% midpoint terminal close ($\lambda = 0.50$).
+   - Strict Invariant Preserved: Zero static on-chain limit take-profit orders (`takeProfit1 = 0; takeProfit2 = 0; tp = 0;`).
+3. **#4 Limit Order Entry — Dynamic Pullback Retest Limit Order**:
+   - Resting limit order placed at the dynamic Fast SMA ceiling/floor:
+     $$\text{limitPrice} = \min(\text{candle.high}, \text{smaFast}) \quad \text{(for Shorts)}$$
+     $$\text{limitPrice} = \max(\text{candle.low}, \text{smaFast}) \quad \text{(for Longs)}$$
+   - Relaxed candle confirmation gate from 35% down to 20% upper wick when price is in the Fast SMA sweet spot.
+   - Evaluated `isPullbackBounce = true` near Fast SMA, preventing false `CHASED_BREAKDOWN` penalties.
+
+---
+
+### 5. Rectified 1-Candle Limit Order Window
+* **Elimination of 30s Clamp**: Removed `Math.min(adaptiveTimeoutMs, 30000)` from `executor.ts#L1764-L1768`.
+* **Full Candle Period Enforcement**: Standardized resting limit order window to `timeoutMs = Math.max(300000, makerTimeoutMs ?? 900000)` (900 seconds / 15 minutes default, or 300 seconds / 5 minutes for high-frequency mode).
+* **Adverse Selection Protection Maintained**: Only cancels early if live thesis degrades by ≥12% or drops below the confidence floor.
+
+---
+
+### 6. Fleet-Wide Synchronization Status
+* **Alpha Forge Sim Lab Server**:
+  - `continuous-rolling-daemon.ts`: Added `isCrossConfirmed`, `retestLimitShort`, `retestLimitLong`, `makerFillTimeoutMs: 900000`, and updated `DYNAMIC_PAIR_SMA_PROFILES` to (SOL: 9/36, ETH: 12/48, BTC: 10/40, SUI: 21/84).
+  - `templates.ts` & `manager.ts`: Synchronized `champion_confirmed_retest_harvest30` with `maxBarsSinceCrossover: 24`, `makerFillTimeoutMs: 900000`, and `fastSmaRetestTolerancePct: 0.25`.
+* **Alpha Autonomous Client V3**:
+  - `standalone-engine.ts`: Added `distToFastSmaPct` and `isNearFastSma`, updated `DYNAMIC_PAIR_SMA_PROFILES`, wired `#4 Retest Limit Order`, and calibrated `evaluatePullbackConfirmation`.
+  - `executor.ts`: Removed 30s regime clamp; resting orders now wait for the full 1-candle period.
+  - `sim-consumer.ts`: Synchronized telemetry schema with `retestLimitShort` and `retestLimitLong`.
+  - `templates.ts` & `manager.ts`: Synchronized `SIMLAB_PREMIUM_CHAMPION_TEMPLATE`.
+* **Verification**: `Alpha Forge Sim Lab Server` built with 0 errors; `alpha-autonomouse-client_v3` compiles cleanly and passes all 9/9 test suites (100%).
+
+
+
+
+
+
+---
+
+## SECTION XLII: INSTITUTIONAL DECOUPLING OF ENGINE RUNTIME TEMPLATE VS DECLARATIVE STRATEGY SPEC & MASTER INDICATOR DYNAMIC INGESTION
+
+### 1. Architectural Philosophy: The Immutable Engine Template vs Declarative Alpha Data
+* **The Institutional Problem**: In earlier iterations, algorithmic parameters (SMA periods, sweet-spot limit order formulas, amber band weights, partial close ratios, target pair whitelists) were tightly coupled into TypeScript source code (`standalone-engine.ts`, `portfolio-harvester.ts`, `executor.ts`, `templates.ts`). Tuning a strategy required modifying source files, rebuilding Docker bundles, and redeploying edge containers.
+* **The Institutional Solution**: Aligning with top-tier quantitative hedge fund and prop desk architecture (Citadel, Jane Street, Two Sigma, Jump Trading):
+  - **Execution Runtime (OMS/EMS) is an Immutable Template**: Compiles once and stays fixed. Exposes generic mathematical indicators, order geometry placers, and an $N$-tier dynamic exit state machine.
+  - **Strategy Spec is Pure Declarative Data**: Versioned JSON schema or AST defining the asset universe, indicator period matrix, entry rules, resting order TTL, and dynamic harvest triggers.
+  - **Zero-Downtime Hot-Reloading**: Sim Lab streams updated strategy packages or parameter patches over HTTP/SSE; client nodes hot-swap policies in memory on the next tick without recompiling.
+
+---
+
+### 2. Master Indicator Catalog Ready for Dynamic Execution in Client v3
+Client v3 provides built-in mathematical computation engines and state machines across all 6 layers:
+
+1. **Layer 0: Kronos Predictive AI & Trajectory Horizon**:
+   - `requireTrajectoryConfluence`: Vector alignment check with multi-hour deep learning forecasts.
+   - `minExpectedReturnPct` & `minEvRatio`: Expected payoff hurdle filters.
+   - `maxEntropyScore`: Market chaos/randomness ceiling ($\le 0.65$).
+   - `knifeShieldEnabled` & `meltUpShieldEnabled`: Parabolic momentum and falling knife vetoes.
+   - `forecastTargetPrice`: Dynamic soft take-profit snapping level.
+
+2. **Layer 1: Macro Trend, Moving Averages, Oscillators & Volume Dynamics**:
+   - **Dynamic Moving Averages**: Dynamic Fast SMA (`fastPeriod`: 5–30), Slow SMA (`slowPeriod`: 20–120), SMA Spread % (`smaSpreadPct`), Alignment (`smaAlignment`), and EMAs (9, 21, 50, 200).
+   - **Crossover & Pullback Dynamics**: Crossover confirmation (`isCrossConfirmed`), crossover age (`barsSinceCross`), sweet-spot distance (`distToFastSmaPct`), proximity status (`isNearFastSma`), and bounce verification (`isPullbackBounce`).
+   - **Oscillators & Volatility**: RSI 14 (40–60 healthy band), Stochastic RSI 14, ADX 14 ($\ge 20$), ATR 14 (volatility-scaled sizing), and RVOL surge multiplier ($\ge 1.3\times$).
+   - **Volume Profile**: Box Point of Control (POC), Value Area High (VAH), Value Area Low (VAL), and consolidation retest flags.
+
+3. **Layer 2: Derivatives Order Flow, Liquidity & Microstructure**:
+   - **Cumulative Volume Delta (CVD)**: Institutional accumulation/distribution trend (`cvdTrend: BUY/SELL`) and spot vs perp divergence.
+   - **Open Interest & Liquidation**: $\Delta$OI flush exhaustion ($\Delta\text{OI} < -1.5\%$), multi-venue liquidation cluster magnets ($\ge \$4\text{M}$), and max pain targets.
+   - **Funding & Sentiment**: Live/predicted funding carry limits ($<0.03\%$), crowd Long/Short skew (`lsRatio`), and $\$1\text{M}+$ aggressor whale tape bias (`whaleNetBias24h`).
+
+4. **Layer 3: Smart Money Concepts (SMC) & Structural Microstructure**:
+   - **Fair Value Gaps (FVG)**: 3-bar imbalance void detection, mitigation tracking, and boundary retest entry.
+   - **Liquidity Sweeps**: Buy-Side (BSL) and Sell-Side (SSL) sweeps with rejection wick verification.
+   - **Structure Shifts**: Break of Structure (BOS) and Change of Character (CHoCH) displacement.
+   - **Equilibrium & Dealing Range**: 50% Dealing Range Equilibrium (hard gate forbidding longs in Premium / shorts in Discount), EQH/EQL stop pool magnets, and Turtle Soup false breakout filters.
+
+5. **Layer 4: AI Risk Sentinel, Vetoes & Forensic Safety Shields**:
+   - **Candle Confirmation**: Universal Red Candle Knife Gate (blocks buying expanding red candles), Bull/Bear trap upper/lower wick sensitivity ($\ge 50\%$).
+   - **Forensic Shields**: Phantom orderbook spoofing veto, macro news freeze (CPI/FOMC/NFP lockouts), DefiLlama borrow APY veto ($>20\%$), and Counterfactual paper simulation expectancy quarantine ($<35\%$ WR).
+
+6. **Layer 5: Dynamic Execution Geometry, Retest Limits & Amber Band Harvester**:
+   - **Pillar #4 Retest Limit Order**: Post-Only Maker placement at sweet-spot boundary ($\min(\text{high}, \text{SMA}_{\text{fast}})$ for Short, $\max(\text{low}, \text{SMA}_{\text{fast}})$ for Long).
+   - **Resting Order Window**: Dynamic full 1-candle period ($300\text{s}$–$900\text{s}$).
+   - **Pillar #3 Dynamic Amber Band Harvester**: Dynamic gap calculations ($0.70\times\text{Fast} + 0.30\times\text{Slow}$ for Tier 1 30% partial close; $0.50\times\text{Fast} + 0.50\times\text{Slow}$ for Tier 2 100% full close).
+   - **Risk Parity Safety Cap**: Dynamic leverage calculation ensuring Soft SL < Catastrophic Liquidation.
+
+---
+
+### 3. Pipeline Ingestion & Runtime Generalization Code Updates
+* **`alpha-autonomouse-client_v3/src/pipeline/sim-consumer.ts`**:
+  - Ingests `isCrossConfirmed`, `retestLimitShort`, `retestLimitLong`, `gap30Price`, `gap50Price`, and `makerFillTimeoutMs` from Sim Lab's rolling window telemetry directly into `sanitizedPairDirectives`.
+* **`alpha-autonomouse-client_v3/src/engine/standalone-engine.ts`**:
+  - `limitPrice` prioritizes Sim Lab's pre-calculated retest limits (`retestLimitLong` / `retestLimitShort`) before falling back to local Fast SMA boundaries.
+  - Dynamically computes Amber Band exit prices using strategy lambda weights (`dynamicGapLambda: 0.30`, `dynamicGapExitLambda: 0.50`) when not pre-computed by Sim Lab.
+* **`alpha-autonomouse-client_v3/src/risk/portfolio-harvester.ts`**:
+  - Replaced hardcoded symbol whitelist with `activeStrategy.targetAssets`, allowing Sim Lab to dynamically route harvest logic across any asset.
+  - Harvest gap thresholds and partial close ratios (`tp1CloseRatio`) are resolved dynamically from active strategy configurations.
+* **`alpha-autonomouse-client_v3/src/trades/executor.ts`**:
+  - `execute30PercentHarvest(symbol, closeRatio = 0.30)` upgraded to accept parameterized partial close ratios and dynamic fee buffers.
+
+---
+
+### 4. Dual-Mode Institutional Operation
+* **Supercharged Mode (Connected to Sim Lab)**:
+  - Establishes persistent heartbeat and telemetry stream to Sim Lab (Port 4000).
+  - Ingests live alpha bundles every 15s; hot-swaps strategy directives, per-pair rolling parameters, and harvest levels in memory with zero restarts and zero code changes.
+* **Standalone Mode (Sovereign / Disconnected)**:
+  - Executes local declarative strategy files (`data/active-strategy.json`) against direct DEX/Pyth market data feeds.
+  - Automatically caches the latest Sim Lab Champion to disk (`data/cached-simlab-champion.json`), ensuring seamless offline fallback with zero strategy degradation if Sim Lab disconnects.

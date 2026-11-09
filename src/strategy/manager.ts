@@ -521,7 +521,7 @@ export function getActiveStrategy(): StrategyConfig {
         minAllocPct: userMinAlloc,
         maxAllocPct: userMaxAlloc,
         enforcePostOnly: true,
-        makerFillTimeoutMs: 300000,
+        makerFillTimeoutMs: 900000,
         allowTakerFallback: false,
         fastSmaTrailingStopEnabled: true,
         fastSmaTrailingBufferPct: 0.15,

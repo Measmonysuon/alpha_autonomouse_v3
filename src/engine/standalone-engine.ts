@@ -54,6 +54,8 @@ export interface TechnicalIndicators {
   isBottomWickRejection: boolean;
   isPullbackBounce: boolean;
   distToEma25Pct: number;
+  distToFastSmaPct?: number;
+  isNearFastSma?: boolean;
   pullbackStatus: 'IN_PULLBACK' | 'PULLBACK_BOUNCE' | 'CHASED_BREAKOUT' | 'CHASED_BREAKDOWN' | 'NORMAL';
   swingHigh: number;
   swingLow: number;
@@ -132,10 +134,10 @@ export const DEFAULT_STANDALONE_DIRECTIVES: StrategyDirectives = {
 
 // ─── Pair Dynamic Fast/Slow SMA Reference Profiles ─────────────────────────────
 export const DYNAMIC_PAIR_SMA_PROFILES: Record<string, { fast: number; slow: number }> = {
-  'BTC/USD': { fast: 18, slow: 64 },
-  'ETH/USD': { fast: 14, slow: 52 },
-  'SOL/USD': { fast: 12, slow: 48 },
-  'SUI/USD': { fast: 16, slow: 42 },
+  'BTC/USD': { fast: 10, slow: 40 },
+  'ETH/USD': { fast: 12, slow: 48 },
+  'SOL/USD': { fast: 9,  slow: 36 },
+  'SUI/USD': { fast: 21, slow: 84 },
   'APT/USD': { fast: 10, slow: 40 },
   'DOGE/USD': { fast: 11, slow: 42 },
   'AVAX/USD': { fast: 13, slow: 46 },
@@ -448,7 +450,9 @@ export function evaluatePullbackConfirmation(
     }
 
     const isRedCandle = ind.candleColor === 'RED';
-    const hasBuyerAbsorption = ind.lowerWickPct >= wickThreshold;
+    const isFastSmaRetestZoneLong = ind.isNearFastSma || (ind.distToFastSmaPct !== undefined && Math.abs(ind.distToFastSmaPct) <= 0.35);
+    const effectiveWickThresholdLong = isFastSmaRetestZoneLong ? Math.min(20, wickThreshold) : wickThreshold;
+    const hasBuyerAbsorption = ind.lowerWickPct >= effectiveWickThresholdLong;
 
     if (isRedCandle && !hasBuyerAbsorption) {
       if (isRebound && ind.lowerWickPct >= (wickThreshold * 0.7)) {
@@ -462,7 +466,7 @@ export function evaluatePullbackConfirmation(
         isConfirmed: false,
         verdict: 'UNCONFIRMED_FALLING_KNIFE',
         capScore: 45,
-        reason: `Pullback in progress on active red candle without buyer absorption (lower wick ${ind.lowerWickPct.toFixed(1)}% < ${wickThreshold.toFixed(1)}%). Waiting for candle to close green or print absorption wick before entry.`,
+        reason: `Pullback in progress on active red candle without buyer absorption (lower wick ${ind.lowerWickPct.toFixed(1)}% < ${effectiveWickThresholdLong.toFixed(1)}%). Waiting for candle to close green or print absorption wick before entry.`,
       };
     }
 
@@ -492,7 +496,9 @@ export function evaluatePullbackConfirmation(
     }
 
     const isGreenCandle = ind.candleColor === 'GREEN';
-    const hasSellerAbsorption = ind.upperWickPct >= wickThreshold;
+    const isFastSmaRetestZoneShort = ind.isNearFastSma || (ind.distToFastSmaPct !== undefined && Math.abs(ind.distToFastSmaPct) <= 0.35);
+    const effectiveWickThresholdShort = isFastSmaRetestZoneShort ? Math.min(20, wickThreshold) : wickThreshold;
+    const hasSellerAbsorption = ind.upperWickPct >= effectiveWickThresholdShort;
 
     if (isGreenCandle && !hasSellerAbsorption) {
       if (isRebound && ind.upperWickPct >= (wickThreshold * 0.7)) {
@@ -506,7 +512,7 @@ export function evaluatePullbackConfirmation(
         isConfirmed: false,
         verdict: 'UNCONFIRMED_PUMP_EXHAUSTION',
         capScore: 45,
-        reason: `Pullback rally in progress on active green candle without seller absorption (upper wick ${ind.upperWickPct.toFixed(1)}% < ${wickThreshold.toFixed(1)}%). Waiting for candle to close red or print rejection wick before shorting.`,
+        reason: `Pullback rally in progress on active green candle without seller absorption (upper wick ${ind.upperWickPct.toFixed(1)}% < ${effectiveWickThresholdShort.toFixed(1)}%). Waiting for candle to close red or print rejection wick before shorting.`,
       };
     }
 
@@ -1080,24 +1086,26 @@ export class StandaloneTradingEngine {
 
     const wick = calculateWickMetrics(opens[lastIdx], highs[lastIdx], lows[lastIdx], closes[lastIdx]);
 
-    // Pullback-to-Value Envelope: distance from current price to EMA21/EMA25
+    // Pullback-to-Value Envelope: distance from current price to EMA21/EMA25 and Fast SMA
     const distToEma25Pct = Number((((currentPrice - ema21) / ema21) * 100).toFixed(2));
+    const distToFastSmaPct = smaFast > 0 ? Number((((currentPrice - smaFast) / smaFast) * 100).toFixed(2)) : 0;
     const isNearEma = Math.abs(distToEma25Pct) <= 0.35;
+    const isNearFastSma = Math.abs(distToFastSmaPct) <= 0.35 || (closes[lastIdx] <= smaFast && highs[lastIdx] >= smaFast);
     let pullbackStatus: TechnicalIndicators['pullbackStatus'] = 'NORMAL';
     let isPullbackBounce = false;
 
-    if (isNearEma) {
+    if (isNearEma || isNearFastSma) {
       pullbackStatus = 'IN_PULLBACK';
-      if (structureTrend === 'BULLISH_STRUCTURE' && wick.lowerWickPct >= 35) {
+      if (structureTrend === 'BULLISH_STRUCTURE' && wick.lowerWickPct >= 20) {
         isPullbackBounce = true;
         pullbackStatus = 'PULLBACK_BOUNCE';
-      } else if (structureTrend === 'BEARISH_STRUCTURE' && wick.upperWickPct >= 35) {
+      } else if (structureTrend === 'BEARISH_STRUCTURE' && wick.upperWickPct >= 20) {
         isPullbackBounce = true;
         pullbackStatus = 'PULLBACK_BOUNCE';
       }
-    } else if (distToEma25Pct > 1.8) {
+    } else if (distToEma25Pct > 1.8 && distToFastSmaPct > 0.8) {
       pullbackStatus = 'CHASED_BREAKOUT';
-    } else if (distToEma25Pct < -1.8) {
+    } else if (distToEma25Pct < -1.8 && distToFastSmaPct < -0.8) {
       pullbackStatus = 'CHASED_BREAKDOWN';
     }
 
@@ -1148,6 +1156,8 @@ export class StandaloneTradingEngine {
       isBottomWickRejection: wick.isBottomWickRejection,
       isPullbackBounce,
       distToEma25Pct,
+      distToFastSmaPct,
+      isNearFastSma,
       pullbackStatus,
       swingHigh,
       swingLow,
@@ -1977,15 +1987,25 @@ export class StandaloneTradingEngine {
       : (isChop ? 0.0006 : isHighVol ? 0.0010 : 0.0008);
 
     if (isTriggered && action === 'LONG') {
-      // Top-of-book maker pricing: sits right behind the best ask (e.g. 6-8 bps)
-      // Guarantees #1 queue position on the bid side for rapid fills with 0% maker fees
-      limitPrice = Number((entry * (1 - dynamicOffset)).toFixed(4));
+      // Pullback Retest Limit Order #4: Prioritize Sim Lab pre-calculated maker limit, then fast SMA dynamic support floor, then top-of-book bid
+      if (simPairDir?.retestLimitLong && simPairDir.retestLimitLong > 0) {
+        limitPrice = Number(simPairDir.retestLimitLong.toFixed(4));
+      } else if (ind.smaFast && ind.smaFast > 0 && Math.abs(entry - ind.smaFast) / ind.smaFast <= 0.0075) {
+        limitPrice = Number(Math.max(klines[klines.length - 1].low, ind.smaFast).toFixed(4));
+      } else {
+        limitPrice = Number((entry * (1 - dynamicOffset)).toFixed(4));
+      }
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     } else if (isTriggered && action === 'SHORT') {
-      // Top-of-book maker pricing: sits right behind the best bid (e.g. 6-8 bps)
-      // Guarantees #1 queue position on the ask side for rapid fills with 0% maker fees
-      limitPrice = Number((entry * (1 + dynamicOffset)).toFixed(4));
+      // Pullback Retest Limit Order #4: Prioritize Sim Lab pre-calculated maker limit, then fast SMA dynamic resistance ceiling, then top-of-book ask
+      if (simPairDir?.retestLimitShort && simPairDir.retestLimitShort > 0) {
+        limitPrice = Number(simPairDir.retestLimitShort.toFixed(4));
+      } else if (ind.smaFast && ind.smaFast > 0 && Math.abs(entry - ind.smaFast) / ind.smaFast <= 0.0075) {
+        limitPrice = Number(Math.min(klines[klines.length - 1].high, ind.smaFast).toFixed(4));
+      } else {
+        limitPrice = Number((entry * (1 + dynamicOffset)).toFixed(4));
+      }
       orderType = 'POST_ONLY_LIMIT';
       postOnly = true;
     }
@@ -1994,13 +2014,16 @@ export class StandaloneTradingEngine {
     this.lastIndicatorsMap.set(symbol.replace('-', '/').toUpperCase(), ind);
     this.lastIndicatorsMap.set(symbol, ind);
 
-    let gap30PriceVal: number | undefined = undefined;
-    let gap50PriceVal: number | undefined = undefined;
-    if (ind.smaFast && ind.smaSlow) {
+    // Dynamic Amber Band Harvest Prices: Prioritize Sim Lab broadcast, then strategy lambda weights
+    let gap30PriceVal: number | undefined = simPairDir?.gap30Price;
+    let gap50PriceVal: number | undefined = simPairDir?.gap50Price;
+    if ((!gap30PriceVal || !gap50PriceVal) && ind.smaFast && ind.smaSlow) {
       const inner = ind.smaFast;
       const longer = ind.smaSlow;
-      gap30PriceVal = Number((0.70 * inner + 0.30 * longer).toFixed(4));
-      gap50PriceVal = Number((0.50 * inner + 0.50 * longer).toFixed(4));
+      const lambda30 = (activeStrategy.layer5 as any)?.dynamicGapLambda ?? 0.30;
+      const lambda50 = (activeStrategy.layer5 as any)?.dynamicGapExitLambda ?? 0.50;
+      if (!gap30PriceVal) gap30PriceVal = Number(((1 - lambda30) * inner + lambda30 * longer).toFixed(4));
+      if (!gap50PriceVal) gap50PriceVal = Number(((1 - lambda50) * inner + lambda50 * longer).toFixed(4));
     }
 
     return {

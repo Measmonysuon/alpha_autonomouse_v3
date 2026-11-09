@@ -62,8 +62,11 @@ export interface AlphaBundleResponse {
       robustScore: number;
       barsSinceCross?: number;
       isFreshCross?: boolean;
+      isCrossConfirmed?: boolean;
       priceRetestLong?: boolean;
       priceRetestShort?: boolean;
+      retestLimitShort?: number;
+      retestLimitLong?: number;
       trailingStopLong?: number;
       trailingStopShort?: number;
       priceVsFastSmaPct?: number;
@@ -454,8 +457,11 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
               robustScore: rw.robustScore,
               barsSinceCross: rw.barsSinceCross,
               isFreshCross: rw.isFreshCross,
+              isCrossConfirmed: rw.isCrossConfirmed,
               priceRetestLong: rw.priceRetestLong,
               priceRetestShort: rw.priceRetestShort,
+              retestLimitShort: rw.retestLimitShort,
+              retestLimitLong: rw.retestLimitLong,
               trailingStopLong: rw.trailingStopLong,
               trailingStopShort: rw.trailingStopShort,
               priceVsFastSmaPct: rw.priceVsFastSmaPct,
@@ -464,6 +470,7 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
               exit3GapDist: (rw as any).exit3GapDist,
               gap30Price: (rw as any).exit3Target30 ?? (dir as any)?.gap30Price,
               gap50Price: (rw as any).exit3Target50 ?? (dir as any)?.gap50Price,
+              makerFillTimeoutMs: rw.makerFillTimeoutMs ?? (dir as any)?.makerFillTimeoutMs,
             } : {}),
             ...(typeof dir.maxLeverage === 'number' ? { maxLeverage: Math.min(dir.maxLeverage, maxLeverageLimit) } : {}),
           };
