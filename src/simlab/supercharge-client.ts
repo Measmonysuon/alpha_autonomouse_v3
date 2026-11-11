@@ -380,6 +380,25 @@ export class SimLabSuperchargeClient {
   }
 
   /**
+   * Helper to retrieve candidate Sim Lab URLs in order of preference.
+   */
+  public getCandidateUrls(): string[] {
+    const list = [
+      this.serverUrl,
+      config.SIMLAB_SERVER_URL,
+      ...(DEFAULT_SIMLAB_CANDIDATE_URLS || []),
+    ];
+    const unique = new Set<string>();
+    for (const item of list) {
+      if (item && typeof item === 'string') {
+        const clean = item.trim().replace(/\/+$/, '');
+        if (clean) unique.add(clean);
+      }
+    }
+    return Array.from(unique);
+  }
+
+  /**
    * Connects to Sim Lab and establishes pairing & heartbeat.
    * STRICT REQUIREMENT: API Key is required for connection, even for local test instances.
    */
@@ -397,112 +416,90 @@ export class SimLabSuperchargeClient {
       return false;
     }
 
-    logger.info(`📡 [SIM LAB] Connecting to Sim Lab at ${this.serverUrl} with API key (${this.rawToken.slice(0, 10)}...)...`);
+    const candidateUrls = this.getCandidateUrls();
+    logger.info(`📡 [SIM LAB] Connecting to Sim Lab across candidate endpoints: [${candidateUrls.join(', ')}] with API key (${this.rawToken.slice(0, 10)}...)...`);
 
-    // 1. Try token pairing if token is provided
+    // 1. Try token pairing if token is provided across candidates
     if (this.rawToken.startsWith('simlab_live_')) {
-      try {
-        const payload = {
-          token: this.rawToken,
-          keyId: this.keyId,
-          clientId: config.CLIENT_ID || 'desk-04-macstudio',
-          clientName: config.CLIENT_NAME,
-          subaccountAddress: config.DECIBEL_SUBACCOUNT_ADDRESS,
-          delegateAddress: config.DECIBEL_OWNER_ADDRESS || '0x_delegate',
-          budgetUsd: config.BUDGET_USD,
-          paperTrading: config.PAPER_TRADING,
-          network: config.NETWORK,
-          timestamp: Date.now(),
-        };
+      const payload = {
+        token: this.rawToken,
+        keyId: this.keyId,
+        clientId: config.CLIENT_ID || 'desk-04-macstudio',
+        clientName: config.CLIENT_NAME,
+        subaccountAddress: config.DECIBEL_SUBACCOUNT_ADDRESS,
+        delegateAddress: config.DECIBEL_OWNER_ADDRESS || '0x_delegate',
+        budgetUsd: config.BUDGET_USD,
+        paperTrading: config.PAPER_TRADING,
+        network: config.NETWORK,
+        timestamp: Date.now(),
+      };
 
-        const res = await axios.post<PairingResponse>(
-          `${this.serverUrl}/api/clients/pair-by-token`,
-          payload,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'X-SimLab-Client-Auth': this.secret,
-              'x-api-key': this.rawToken,
+      for (const candUrl of candidateUrls) {
+        try {
+          const res = await axios.post<PairingResponse>(
+            `${candUrl}/api/clients/pair-by-token`,
+            payload,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'X-SimLab-Client-Auth': this.secret,
+                'x-api-key': this.rawToken,
+              },
+              timeout: 6000,
             },
-            timeout: 8000,
-          },
-        );
+          );
 
-        if (res.data && res.data.success) {
-          this.isConnected = true;
-          config.OPERATING_MODE = 'SIMLAB_SUPERCHARGED';
-          this.consecutiveFailures = 0;
-          logger.info('⚡ [SIM LAB SUPERCHARGED] Token paired! Strategy directives synchronized.');
-          const dirs = res.data.directives || (res.data as any).calibratedDirectives;
-          if (dirs) {
-            this.applyDirectives(dirs);
+          if (res.data && res.data.success) {
+            this.serverUrl = candUrl;
+            this.isConnected = true;
+            config.OPERATING_MODE = 'SIMLAB_SUPERCHARGED';
+            this.consecutiveFailures = 0;
+            logger.info(`⚡ [SIM LAB SUPERCHARGED] Token paired with ${candUrl}! Strategy directives synchronized.`);
+            const dirs = res.data.directives || (res.data as any).calibratedDirectives;
+            if (dirs) {
+              this.applyDirectives(dirs);
+            }
+            this.startHeartbeat();
+            return true;
+          } else {
+            logger.warn(`⚠️ [SIM LAB] Token rejected by ${candUrl}: ${res.data?.message || 'Unauthorized'}`);
           }
-          this.startHeartbeat();
-          return true;
-        } else {
-          logger.warn(`⚠️ [SIM LAB] Token rejected by server: ${res.data?.message || 'Unauthorized'}`);
-          this.isConnected = false;
-          return false;
+        } catch (err: any) {
+          const errDetail = err.response?.data?.error || err.message;
+          logger.warn(`⚠️ [SIM LAB] Token pair failed at ${candUrl}: ${errDetail}`);
         }
-      } catch (err: any) {
-        const errDetail = err.response?.data?.error || err.message;
-        logger.warn(`⚠️ [SIM LAB] Token pair failed at ${this.serverUrl}: ${errDetail}`);
       }
     }
 
-    // 2. Direct pipeline connection with API Key authentication headers
-    try {
-      const bundleRes = await axios.get(`${this.serverUrl}/api/pipeline/alpha-bundle`, {
-        headers: {
-          'Authorization': `Bearer ${this.rawToken}`,
-          'x-api-key': this.rawToken,
-          'x-client-id': config.CLIENT_ID || 'desk-04-macstudio',
-        },
-        timeout: 6000,
-      }).catch((err) => err.response || null);
-
-      if (bundleRes && bundleRes.status === 200 && bundleRes.data) {
-        if (bundleRes.data.success === true || bundleRes.data.license) {
-          this.isConnected = true;
-          config.OPERATING_MODE = 'SIMLAB_SUPERCHARGED';
-          this.consecutiveFailures = 0;
-          logger.info(`⚡ [SIM LAB SUPERCHARGED] Authenticated pipeline connected to ${this.serverUrl}!`);
-          this.applyBundleDirectives(bundleRes.data);
-          this.startHeartbeat();
-          return true;
-        } else if (bundleRes.data.success === false) {
-          logger.warn(`⚠️ [SIM LAB] API Key unauthorized by Sim Lab licensing gate at ${this.serverUrl}.`);
-          this.isConnected = false;
-          return false;
-        }
-      }
-    } catch (err: any) {
-      logger.warn(`⚠️ [SIM LAB] Primary server unreachable at ${this.serverUrl}: ${err.message}`);
-    }
-
-    // 3. Fallback candidate probing (Cloud VPS, Domain, or LAN) with API Key
-    const fallbackCandidates = (DEFAULT_SIMLAB_CANDIDATE_URLS || []).filter((u) => u && u !== this.serverUrl);
-    for (const cand of fallbackCandidates) {
+    // 2. Direct pipeline connection or fallback probing with API Key authentication headers
+    for (const candUrl of candidateUrls) {
       try {
-        const bundleRes = await axios.get(`${cand}/api/pipeline/alpha-bundle`, {
+        const bundleRes = await axios.get(`${candUrl}/api/pipeline/alpha-bundle`, {
           headers: {
             'Authorization': `Bearer ${this.rawToken}`,
             'x-api-key': this.rawToken,
             'x-client-id': config.CLIENT_ID || 'desk-04-macstudio',
           },
-          timeout: 3500,
-        }).catch(() => null);
+          timeout: 4500,
+        }).catch((err) => err.response || null);
 
-        if (bundleRes && bundleRes.status === 200 && bundleRes.data && (bundleRes.data.success === true || bundleRes.data.license)) {
-          this.serverUrl = cand;
-          this.isConnected = true;
-          this.consecutiveFailures = 0;
-          logger.info(`⚡ [SIM LAB SUPERCHARGED] Auto-resolved active Sim Lab candidate at ${cand}!`);
-          this.applyBundleDirectives(bundleRes.data);
-          this.startHeartbeat();
-          return true;
+        if (bundleRes && bundleRes.status === 200 && bundleRes.data) {
+          if (bundleRes.data.success === true || bundleRes.data.license) {
+            this.serverUrl = candUrl;
+            this.isConnected = true;
+            config.OPERATING_MODE = 'SIMLAB_SUPERCHARGED';
+            this.consecutiveFailures = 0;
+            logger.info(`⚡ [SIM LAB SUPERCHARGED] Authenticated pipeline connected to ${candUrl}!`);
+            this.applyBundleDirectives(bundleRes.data);
+            this.startHeartbeat();
+            return true;
+          } else if (bundleRes.data.success === false) {
+            logger.warn(`⚠️ [SIM LAB] API Key unauthorized by Sim Lab licensing gate at ${candUrl}.`);
+          }
         }
-      } catch {}
+      } catch (err: any) {
+        logger.debug?.(`Sim Lab candidate ${candUrl} unreachable: ${err.message}`);
+      }
     }
 
     this.isConnected = false;
@@ -960,11 +957,7 @@ export class SimLabSuperchargeClient {
       totalPnlUsd: stats.totalPnlUsd,
     };
 
-    const candidates = Array.from(new Set([
-      this.serverUrl,
-      config.SIMLAB_SERVER_URL,
-      'http://127.0.0.1:4000',
-    ].filter(Boolean) as string[])).map((u) => u.replace(/\/+$/, ''));
+    const candidates = this.getCandidateUrls();
 
     let telemetryPosted = false;
     let bundleSynced = false;

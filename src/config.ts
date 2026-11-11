@@ -965,6 +965,8 @@ export function getDerivedSignerAddress(privateKey?: string): string {
  * Auto-probed on VPS / Cloud or local network without requiring manual UI entry.
  */
 export const DEFAULT_SIMLAB_CANDIDATE_URLS: string[] = [
+  'http://192.168.100.21:4000',
+  'https://simlab.measmony.me',
   'http://localhost:4000',
   'http://127.0.0.1:4000',
 ];

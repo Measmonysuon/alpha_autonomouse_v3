@@ -1,5 +1,5 @@
 import axios, { AxiosRequestConfig } from 'axios';
-import { config } from '../config';
+import { config, DEFAULT_SIMLAB_CANDIDATE_URLS } from '../config';
 import { logger } from '../utils/logger';
 
 interface FailoverChannelState {
@@ -75,10 +75,12 @@ class SimConnectionManager {
    */
   public async postTelemetry(payload: any, headers: Record<string, string>): Promise<{ success: boolean; urlUsed: string }> {
     const state = this.telemetryState;
+    const candidateEndpoints = (DEFAULT_SIMLAB_CANDIDATE_URLS || []).map(u => `${u.replace(/\/+$/, '')}/api/pipeline/telemetry`);
     const candidates = Array.from(new Set([
       state.activeUrl,
       state.primaryUrl,
       config.SIM_TELEMETRY_URL,
+      ...candidateEndpoints,
       'http://127.0.0.1:4000/api/pipeline/telemetry',
       state.fallbackUrl,
     ].filter(Boolean) as string[]));
@@ -104,7 +106,7 @@ class SimConnectionManager {
   }
 
   /**
-   * Fetch Alpha Bundle with local first, auto-failover to public Cloudflare
+   * Fetch Alpha Bundle with local first, auto-failover across candidates & public Cloudflare
    */
   public async fetchAlphaBundle(params: any, headers: Record<string, string>): Promise<{ data: any; urlUsed: string } | null> {
     const state = this.pipelineState;
@@ -120,42 +122,34 @@ class SimConnectionManager {
       }
     }
 
-    const targetUrl = state.activeUrl;
-    try {
-      const res = await axios.get(targetUrl, {
-        params,
-        headers,
-        timeout: state.usingFallback ? 8000 : 3500,
-      });
+    const candidateEndpoints = (DEFAULT_SIMLAB_CANDIDATE_URLS || []).map(u => `${u.replace(/\/+$/, '')}/api/pipeline/alpha-bundle`);
+    const candidates = Array.from(new Set([
+      state.activeUrl,
+      state.primaryUrl,
+      config.SIM_PIPELINE_URL,
+      ...candidateEndpoints,
+      state.fallbackUrl,
+    ].filter(Boolean) as string[]));
 
-      if (res.data) {
-        return { data: res.data, urlUsed: targetUrl };
-      }
-    } catch (err: any) {
-      // If primary failed, try fallback
-      if (!state.usingFallback && state.fallbackUrl && state.fallbackUrl !== state.primaryUrl) {
-        logger.warn(`⚠️ [AUTO-FAILOVER] Primary local alpha pipeline (${formatPipelineUrl(targetUrl)}) unreachable (${err.message}). Failing over to public Cloudflare: ${formatPipelineUrl(state.fallbackUrl)}`);
-        try {
-          const fallbackRes = await axios.get(state.fallbackUrl, {
-            params,
-            headers,
-            timeout: 8000,
-          });
+    for (const targetUrl of candidates) {
+      try {
+        const res = await axios.get(targetUrl, {
+          params,
+          headers,
+          timeout: targetUrl.includes('https://') ? 7000 : 3500,
+        });
 
-          if (fallbackRes.data) {
-            state.activeUrl = state.fallbackUrl;
-            state.usingFallback = true;
-            state.lastProbeTime = Date.now();
-            logger.info(`✅ [AUTO-FAILOVER] Alpha pipeline successfully received via public Cloudflare: ${formatPipelineUrl(state.fallbackUrl)}`);
-            return { data: fallbackRes.data, urlUsed: state.fallbackUrl };
+        if (res.data) {
+          if (state.activeUrl !== targetUrl) {
+            state.activeUrl = targetUrl;
+            state.usingFallback = targetUrl !== state.primaryUrl;
+            logger.info(`✅ [ALPHA PIPELINE] Connected via ${formatPipelineUrl(targetUrl)}`);
           }
-        } catch (fbErr: any) {
-          logger.error(`❌ [AUTO-FAILOVER] Both local and public alpha pipeline endpoints failed. Local: ${err.message}, Public: ${fbErr.message}`);
-          return null;
+          return { data: res.data, urlUsed: targetUrl };
         }
+      } catch (err: any) {
+        // try next candidate
       }
-
-      return null;
     }
 
     return null;

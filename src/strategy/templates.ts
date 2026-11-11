@@ -608,7 +608,7 @@ export const SIMLAB_PREMIUM_CHAMPION_TEMPLATE: StrategyConfig = {
   certifiedByRiskSentinel: true,
   certificationScore: 100,
   stagedStatus: 'ACTIVE_LIVE',
-  targetAssets: ['SOL/USD', 'ETH/USD'],
+  targetAssets: ['SOL/USD', 'ETH/USD', 'BTC/USD', 'SUI/USD', 'APT/USD'],
   author: 'AlphaForge Autonomous Quant Lab',
   winRatePct: 65.3,
   createdAt: 1793798400000,
@@ -723,6 +723,6 @@ export const SIMLAB_PREMIUM_CHAMPION_TEMPLATE: StrategyConfig = {
     exit50CloseEnabled: true,
     pureRobustIslandExit: true,
     allowDiscretionaryHarvest: false,
-    targetAssets: ['SOL/USD', 'ETH/USD'],
+    targetAssets: ['SOL/USD', 'ETH/USD', 'BTC/USD', 'SUI/USD', 'APT/USD'],
   },
 };
