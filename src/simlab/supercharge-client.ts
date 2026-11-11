@@ -525,6 +525,12 @@ export class SimLabSuperchargeClient {
     if (bundle?.learning) {
       this.lastBundleLearning = bundle.learning;
     }
+    if (bundle?.breakingNews) {
+      try {
+        const { setSyncedBundle } = require('../pipeline/sim-consumer');
+        setSyncedBundle(bundle);
+      } catch {}
+    }
   }
 
   /**
@@ -577,6 +583,13 @@ export class SimLabSuperchargeClient {
 
   public applyBundleDirectives(bundle: any): void {
     if (!bundle) return;
+
+    // Immediately forward breaking news & bundle payload to sim-consumer
+    try {
+      const { setSyncedBundle } = require('../pipeline/sim-consumer');
+      setSyncedBundle(bundle);
+    } catch {}
+
     const sanitized: Partial<StrategyDirectives> = {};
 
     // ── Feature 1: Macro Market Regime Sync ──────────────────────────────────────

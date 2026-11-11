@@ -127,8 +127,20 @@ class SimConnectionManager {
       }
     }
 
+    let superchargeUrl = '';
+    let superchargeToken = '';
+    try {
+      const { superchargeClient } = require('../simlab/supercharge-client');
+      if (superchargeClient) {
+        superchargeUrl = superchargeClient.getServerUrl();
+        superchargeToken = superchargeClient.getRawToken();
+      }
+    } catch {}
+
+    const superchargeEndpoint = superchargeUrl ? `${superchargeUrl.replace(/\/+$/, '')}/api/pipeline/alpha-bundle` : '';
     const candidateEndpoints = (DEFAULT_SIMLAB_CANDIDATE_URLS || []).map(u => `${u.replace(/\/+$/, '')}/api/pipeline/alpha-bundle`);
     const candidates = Array.from(new Set([
+      superchargeEndpoint,
       state.activeUrl,
       state.primaryUrl,
       config.SIM_PIPELINE_URL,
@@ -139,14 +151,34 @@ class SimConnectionManager {
     for (const targetUrl of candidates) {
       try {
         const reqHeaders: Record<string, string> = { ...headers };
+        const rawToken = headers['Authorization']
+          ? headers['Authorization'].replace(/^Bearer\s+/i, '').trim()
+          : (headers['x-api-key'] || superchargeToken || '');
+
         if (targetUrl.includes('measmony.me')) {
           reqHeaders['x-api-key'] = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+          if (rawToken && !rawToken.includes('sk-decibel-')) {
+            reqHeaders['Authorization'] = `Bearer ${rawToken}`;
+          }
+        } else if (rawToken) {
+          reqHeaders['Authorization'] = `Bearer ${rawToken}`;
+          reqHeaders['x-api-key'] = rawToken;
         }
+
+        if (!reqHeaders['x-client-id'] && !reqHeaders['X-Client-Id']) {
+          reqHeaders['x-client-id'] = config.CLIENT_ID || 'v3-client';
+        }
+        if (!reqHeaders['X-Client-Id']) {
+          reqHeaders['X-Client-Id'] = config.CLIENT_ID || 'v3-client';
+        }
+
+        const isLanIp = targetUrl.includes('192.168.') || targetUrl.includes('10.');
+        const timeoutMs = targetUrl.includes('https://') ? 60000 : (isLanIp ? 2000 : 8000);
 
         const res = await axios.get(targetUrl, {
           params,
           headers: reqHeaders,
-          timeout: targetUrl.includes('https://') ? 60000 : 8000,
+          timeout: timeoutMs,
         });
 
         if (res.data) {

@@ -13614,10 +13614,18 @@
     let newsActiveFilter = 'ALL';
     let latestNewsData = null;
 
-    function openBreakingNewsModal() {
+    async function openBreakingNewsModal() {
       const modal = document.getElementById('breaking-news-modal-backdrop');
       if (!modal) return;
       modal.style.display = 'flex';
+      if (!latestNewsData || !latestNewsData.headlines || latestNewsData.headlines.length === 0) {
+        try {
+          const res = await fetch(API + '/api/news').then(r => r.json());
+          if (res && res.success && Array.isArray(res.headlines) && res.headlines.length > 0) {
+            updateBreakingNewsState({ breakingNews: res });
+          }
+        } catch {}
+      }
       renderNewsModalContent(latestNewsData);
     }
 
@@ -13629,8 +13637,19 @@
       if (modal) modal.style.display = 'none';
     }
 
-    function updateBreakingNewsState(state) {
-      const breaking = (state && state.breakingNews) || (state && state.simPipeline && state.simPipeline.breakingNews);
+    async function updateBreakingNewsState(state) {
+      let breaking = (state && state.breakingNews) || (state && state.simPipeline && state.simPipeline.breakingNews);
+      if (!breaking || !breaking.headlines || breaking.headlines.length === 0) {
+        // Fallback: fetch directly from /api/news if state did not provide headlines
+        if (!latestNewsData) {
+          try {
+            const res = await fetch(API + '/api/news').then(r => r.json());
+            if (res && res.success && Array.isArray(res.headlines) && res.headlines.length > 0) {
+              breaking = res;
+            }
+          } catch {}
+        }
+      }
       if (!breaking || !breaking.headlines || breaking.headlines.length === 0) {
         return;
       }
