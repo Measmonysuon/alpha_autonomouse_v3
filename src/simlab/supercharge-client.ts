@@ -30,6 +30,7 @@ export interface SimLabTokenPayload {
   s: string;        // serverUrl (e.g. "https://simlab.example.com" or "http://127.0.0.1:4000")
   k: string;        // keyId
   sec: string;      // secret token
+  cf?: string;      // Optional Cloudflare WAF bypass key for external tunnel endpoints
 }
 
 export interface SimLabFeatureFlags {
@@ -76,6 +77,7 @@ export class SimLabSuperchargeClient {
   private serverUrl = '';
   private keyId = '';
   private secret = '';
+  private cfBypassKey = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
   private rawToken = '';
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private heartbeatInFlight: boolean = false;
@@ -111,6 +113,9 @@ export class SimLabSuperchargeClient {
         }
         this.keyId = decoded.k;
         this.secret = decoded.sec;
+        if (decoded.cf) {
+          this.cfBypassKey = decoded.cf;
+        }
         this.isEnabled = true;
         logger.info(`⚡ [SIM LAB] Supercharge Key detected for ${this.serverUrl} (Key ID: ${this.keyId})`);
         this.startPipelineTelemetry();
@@ -371,6 +376,9 @@ export class SimLabSuperchargeClient {
       const jsonStr = Buffer.from(base64, 'base64').toString('utf8');
       const parsed = JSON.parse(jsonStr);
       if (parsed && parsed.s && parsed.k && parsed.sec) {
+        if (!parsed.cf && String(parsed.s).includes('measmony.me')) {
+          parsed.cf = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+        }
         return parsed;
       }
       return null;
@@ -436,16 +444,20 @@ export class SimLabSuperchargeClient {
 
       for (const candUrl of candidateUrls) {
         try {
+          const reqHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.rawToken}`,
+            'X-SimLab-Client-Auth': this.secret,
+            'x-api-key': candUrl.includes('measmony.me') ? (this.cfBypassKey || this.rawToken) : this.rawToken,
+            'x-client-id': config.CLIENT_ID || 'v3-client',
+          };
+
           const res = await axios.post<PairingResponse>(
             `${candUrl}/api/clients/pair-by-token`,
             payload,
             {
-              headers: {
-                'Content-Type': 'application/json',
-                'X-SimLab-Client-Auth': this.secret,
-                'x-api-key': this.rawToken,
-              },
-              timeout: 6000,
+              headers: reqHeaders,
+              timeout: 30000,
             },
           );
 
@@ -474,13 +486,15 @@ export class SimLabSuperchargeClient {
     // 2. Direct pipeline connection or fallback probing with API Key authentication headers
     for (const candUrl of candidateUrls) {
       try {
+        const probeHeaders: Record<string, string> = {
+          'Authorization': `Bearer ${this.rawToken}`,
+          'x-api-key': candUrl.includes('measmony.me') ? (this.cfBypassKey || this.rawToken) : this.rawToken,
+          'x-client-id': config.CLIENT_ID || 'v3-client',
+        };
+
         const bundleRes = await axios.get(`${candUrl}/api/pipeline/alpha-bundle`, {
-          headers: {
-            'Authorization': `Bearer ${this.rawToken}`,
-            'x-api-key': this.rawToken,
-            'x-client-id': config.CLIENT_ID || 'desk-04-macstudio',
-          },
-          timeout: 4500,
+          headers: probeHeaders,
+          timeout: 60000,
         }).catch((err) => err.response || null);
 
         if (bundleRes && bundleRes.status === 200 && bundleRes.data) {
@@ -977,10 +991,22 @@ export class SimLabSuperchargeClient {
       }
 
       for (const candUrl of candidates) {
+        const activeTelemHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'x-client-id': config.CLIENT_ID || 'v3-client',
+        };
+        if (this.rawToken) {
+          activeTelemHeaders['Authorization'] = `Bearer ${this.rawToken}`;
+          activeTelemHeaders['x-api-key'] = candUrl.includes('measmony.me') ? (this.cfBypassKey || this.rawToken) : this.rawToken;
+        }
+        if (this.secret) {
+          activeTelemHeaders['X-SimLab-Client-Auth'] = this.secret;
+        }
+
         try {
           await axios.post(`${candUrl}/api/pipeline/telemetry`, payload, {
-            headers: telemHeaders,
-            timeout: 3500,
+            headers: activeTelemHeaders,
+            timeout: candUrl.includes('https://') ? 15000 : 5000,
           });
           telemetryPosted = true;
           if (this.serverUrl !== candUrl) {
@@ -990,8 +1016,8 @@ export class SimLabSuperchargeClient {
         } catch {
           try {
             await axios.post(`${candUrl}/api/clients/heartbeat`, payload, {
-              headers: telemHeaders,
-              timeout: 3500,
+              headers: activeTelemHeaders,
+              timeout: candUrl.includes('https://') ? 15000 : 5000,
             });
             telemetryPosted = true;
             if (this.serverUrl !== candUrl) {
@@ -1005,18 +1031,19 @@ export class SimLabSuperchargeClient {
 
     // 2. Ingest bundle directives if connected or enabled (bypass if sim-consumer is already active to prevent duplicate sync feeds)
     if (config.OPERATING_MODE !== 'STANDALONE' && !isSimConsumerRunning() && this.isConnected && (this.featureFlags.syncMacroRegime || this.featureFlags.syncDirectionalBans || this.featureFlags.syncStrategyStudio)) {
-      const authHeaders: Record<string, string> = {};
-      if (this.rawToken) {
-        authHeaders['Authorization'] = `Bearer ${this.rawToken}`;
-        authHeaders['x-api-key'] = this.rawToken;
-      }
-      authHeaders['x-client-id'] = config.CLIENT_ID || 'v3-client';
-
       for (const candUrl of candidates) {
+        const authHeaders: Record<string, string> = {
+          'x-client-id': config.CLIENT_ID || 'v3-client',
+        };
+        if (this.rawToken) {
+          authHeaders['Authorization'] = `Bearer ${this.rawToken}`;
+          authHeaders['x-api-key'] = candUrl.includes('measmony.me') ? (this.cfBypassKey || this.rawToken) : this.rawToken;
+        }
+
         try {
           const bundleRes = await axios.get(`${candUrl}/api/pipeline/alpha-bundle`, {
             headers: authHeaders,
-            timeout: 3500,
+            timeout: candUrl.includes('https://') ? 60000 : 8000,
           });
           if (bundleRes?.data) {
             this.applyBundleDirectives(bundleRes.data);

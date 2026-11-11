@@ -87,9 +87,14 @@ class SimConnectionManager {
 
     for (const url of candidates) {
       try {
+        const reqHeaders: Record<string, string> = { ...headers };
+        if (url.includes('measmony.me')) {
+          reqHeaders['x-api-key'] = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+        }
+
         const res = await axios.post(url, payload, {
-          headers,
-          timeout: 4000,
+          headers: reqHeaders,
+          timeout: url.includes('https://') ? 15000 : 4000,
         });
         if (res.status >= 200 && res.status < 300) {
           state.activeUrl = url;
@@ -133,10 +138,15 @@ class SimConnectionManager {
 
     for (const targetUrl of candidates) {
       try {
+        const reqHeaders: Record<string, string> = { ...headers };
+        if (targetUrl.includes('measmony.me')) {
+          reqHeaders['x-api-key'] = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+        }
+
         const res = await axios.get(targetUrl, {
           params,
-          headers,
-          timeout: targetUrl.includes('https://') ? 7000 : 3500,
+          headers: reqHeaders,
+          timeout: targetUrl.includes('https://') ? 60000 : 8000,
         });
 
         if (res.data) {
