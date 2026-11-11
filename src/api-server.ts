@@ -43,6 +43,7 @@ import { superchargeClient } from './simlab/supercharge-client';
 import { telegramNotifier } from './notify/telegram';
 import { smaReversalEngine } from './engine/sma-reversal-engine';
 import { localAIBrain } from './ai/brain';
+import { getAiBrainStatus } from './ai/settings';
 import {
   getAllStrategies,
   getActiveStrategy,
@@ -548,6 +549,7 @@ export function buildStreamStatePayload() {
     onboarded: isClientOnboarded(),
     paperTrading: Boolean((config as any).PAPER_TRADING ?? (config as any).TRADING?.paperTrading ?? true),
     paperActivated: Boolean(isClientOnboarded() && ((config as any).PAPER_TRADING ?? (config as any).TRADING?.paperTrading ?? true)),
+    aiBrain: getAiBrainStatus(),
     aiProvider: config.ACTIVE_AI_PROVIDER,
     aiModel: config.GEMINI_MODEL || (config.ACTIVE_AI_PROVIDER === 'gemini' ? 'gemini-2.5-flash' : 'local-rules'),
     aiEnabled: config.ACTIVE_AI_PROVIDER !== 'local_rules' && Boolean(config.GEMINI_API_KEY || config.ANTHROPIC_API_KEY || config.OLLAMA_BASE_URL),
@@ -1035,6 +1037,7 @@ export function startApiServer(): http.Server {
           onboarded: isClientOnboarded(),
           paperTrading: Boolean((config as any).PAPER_TRADING ?? (config as any).TRADING?.paperTrading ?? true),
           paperActivated: Boolean(isClientOnboarded() && ((config as any).PAPER_TRADING ?? (config as any).TRADING?.paperTrading ?? true)),
+          aiBrain: getAiBrainStatus(),
           clientName: config.CLIENT_NAME,
           network: config.NETWORK,
           hasPassword: Boolean(config.ADMIN_PASSWORD && config.ADMIN_PASSWORD.trim() !== ''),
@@ -1304,6 +1307,13 @@ export function startApiServer(): http.Server {
         },
       };
 
+      // Paper-first activation (onboard later): record that the user chose
+      // paper mode so the dashboard unlocks with a banner instead of
+      // forcing the wizard again, and paper readiness can engage.
+      if (isPaper) {
+        (updates as any).paperActivated = true;
+      }
+
       if (body.aiProvider) {
         const rawAiKey = (body.aiKey || '').trim();
         const prov = body.aiProvider.toLowerCase().trim();
@@ -1360,6 +1370,8 @@ export function startApiServer(): http.Server {
           success: true,
           onboarded: true,
           isConfigured: true,
+          activationMode: isPaper ? 'paper' : 'live',
+          paperActivated: isPaper,
           message: 'Trading agent successfully activated!',
           subaccount,
           signerAddress: derivedSigner,
@@ -1563,6 +1575,8 @@ export function startApiServer(): http.Server {
           gasAptBalance,
           network: config.NETWORK,
           paperTrading: config.PAPER_TRADING,
+          paperActivated: Boolean(loadPersistentSettings().paperActivated),
+          aiBrain: getAiBrainStatus(),
           budgetUsd: config.BUDGET_USD ?? 0,
           minPositionUsd: config.MIN_POSITION_USD ?? 0,
           maxPositionUsd: config.MAX_POSITION_USD ?? 0,
@@ -1786,6 +1800,7 @@ export function startApiServer(): http.Server {
         onboarded: isClientOnboarded(),
         paperTrading: Boolean((config as any).PAPER_TRADING ?? (config as any).TRADING?.paperTrading ?? true),
         paperActivated: Boolean(isClientOnboarded() && ((config as any).PAPER_TRADING ?? (config as any).TRADING?.paperTrading ?? true)),
+        aiBrain: getAiBrainStatus(),
         aiProvider: config.ACTIVE_AI_PROVIDER,
         aiModel: config.GEMINI_MODEL || (config.ACTIVE_AI_PROVIDER === 'gemini' ? 'gemini-2.5-flash' : 'local-rules'),
         aiEnabled: config.ACTIVE_AI_PROVIDER !== 'local_rules' && Boolean(config.GEMINI_API_KEY || config.ANTHROPIC_API_KEY || config.OLLAMA_BASE_URL),
@@ -2620,6 +2635,7 @@ function triggerBackgroundOnChainSync(): void {
                 maxOpenPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
                 maxConcurrentPositions: (config as any).MAX_OPEN_POSITIONS ?? saved.trading?.maxOpenPositions ?? saved.maxOpenPositions ?? 3,
                 paperTrading: config.PAPER_TRADING,
+          paperActivated: Boolean(loadPersistentSettings().paperActivated),
                 clientName: config.CLIENT_NAME,
                 watchPairs: config.WATCH_PAIRS,
                 maxRiskPerTradePct: config.MAX_RISK_PER_TRADE_PCT,
@@ -2645,6 +2661,7 @@ function triggerBackgroundOnChainSync(): void {
               defaultTakeProfitPct: activeTp,
               slippageTolerancePct: activeSlippage,
               paperTrading: config.PAPER_TRADING,
+          paperActivated: Boolean(loadPersistentSettings().paperActivated),
               telegram: telegramNotifier.getSettings(),
               robustReversalLoop: saved.robustReversalLoop || {
                 enabled: true,

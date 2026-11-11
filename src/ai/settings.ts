@@ -7,7 +7,7 @@ import fs from 'fs';
 import { writeJsonAtomicSync } from '../utils/atomic-write';
 import path from 'path';
 import { logger } from '../utils/logger';
-import { config } from '../config';
+import { config, isValidApiKey } from '../config';
 
 export type AIProvider = 'openai' | 'deepseek' | 'anthropic' | 'gemini' | 'groq' | 'openrouter' | 'huggingface' | 'custom';
 
@@ -29,6 +29,11 @@ export interface AISettings {
   secondaryApiKey?: string;
   secondaryModel?: string;
   secondaryCustomBaseUrl?: string;
+
+  // ── Third Tier AI (Tertiary Backup: Muse via the VM muse-bridge) ──
+  tertiaryEnabled?: boolean;
+  tertiaryBaseUrl?: string;
+  tertiaryTimeoutMs?: number;
 
   // Intelligence Routing & Fallback Controls
   primaryIntelligenceSource: 'sim_lab' | 'local_ai' | 'hybrid';
@@ -60,6 +65,11 @@ const DEFAULT_SETTINGS: AISettings = {
   secondaryApiKey: config.ANTHROPIC_API_KEY || '',
   secondaryModel: 'claude-3-5-sonnet-20241022',
   secondaryCustomBaseUrl: '',
+
+  // Third Tier AI Defaults (Muse bridge co-decision backup)
+  tertiaryEnabled: true,
+  tertiaryBaseUrl: 'http://127.0.0.1:9100',
+  tertiaryTimeoutMs: 120000,
 
   // Intelligence Routing Defaults
   primaryIntelligenceSource: 'hybrid',
@@ -173,5 +183,108 @@ export function getMaskedAISettings(): Omit<AISettings, 'apiKey'> & { apiKeyMask
     apiKeyMasked,
     hasSecondaryApiKey,
     secondaryApiKeyMasked,
+  };
+}
+
+// ── Effective AI brain (dynamic, config-driven) ─────────────────────────────
+// Mirrors the resolution the Quant Engine applies in src/ai/brain.ts:
+// Primary -> Secondary -> Muse bridge (tertiary) -> Local Rules. A tier is
+// "configured" only when it is enabled AND has what it needs to actually run
+// (an API key, or a custom base URL for keyless/local endpoints). Computed
+// from the same cached settings object the engine reads, so the dashboard
+// can never disagree with the engine. Adding/removing a key changes the
+// result immediately — no restart.
+export type AiTierId = 'primary' | 'secondary' | 'muse_bridge' | 'local_rules';
+
+export interface AiChainTier {
+  tier: AiTierId;
+  label: string;
+  configured: boolean;
+  active: boolean;
+  detail: string;
+}
+
+export interface AiBrainStatus {
+  effective: AiTierId;
+  effectiveLabel: string;
+  effectiveProvider?: string;
+  effectiveModel?: string;
+  chain: AiChainTier[];
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  gemini: 'Google Gemini',
+  anthropic: 'Claude AI',
+  openai: 'OpenAI',
+  deepseek: 'DeepSeek',
+  groq: 'Groq',
+  openrouter: 'OpenRouter',
+  huggingface: 'Hugging Face',
+  custom: 'Custom Endpoint',
+};
+
+export function getAiBrainStatus(): AiBrainStatus {
+  const s = loadAISettings();
+  // A key counts only if it is a REAL key by the app's own validity rule —
+  // .env.example ships a "your_..." placeholder that must not make a fresh
+  // install look configured (it would hide the Muse bridge fallback).
+  const hasKey = (k?: string) => isValidApiKey(k);
+
+  const primaryConfigured = Boolean(
+    s.enabled && s.provider && s.provider !== ('local_rules' as AIProvider) &&
+    (hasKey(s.apiKey) || hasKey(s.geminiApiKey) || hasKey(s.customBaseUrl)),
+  );
+  const secondaryConfigured = Boolean(
+    s.secondaryEnabled && s.secondaryProvider &&
+    s.secondaryProvider !== ('local_rules' as AIProvider) &&
+    (hasKey(s.secondaryApiKey) || hasKey(s.secondaryCustomBaseUrl)),
+  );
+  const bridgeConfigured = Boolean(s.enabled !== false && s.tertiaryEnabled !== false);
+
+  let effective: AiTierId = 'local_rules';
+  if (s.enabled !== false) {
+    if (primaryConfigured) effective = 'primary';
+    else if (secondaryConfigured) effective = 'secondary';
+    else if (bridgeConfigured) effective = 'muse_bridge';
+  }
+
+  const providerLabel = (p?: string) => PROVIDER_LABELS[p || ''] || (p ? p.toUpperCase() : '—');
+  const chain: AiChainTier[] = [
+    {
+      tier: 'primary',
+      label: providerLabel(s.provider),
+      configured: primaryConfigured,
+      active: effective === 'primary',
+      detail: primaryConfigured ? `${providerLabel(s.provider)} · ${s.model || ''}`.trim() : 'No API key configured',
+    },
+    {
+      tier: 'secondary',
+      label: providerLabel(s.secondaryProvider),
+      configured: secondaryConfigured,
+      active: effective === 'secondary',
+      detail: secondaryConfigured ? `${providerLabel(s.secondaryProvider)} · ${s.secondaryModel || ''}`.trim() : (s.secondaryEnabled ? 'No API key configured' : 'Disabled'),
+    },
+    {
+      tier: 'muse_bridge',
+      label: 'Muse AI (Bridge)',
+      configured: bridgeConfigured,
+      active: effective === 'muse_bridge',
+      detail: bridgeConfigured ? `Backup brain via ${s.tertiaryBaseUrl || 'http://127.0.0.1:9100'}` : 'Disabled',
+    },
+    {
+      tier: 'local_rules',
+      label: 'Local Rules',
+      configured: true,
+      active: effective === 'local_rules',
+      detail: 'Built-in quantitative rules (offline fallback)',
+    },
+  ];
+
+  return {
+    effective,
+    effectiveLabel: chain.find((t) => t.tier === effective)?.label || 'Local Rules',
+    effectiveProvider: effective === 'primary' ? s.provider : effective === 'secondary' ? s.secondaryProvider : undefined,
+    effectiveModel: effective === 'primary' ? s.model : effective === 'secondary' ? s.secondaryModel : undefined,
+    chain,
   };
 }
