@@ -9,7 +9,7 @@
 
 import dns from 'dns';
 try { dns.setDefaultResultOrder('ipv4first'); } catch {}
-import { config, watchPairs, getDerivedSignerAddress, isClientConfigured, isClientOnboarded } from './config';
+import { config, watchPairs, getDerivedSignerAddress, isClientConfigured, isClientOnboarded, isPaperReady } from './config';
 import { logger } from './utils/logger';
 import { standaloneEngine, fetchPublicKlines, KlineBar, updateBaselinePrice } from './engine/standalone-engine';
 import { localAIBrain } from './ai/brain';
@@ -81,7 +81,7 @@ function printBanner(): void {
 }
 
 async function runTradingCycle(): Promise<void> {
-  const isReady = isClientConfigured() || (config.PAPER_TRADING && isClientOnboarded());
+  const isReady = isClientConfigured() || isPaperReady();
   if (!isReady && cycleCount % 6 === 0) {
     logger.info('⏳ [AGENT PRE-ONBOARD] Live market scanner active. Trade routing locked until operator credentials are configured via Web Dashboard (http://localhost:5050)...');
   }

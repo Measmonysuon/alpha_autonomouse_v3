@@ -493,12 +493,26 @@ export function isClientConfigured(): boolean {
  * Checks if the operator has completed the initial onboarding wizard.
  */
 export function isClientOnboarded(): boolean {
-  if (!isClientConfigured()) return false;
+  // Onboarding state comes from the persisted settings first: a paper-mode
+  // activation onboards the client WITHOUT Decibel credentials, and that
+  // state must count. (Previously this returned false whenever no
+  // credentials were configured, which made the paper-readiness branch in
+  // the trading loop unreachable dead code.)
   try {
     const saved = loadPersistentSettings();
-    if (saved.onboarded === true || saved.isConfigured === true) return true;
+    if (saved.onboarded === true || saved.isConfigured === true || saved.paperActivated === true) return true;
   } catch {}
   return isClientConfigured();
+}
+
+/**
+ * Paper readiness: paper trading is switched on AND the client has been
+ * onboarded (full onboarding, or a paper-first activation). Paper readiness
+ * only ever authorises SIMULATED fills — on-chain routing in the executor
+ * independently requires isClientConfigured().
+ */
+export function isPaperReady(): boolean {
+  return Boolean(config.PAPER_TRADING) && isClientOnboarded();
 }
 
 /**
@@ -912,6 +926,13 @@ export function updateDynamicSettings(updates: any): void {
     } else if (isClientConfigured()) {
       merged.onboarded = true;
       (config as any).ONBOARDED = true;
+    }
+
+    // Paper-first activation flag: once set, it persists like onboarded.
+    if (updates.paperActivated !== undefined) {
+      merged.paperActivated = Boolean(updates.paperActivated);
+    } else if (existing.paperActivated !== undefined) {
+      merged.paperActivated = Boolean(existing.paperActivated);
     }
 
     // 8. Atomic Disk Write & .env Synchronization

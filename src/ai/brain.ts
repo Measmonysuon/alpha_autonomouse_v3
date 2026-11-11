@@ -52,6 +52,8 @@ export interface CopilotChatContext {
 
 export class LocalAIBrain {
   private activeProvider: string;
+  private bridgeInFlight = false;
+  private bridgeVerdictCache = new Map<string, { ts: number; evaluation: AIBrainEvaluation }>();
 
   constructor() {
     this.activeProvider = config.ACTIVE_AI_PROVIDER;
@@ -99,8 +101,14 @@ export class LocalAIBrain {
         try {
           return await this.dispatchProviderCall(prov, signal, 'PRIMARY_VALIDATOR', directives);
         } catch (err: any) {
-          logger.warn(`⚠️ [AI BRAIN] Standalone AI provider (${String(prov).toUpperCase()}) failed: ${err.message}. Seamlessly reverting to Local Rules.`);
+          logger.warn(`⚠️ [AI BRAIN] Standalone AI provider (${String(prov).toUpperCase()}) failed: ${err.message}. Trying Muse bridge backup before Local Rules.`);
+          return await this.evaluateViaBridgeOrLocal(signal, 'PRIMARY_VALIDATOR', directives);
         }
+      }
+      // No usable primary provider configured: per operator policy the Muse
+      // bridge is the backup co-decision tier — unless AI is explicitly off.
+      if (aiSettings.enabled !== false) {
+        return await this.evaluateViaBridgeOrLocal(signal, 'PRIMARY_VALIDATOR', directives);
       }
       return this.evaluateWithLocalRules(signal, 'PRIMARY_VALIDATOR', directives);
     }
@@ -389,13 +397,13 @@ export class LocalAIBrain {
           if (baseEval) baseEval.reasoning = `[Second Tier Fallback: ${s.secondaryProvider.toUpperCase()}] ${baseEval.reasoning}`;
         } catch (secErr: any) {
           logger.warn(`⚠️ [AI BRAIN] Second Tier AI provider (${s.secondaryProvider.toUpperCase()}) also failed: ${secErr.message}. Reverting to Local Rules.`);
-          baseEval = this.evaluateWithLocalRules(signal, role, directives);
+          baseEval = await this.evaluateViaBridgeOrLocal(signal, role, directives);
         }
       } else {
         logger.warn(
           `⚠️ [AI BRAIN] ${primaryProv.toUpperCase()} call failed: ${err.message}. Falling back to Local Math Rules.`,
         );
-        baseEval = this.evaluateWithLocalRules(signal, role, directives);
+        baseEval = await this.evaluateViaBridgeOrLocal(signal, role, directives);
       }
     }
 
@@ -695,6 +703,141 @@ export class LocalAIBrain {
       role,
       riskFlags: Array.isArray(parsed.riskFlags) ? parsed.riskFlags : [],
     };
+  }
+
+  // ── 3b. Muse Bridge (Tertiary Co-Decision Backup via the VM muse-bridge) ────
+  /**
+   * Asks Muse (through the local muse-bridge on :9100, OpenAI-compatible
+   * /v1/chat/completions) to co-validate a trade. This is the tertiary tier:
+   * it engages when no primary/secondary AI is configured or reachable.
+   *
+   * Safety contract:
+   *  - Every request carries the full evaluation prompt (signal, confluence,
+   *    directives) PLUS structured market + risk_limits fields.
+   *  - The verdict must explicitly contain "confirmed"; anything else
+   *    (missing/garbled/other-shaped JSON) is treated as NOT confirmed.
+   *  - Single-flight + 60 s verdict cache: the bridge wakes an agent and
+   *    answers in ~30-90 s, so it is never called concurrently or in a hot
+   *    loop. Any failure throws, and the caller falls back to Local Rules —
+   *    the bridge can delay a decision but never fabricate one.
+   */
+  private async evaluateWithMuseBridge(
+    signal: StandaloneSignal,
+    role: 'PRIMARY_VALIDATOR' | 'SECOND_OPINION',
+    directives?: StrategyDirectives,
+  ): Promise<AIBrainEvaluation> {
+    const { loadAISettings } = require('./settings');
+    const aiSettings = loadAISettings();
+    const baseUrl = String(process.env.MUSE_BRIDGE_URL || aiSettings.tertiaryBaseUrl || 'http://127.0.0.1:9100').replace(/\/+$/, '');
+    const timeoutMs = Number(process.env.MUSE_BRIDGE_TIMEOUT_MS || aiSettings.tertiaryTimeoutMs || 120000);
+
+    const cacheKey = `${signal.symbol}|${signal.action}|${signal.entryPrice}`;
+    const cached = this.bridgeVerdictCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < 60000) return cached.evaluation;
+    if (this.bridgeInFlight) throw new Error('Muse bridge co-decision already in flight (single-flight guard)');
+    this.bridgeInFlight = true;
+    try {
+      const instructions =
+        'You are Muse, the tertiary co-decision validator for an autonomous trading client. ' +
+        'Evaluate the proposed trade using ONLY the data provided (market snapshot, confluence analysis, strategy directives, risk limits). ' +
+        'Reply with a single JSON object and no prose: {"confirmed": boolean, "confidenceScore": number from 0 to 100, ' +
+        '"sentiment": "BULLISH" | "BEARISH" | "NEUTRAL", "reasoning": string, "riskFlags": string[]}.';
+      const prompt = `${instructions}\n\n${this.buildPrompt(signal, role, directives)}`;
+      const response = await axios.post(
+        `${baseUrl}/v1/chat/completions`,
+        {
+          model: 'muse',
+          temperature: 0.2,
+          wait_seconds: Math.max(30, Math.floor(timeoutMs / 1000) - 10),
+          market: {
+            symbol: signal.symbol,
+            action: signal.action,
+            entryPrice: signal.entryPrice,
+            takeProfit: signal.takeProfit,
+            stopLoss: signal.stopLoss,
+            baseScore: signal.baseScore,
+          },
+          risk_limits: {
+            budgetUsd: config.BUDGET_USD,
+            maxPositionUsd: config.MAX_POSITION_USD,
+            maxLeverage: config.MAX_LEVERAGE,
+            paperTrading: config.PAPER_TRADING,
+          },
+          messages: [{ role: 'user', content: prompt }],
+        },
+        // proxy: false — the bridge is on localhost; it must never be routed
+        // through the VM's egress proxy.
+        { timeout: timeoutMs, proxy: false },
+      );
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response from Claude bridge');
+      const parsed = this.cleanAndParseJson(content);
+      if (!parsed || typeof parsed !== 'object') {
+        // e.g. the bridge answered while the decision file was mid-write
+        // and the content came back as the JSON literal "null".
+        throw new Error('Muse bridge returned a non-object verdict');
+      }
+      // The bridge's answering agent replies in the bridge decision format
+      // ({ actions: [{ asset, action, reason }] }) — map it onto the verdict
+      // shape. An explicit verdict-shaped reply ({ confirmed, ... }) is
+      // honoured first. Anything unrecognised stays NOT confirmed.
+      let confirmed = parsed.confirmed === true;
+      let reasoning = parsed.reasoning || '';
+      if (!('confirmed' in parsed) && Array.isArray(parsed.actions) && parsed.actions.length > 0) {
+        const asset = String(signal.symbol).split('/')[0].toUpperCase();
+        const entry =
+          parsed.actions.find((a: any) => String(a?.asset || '').toUpperCase() === asset) || parsed.actions[0];
+        const act = String(entry?.action || '').toUpperCase();
+        const mapped = act === 'BUY' ? 'LONG' : act === 'SELL' ? 'SHORT' : act;
+        confirmed = mapped === signal.action;
+        reasoning = entry?.reason || reasoning;
+      } else if (!('confirmed' in parsed) && typeof parsed.action === 'string') {
+        const act = parsed.action.toUpperCase();
+        const mapped = act === 'BUY' ? 'LONG' : act === 'SELL' ? 'SHORT' : act;
+        confirmed = mapped === signal.action;
+        reasoning = parsed.reason || reasoning;
+      }
+      if (!reasoning && Array.isArray(parsed.actions) && parsed.actions.length > 0) {
+        // Verdict-shaped replies may still carry the narrative only inside
+        // the actions entry — recover it from there.
+        const asset = String(signal.symbol).split('/')[0].toUpperCase();
+        const entry =
+          parsed.actions.find((a: any) => String(a?.asset || '').toUpperCase() === asset) || parsed.actions[0];
+        reasoning = entry?.reason || '';
+      }
+      const evaluation: AIBrainEvaluation = {
+        confirmed,
+        confidenceScore: Math.max(0, Math.min(100, Number(parsed.confidenceScore ?? (confirmed ? 75 : 35)))),
+        action: confirmed ? signal.action : 'HOLD',
+        sentiment: parsed.sentiment || (signal.action === 'LONG' ? 'BULLISH' : 'BEARISH'),
+        reasoning: `[Muse Bridge Co-Decision] ${reasoning || 'Muse bridge evaluated trade.'}`,
+        provider: 'muse_bridge',
+        role,
+        riskFlags: Array.isArray(parsed.riskFlags) ? parsed.riskFlags : [],
+      };
+      this.bridgeVerdictCache.set(cacheKey, { ts: Date.now(), evaluation });
+      return evaluation;
+    } finally {
+      this.bridgeInFlight = false;
+    }
+  }
+
+  /** Tertiary tier entry point: Muse bridge if enabled, else Local Rules. */
+  private async evaluateViaBridgeOrLocal(
+    signal: StandaloneSignal,
+    role: 'PRIMARY_VALIDATOR' | 'SECOND_OPINION',
+    directives?: StrategyDirectives,
+  ): Promise<AIBrainEvaluation> {
+    const { loadAISettings } = require('./settings');
+    const s = loadAISettings();
+    if (s.tertiaryEnabled !== false) {
+      try {
+        return await this.evaluateWithMuseBridge(signal, role, directives);
+      } catch (err: any) {
+        logger.warn(`⚠️ [AI BRAIN] Muse bridge backup unavailable: ${err.message}. Reverting to Local Rules.`);
+      }
+    }
+    return this.evaluateWithLocalRules(signal, role, directives);
   }
 
   // ── 4. Pure Local Quantitative Math Rules (Offline Fallback) ─────────────────

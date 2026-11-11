@@ -22043,10 +22043,13 @@
       try {
         const res = await fetch(API + '/api/control', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ command: targetCmd }),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          throw new Error(data.error || ('HTTP ' + res.status));
+        }
         const st = await fetch(API + '/api/state').then(r => r.json());
         if (st) {
           renderState(st);
@@ -22070,7 +22073,7 @@
       try {
         const res = await fetch(API + '/api/control', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ command: 'scan' }),
         });
         const data = await res.json();
@@ -22150,7 +22153,7 @@
       try {
         const res = await fetch(API + '/api/control', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ command: 'set_confidence', value: parseInt(val, 10) }),
         });
         const data = await res.json();
@@ -24431,6 +24434,38 @@
       const tag = document.getElementById('ai-header-tag');
       const modelEl = document.getElementById('ai-header-model');
       if (!badge) return;
+
+      // Dynamic brain status: the server resolves the effective AI tier from
+      // the same settings the Quant Engine reads (Primary -> Secondary ->
+      // Muse bridge -> Local Rules). No key configured => Muse AI bridge
+      // is the active brain; configuring a key switches the badge on the
+      // next state poll / settings save, with no restart.
+      const brain = s?.aiBrain || (typeof lastState !== 'undefined' && lastState?.aiBrain);
+      if (brain && brain.effective) {
+        const chainText = (brain.chain || []).map(t => `${t.active ? '●' : '○'} ${t.label}${t.configured ? '' : ' (not configured)'}`).join(' → ');
+        if (brain.effective === 'muse_bridge') {
+          setSafeClass(dot, 'ai-pulse-dot');
+          setSafeText(icon, '🤖');
+          setSafeText(tag, 'MUSE AI');
+          setSafeColor(tag, '#f0abfc');
+          setSafeText(modelEl, 'MUSE BRIDGE');
+          setSafeTitle(badge, `Active AI Brain: Muse AI via the local bridge (no provider key configured — Muse is the backup brain). Chain: ${chainText}. Click to configure.`);
+          return;
+        }
+        if (brain.effective === 'local_rules') {
+          setSafeClass(dot, 'ai-pulse-dot disabled');
+          setSafeText(icon, '⚡');
+          setSafeText(tag, 'QUANT ENGINE');
+          setSafeColor(tag, 'var(--text3)');
+          setSafeText(modelEl, 'LOCAL RULES');
+          setSafeTitle(badge, `Mathematical quantitative rules active (zero external API key required). Chain: ${chainText}. Click to configure.`);
+          return;
+        }
+        if ((brain.effective === 'primary' || brain.effective === 'secondary') && brain.effectiveProvider) {
+          // Feed the provider rendering below with the effective tier.
+          s = { ...(s || {}), aiProvider: brain.effectiveProvider, aiModel: brain.effectiveModel || (s && s.aiModel), aiEnabled: true };
+        }
+      }
 
       const rawProvider = s?.aiProvider || s?.provider || document.getElementById('set-ai-provider')?.value || (typeof lastState !== 'undefined' && lastState?.aiProvider) || 'gemini';
       const provider = (rawProvider || 'gemini').toLowerCase();
