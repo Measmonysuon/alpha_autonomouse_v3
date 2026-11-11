@@ -8987,6 +8987,66 @@
 </head>
 
 <body>
+
+  <!-- Master Operator Lock Gate for Admin / Studio -->
+  <div id="admin-lock-screen-gate" style="display: none; position: fixed; inset: 0; z-index: 9999999; background: radial-gradient(circle at 50% 25%, rgba(16, 185, 129, 0.08) 0%, rgba(7, 9, 14, 0.98) 65%); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); align-items: center; justify-content: center; padding: 16px;">
+    <div style="background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px; max-width: 440px; width: 100%; padding: 32px 26px; display: flex; flex-direction: column; align-items: center; text-align: center; box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 35px rgba(16, 185, 129, 0.15); position: relative; font-family: 'Inter', -apple-system, sans-serif;">
+      
+      <div style="position: relative; width: 62px; height: 62px; border-radius: 50%; background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.2)); border: 1px solid rgba(16, 185, 129, 0.45); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+        <span style="font-size: 28px;">🛡️</span>
+      </div>
+
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 800; color: #06b6d4; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 6px;">
+        ALPHA PRIME · STUDIO & ADMIN CONSOLE
+      </div>
+
+      <h2 style="font-size: 17px; font-weight: 900; letter-spacing: -0.3px; color: #fff; margin-bottom: 8px;">
+        OPERATOR ACCESS RESTRICTED
+      </h2>
+
+      <p style="font-size: 12px; line-height: 1.5; color: #94a3b8; margin-bottom: 22px; max-width: 380px;">
+        This administrative console is protected. Enter your operator master password configured in Settings to unlock trading controls, parameters, and full telemetry.
+      </p>
+
+      <form id="admin-gate-login-form" onsubmit="submitAdminGateUnlock(event)" style="width: 100%; display: flex; flex-direction: column; gap: 12px;">
+        <div style="position: relative; width: 100%;">
+          <input 
+            type="password" 
+            id="admin-gate-pwd-input" 
+            placeholder="Enter operator master password..." 
+            autocomplete="current-password"
+            required
+            style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 11px 44px 11px 14px; color: #fff; font-family: 'JetBrains Mono', monospace; font-size: 13.5px; box-sizing: border-box; outline: none; transition: all 0.2s;"
+          />
+          <button 
+            type="button" 
+            onclick="const el=document.getElementById('admin-gate-pwd-input');el.type=el.type==='password'?'text':'password';" 
+            style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: transparent; border: none; color: #64748b; cursor: pointer; font-size: 14px; padding: 4px;"
+            title="Toggle visibility"
+          >👁️</button>
+        </div>
+
+        <div id="admin-gate-err" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 11.5px; padding: 8px 10px; border-radius: 6px; text-align: left;"></div>
+
+        <button 
+          type="submit" 
+          id="btn-admin-gate-unlock" 
+          style="width: 100%; background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; border-radius: 8px; padding: 12px 16px; font-size: 13px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);"
+        >
+          <span>Unlock Admin Console</span>
+          <span style="font-family: 'JetBrains Mono', monospace;">→</span>
+        </button>
+      </form>
+
+      <div style="margin-top: 22px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08); width: 100%; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 11px;">
+          <button type="button" onclick="promptAdminWalletReset()" style="background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 11px; text-decoration: underline; padding: 0;">Reset via Wallet</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <div id="paper-mode-banner" style="display:none; align-items:center; justify-content:center; gap:12px; background:rgba(52,211,153,0.12); border-bottom:1px solid rgba(52,211,153,0.4); color:#a7f3d0; font-size:12px; font-weight:600; padding:8px 14px; text-align:center;">
     <span>📄 PAPER MODE — simulated trading only, no real funds at risk.</span>
     <button onclick="switchTab('settings')" style="background:rgba(52,211,153,0.2); border:1px solid rgba(52,211,153,0.6); color:#d1fae5; font-size:11px; font-weight:700; border-radius:6px; padding:3px 10px; cursor:pointer;">Complete onboarding to enable live trading</button>
@@ -9055,6 +9115,10 @@
           <span class="sim-status-txt" id="harvest-badge-status" style="min-width:92px; display:inline-block; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:left;">STANDBY (0 pos)</span>
         </div>
       </div>
+      <!-- Operator Session Lock Button -->
+      <button type="button" id="btn-admin-lock-nav" onclick="lockAdminSessionNow()" class="sim-pipeline-badge" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); color:#fca5a5; cursor:pointer; min-width:85px; justify-content:center;" title="Lock Admin Session">
+        <span>🔒 LOCK</span>
+      </button>
       <!-- AI Model Detail Badge -->
       <div class="ai-header-badge" id="ai-header-badge" onclick="switchTab('settings')"
         title="AI Model Settings (Click to configure)"
@@ -23144,8 +23208,145 @@
     // ── Admin Auth Helpers ────────────────────────────────────────────────────
     // Returns Authorization header object if a session token is cached, else {}.
     function getAuthHeaders() {
-      const token = sessionStorage.getItem('alpha_admin_token');
+      const token = localStorage.getItem('alpha_admin_token') || sessionStorage.getItem('alpha_admin_token');
       return token ? { 'Authorization': 'Bearer ' + token } : {};
+    }
+
+    async function checkAdminPasswordGate() {
+      try {
+        const token = localStorage.getItem('alpha_admin_token') || sessionStorage.getItem('alpha_admin_token') || '';
+        const res = await fetch(API + '/api/auth/check', {
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        }).then(r => r.json()).catch(() => ({ authenticated: false, hasAdminPassword: false }));
+
+        const gate = document.getElementById('admin-lock-screen-gate');
+        const lockNavBtn = document.getElementById('btn-admin-lock-nav');
+
+        const hasPwd = res.hasAdminPassword === true || res.authRequired === true;
+
+        if (hasPwd) {
+          if (res.authenticated) {
+            if (gate) gate.style.display = 'none';
+            if (lockNavBtn) lockNavBtn.style.display = 'inline-flex';
+            return true;
+          } else {
+            if (gate) {
+              gate.style.display = 'flex';
+              setTimeout(() => document.getElementById('admin-gate-pwd-input')?.focus(), 120);
+            }
+            if (lockNavBtn) lockNavBtn.style.display = 'none';
+            return false;
+          }
+        } else {
+          if (gate) gate.style.display = 'none';
+          if (lockNavBtn) lockNavBtn.style.display = 'none';
+          return true;
+        }
+      } catch (err) {
+        console.warn('Admin gate check error:', err);
+        return true;
+      }
+    }
+
+    async function submitAdminGateUnlock(e) {
+      if (e) e.preventDefault();
+      const pwdInput = document.getElementById('admin-gate-pwd-input');
+      const errEl = document.getElementById('admin-gate-err');
+      const btn = document.getElementById('btn-admin-gate-unlock');
+      const pwd = (pwdInput?.value || '').trim();
+
+      if (!pwd) {
+        if (errEl) { errEl.textContent = 'Please enter master password'; errEl.style.display = 'block'; }
+        return;
+      }
+
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span>Verifying...</span>'; }
+      if (errEl) errEl.style.display = 'none';
+
+      try {
+        const res = await fetch(API + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        }).then(r => r.json());
+
+        if (res.success && res.token) {
+          sessionStorage.setItem('alpha_admin_token', res.token);
+          localStorage.setItem('alpha_admin_token', res.token);
+          if (pwdInput) pwdInput.value = '';
+          const gate = document.getElementById('admin-lock-screen-gate');
+          if (gate) gate.style.display = 'none';
+          const lockNavBtn = document.getElementById('btn-admin-lock-nav');
+          if (lockNavBtn) lockNavBtn.style.display = 'inline-flex';
+          showToastNotification('🔓 Admin session unlocked successfully!');
+          init();
+          loadAllSettingsUI();
+        } else {
+          if (errEl) {
+            errEl.textContent = res.error || 'Incorrect master password. Access denied.';
+            errEl.style.display = 'block';
+          }
+          if (pwdInput) { pwdInput.select(); pwdInput.focus(); }
+        }
+      } catch (err) {
+        if (errEl) {
+          errEl.textContent = 'Authentication error: ' + err.message;
+          errEl.style.display = 'block';
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<span>Unlock Admin Console</span><span style="font-family:JetBrains Mono,monospace;">→</span>';
+        }
+      }
+    }
+
+    async function lockAdminSessionNow() {
+      try {
+        await fetch(API + '/api/auth/lock', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        }).catch(() => {});
+      } catch {}
+      sessionStorage.removeItem('alpha_admin_token');
+      localStorage.removeItem('alpha_admin_token');
+      try { localStorage.setItem('alpha_locked_at', Date.now().toString()); } catch {}
+      showToastNotification('🔒 All operator sessions locked');
+      checkAdminPasswordGate();
+    }
+
+    // Cross-tab synchronization: when locked in another tab, lock this console immediately
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'alpha_locked_at' || e.key === 'alpha_admin_token') {
+        const token = localStorage.getItem('alpha_admin_token') || sessionStorage.getItem('alpha_admin_token') || '';
+        if (!token) {
+          checkAdminPasswordGate();
+        }
+      }
+    });
+
+    async function promptAdminWalletReset() {
+      const addr = prompt('Enter your Decibel Aptos subaccount / owner wallet address:');
+      if (!addr || !addr.trim()) return;
+      try {
+        const res = await fetch(API + '/api/auth/reset-by-wallet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ walletAddress: addr.trim() })
+        }).then(r => r.json());
+
+        if (res.success) {
+          alert('Admin password has been reset! The console is now unlocked. You can configure a new password in Settings.');
+          sessionStorage.removeItem('alpha_admin_token');
+          localStorage.removeItem('alpha_admin_token');
+          checkAdminPasswordGate();
+          init();
+        } else {
+          alert(res.error || 'Wallet address does not match configured subaccount.');
+        }
+      } catch (err) {
+        alert('Reset request failed: ' + err.message);
+      }
     }
 
     // Shows a styled admin login modal. Returns a Promise<string|null> (password or null if cancelled).
@@ -26459,7 +26660,6 @@
       }
     });
 
-    loadAllSettingsUI();
     const hash = window.location.hash ? window.location.hash.replace('#', '') : '';
     const storedTab = localStorage.getItem('alpha_active_tab');
     const validTabs = ['dashboard', 'positions', 'markets', 'history', 'logs', 'settings', 'simlab', 'strategy'];
@@ -26473,7 +26673,14 @@
     }
 
     switchTab(activeInitialTab);
-    init();
+
+    // Master Operator Password Gate Protection
+    checkAdminPasswordGate().then(unlocked => {
+      if (unlocked) {
+        loadAllSettingsUI();
+        init();
+      }
+    });
   </script>
 
   <!-- Operating Architecture Selection Modal (Post-Onboarding) -->

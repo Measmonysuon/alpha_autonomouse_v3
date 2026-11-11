@@ -1424,10 +1424,18 @@ export function startApiServer(): http.Server {
 
     // ── 4. Authentication Check & Login ──────────────────────────────────────
     if (pathname === '/api/auth/check') {
-      const authRequired = Boolean(config.ADMIN_PASSWORD && config.ADMIN_PASSWORD.trim() !== '');
+      const hasAdminPassword = Boolean(config.ADMIN_PASSWORD && config.ADMIN_PASSWORD.trim() !== '');
+      const authRequired = hasAdminPassword;
       const authenticated = isAuthorized(req);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ authRequired, authenticated }));
+      res.end(JSON.stringify({ authRequired, authenticated, hasAdminPassword }));
+      return;
+    }
+
+    // ── Global Operator Session Lock ──────────────────────────────────────────
+    if ((pathname === '/api/auth/lock' || pathname === '/api/auth/logout') && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'All operator sessions locked' }));
       return;
     }
 
@@ -1984,6 +1992,11 @@ export function startApiServer(): http.Server {
 
     // ── 5d. Visualizer Studio Manual Trade Fire Endpoint ──────────────────────
     if (pathname === '/api/trades/fire' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       const body = await parseBody(req);
       const symbol = body.symbol || 'SOL/USD';
       const action = (body.action || 'LONG').toUpperCase() as 'LONG' | 'SHORT';
@@ -2749,6 +2762,11 @@ function triggerBackgroundOnChainSync(): void {
       }
 
       if (req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+          return;
+        }
         const body = await parseBody(req);
         updateDynamicSettings({ trading: body, ...body });
         try {
@@ -2776,6 +2794,11 @@ function triggerBackgroundOnChainSync(): void {
       }
 
       if (req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+          return;
+        }
         const body = await parseBody(req);
         updateDynamicSettings({ ai: body, ...body });
         const updated = getAISettings();
@@ -3450,6 +3473,11 @@ function triggerBackgroundOnChainSync(): void {
       let targetUrl = '';
       let apiKey = '';
       if (req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+          return;
+        }
         const body = await parseBody(req);
         targetUrl = body.url || body.serverUrl || '';
         apiKey = body.key || body.apiKey || body.simLabKey || '';
@@ -3479,6 +3507,11 @@ function triggerBackgroundOnChainSync(): void {
       }
 
       if (req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+          return;
+        }
         const body = await parseBody(req);
         const customUrl = body.url || body.serverUrl;
         
@@ -3670,6 +3703,11 @@ function triggerBackgroundOnChainSync(): void {
     }
 
     if (pathname === '/api/strategies/activate' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       const body = await parseBody(req);
       const id = body.id;
       if (!id) {
@@ -3695,6 +3733,11 @@ function triggerBackgroundOnChainSync(): void {
     }
 
     if (pathname === '/api/strategies/save' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       const strat = await parseBody(req);
       try {
         const saved = saveCustomStrategy(strat);
@@ -3708,6 +3751,11 @@ function triggerBackgroundOnChainSync(): void {
     }
 
     if (pathname === '/api/strategies/delete' && req.method === 'POST') {
+      if (!isAuthorized(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+        return;
+      }
       const body = await parseBody(req);
       const success = deleteCustomStrategy(body.id);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -3729,6 +3777,11 @@ function triggerBackgroundOnChainSync(): void {
         return;
       }
       if (req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: remote admin authentication required.' }));
+          return;
+        }
         const body = await parseBody(req);
         const updated = updateStrategySyncConfig(body);
         res.writeHead(200, { 'Content-Type': 'application/json' });
