@@ -89,7 +89,7 @@ class SimConnectionManager {
       try {
         const reqHeaders: Record<string, string> = { ...headers };
         if (url.includes('measmony.me')) {
-          reqHeaders['x-api-key'] = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+          reqHeaders['x-api-key'] = config.CF_WAF_KEY || 'sk-decibel-e1ad623ef2b26d9cd07c7ecd478116b0';
         }
 
         const res = await axios.post(url, payload, {
@@ -156,7 +156,7 @@ class SimConnectionManager {
           : (headers['x-api-key'] || superchargeToken || '');
 
         if (targetUrl.includes('measmony.me')) {
-          reqHeaders['x-api-key'] = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+          reqHeaders['x-api-key'] = config.CF_WAF_KEY || 'sk-decibel-e1ad623ef2b26d9cd07c7ecd478116b0';
           if (rawToken && !rawToken.includes('sk-decibel-')) {
             reqHeaders['Authorization'] = `Bearer ${rawToken}`;
           }

@@ -136,6 +136,7 @@ const configSchema = z.object({
 
   // ── Security & Authentication for Public Server Access ────────────────────────
   ADMIN_PASSWORD: z.string().optional().default(() => envOrFallback('ADMIN_PASSWORD') || ''),
+  CF_WAF_KEY: z.string().default(() => envOrFallback('CF_WAF_KEY') || 'sk-decibel-e1ad623ef2b26d9cd07c7ecd478116b0'),
   ONBOARDED: z.boolean().default(false),
 });
 

@@ -77,7 +77,7 @@ export class SimLabSuperchargeClient {
   private serverUrl = '';
   private keyId = '';
   private secret = '';
-  private cfBypassKey = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+  private cfBypassKey = config.CF_WAF_KEY || 'sk-decibel-e1ad623ef2b26d9cd07c7ecd478116b0';
   private rawToken = '';
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private heartbeatInFlight: boolean = false;
@@ -377,7 +377,7 @@ export class SimLabSuperchargeClient {
       const parsed = JSON.parse(jsonStr);
       if (parsed && parsed.s && parsed.k && parsed.sec) {
         if (!parsed.cf && String(parsed.s).includes('measmony.me')) {
-          parsed.cf = 'sk-decibel-bede26347bff38b3c4310e76709ca3cf';
+          parsed.cf = config.CF_WAF_KEY || 'sk-decibel-e1ad623ef2b26d9cd07c7ecd478116b0';
         }
         return parsed;
       }
