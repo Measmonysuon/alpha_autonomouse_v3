@@ -647,7 +647,26 @@ async function bootstrap(): Promise<void> {
 
   printBanner();
 
-  // 1. Central Alpha Server Pipeline & Sim Lab Supercharge Bridge
+  // 1. Start Local Dashboard & Health API Server FIRST.
+  // The Sim Lab handshake below can take minutes (sequential candidate probes
+  // with long timeouts), and the dashboard must not wait for it: the API reads
+  // live config/state, so it truthfully reports the pre-connect mode and flips
+  // to SIMLAB_SUPERCHARGED as soon as the connection lands.
+  try {
+    startApiServer();
+    onChainPipeline.start();
+    registerScanTrigger(() => {
+      logger.info('⚡ Immediate market scan triggered via operator credentials update!');
+      runTradingCycle().catch((err) => logger.error(`Immediate cycle error: ${err.message}`));
+    });
+    if (isClientConfigured()) {
+      seedMarketsForPairs();
+    }
+  } catch (err: any) {
+    logger.warn(`Local API dashboard server skipped: ${err.message}`);
+  }
+
+  // 2. Central Alpha Server Pipeline & Sim Lab Supercharge Bridge
   if (config.IS_SIMLAB_CONFIGURED && config.OPERATING_MODE === 'SIMLAB_SUPERCHARGED') {
     logger.info('⚡ [SIM LAB] SIMLAB_KEY detected. Connecting to Sim Lab Fleet Command...');
     const connected = await superchargeClient.connect();
@@ -665,21 +684,6 @@ async function bootstrap(): Promise<void> {
   } else {
     config.OPERATING_MODE = 'STANDALONE';
     logger.info('🛡️ [STANDALONE MODE] Client V3 running in pure STANDALONE mode. Alpha bundle ingestion disabled.');
-  }
-
-  // 3. Start Local Dashboard & Health API Server
-  try {
-    startApiServer();
-    onChainPipeline.start();
-    registerScanTrigger(() => {
-      logger.info('⚡ Immediate market scan triggered via operator credentials update!');
-      runTradingCycle().catch((err) => logger.error(`Immediate cycle error: ${err.message}`));
-    });
-    if (isClientConfigured()) {
-      seedMarketsForPairs();
-    }
-  } catch (err: any) {
-    logger.warn(`Local API dashboard server skipped: ${err.message}`);
   }
 
   // 4. Initialize Telegram 2-Way Interactive Copilot Chat
