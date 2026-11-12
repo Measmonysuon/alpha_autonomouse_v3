@@ -403,6 +403,8 @@ export const config = {
 (function resolveSwarmIdentity() {
   const explicitEnvId = process.env.CLIENT_ID ? process.env.CLIENT_ID.trim() : '';
   const GENERIC_DEFAULTS = [
+    'v3-client',
+    'v3-standalone',
     'desk-v2-local',
     'alpha-client-v2',
     'alpha_client_v2',
@@ -986,10 +988,10 @@ export function getDerivedSignerAddress(privateKey?: string): string {
  * Auto-probed on VPS / Cloud or local network without requiring manual UI entry.
  */
 export const DEFAULT_SIMLAB_CANDIDATE_URLS: string[] = [
-  'http://192.168.100.21:4000',
-  'https://simlab.measmony.me',
-  'http://localhost:4000',
   'http://127.0.0.1:4000',
+  'http://localhost:4000',
+  'https://simlab.measmony.me',
+  'http://192.168.100.21:4000',
 ];
 
 /**

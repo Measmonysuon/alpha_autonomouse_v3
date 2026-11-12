@@ -388,13 +388,20 @@ export class SimLabSuperchargeClient {
   }
 
   /**
-   * Helper to retrieve candidate Sim Lab URLs in order of preference.
+   * Helper to retrieve candidate Sim Lab URLs in order of preference:
+   * 1. Localhost/127.0.0.1 (local instance first)
+   * 2. Configured custom serverUrl (if non-local)
+   * 3. Cloud (https://simlab.measmony.me)
+   * 4. LAN candidates
    */
   public getCandidateUrls(): string[] {
     const list = [
+      'http://127.0.0.1:4000',
+      'http://localhost:4000',
       this.serverUrl,
       config.SIMLAB_SERVER_URL,
       ...(DEFAULT_SIMLAB_CANDIDATE_URLS || []),
+      'https://simlab.measmony.me',
     ];
     const unique = new Set<string>();
     for (const item of list) {
@@ -835,6 +842,19 @@ export class SimLabSuperchargeClient {
       operatingMode: this.isConnected ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
       isSimLabConnected: this.isConnected,
       timestamp: Date.now(),
+
+      // ── Hardware & Runtime Device Fingerprint ──
+      fingerprint: {
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version,
+        clientVersion: '3.4.0',
+        hostname: (() => { try { return require('os').hostname(); } catch { return 'unknown'; } })(),
+        uptimeSeconds: Math.floor(process.uptime()),
+        freeMemMB: (() => { try { return Math.round(require('os').freemem() / (1024 * 1024)); } catch { return 0; } })(),
+        totalMemMB: (() => { try { return Math.round(require('os').totalmem() / (1024 * 1024)); } catch { return 0; } })(),
+        osRelease: (() => { try { return require('os').release(); } catch { return ''; } })(),
+      },
 
       // ── Real On-Chain Wallet & Account Collateral ──
       onChain: {

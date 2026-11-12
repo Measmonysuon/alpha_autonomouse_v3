@@ -10758,19 +10758,12 @@
                 API KEY REQUIRED FOR TESTING
               </span>
             </div>
-            <div style="display:grid; grid-template-columns:1.8fr 2.2fr auto auto; gap:12px; align-items:flex-end;">
-              <div>
-                <label
-                  style="display:block; font-size:12px; font-weight:700; color:var(--text2); margin-bottom:4px;">Sim Lab
-                  URL</label>
-                <input type="text" id="simlab-url-input" value="http://localhost:4000"
-                  placeholder="http://localhost:4000 or https://your-simlab-host.com" onchange="saveSimLabFeaturesFromUI()"
-                  style="width:100%; background:var(--bg3); border:1px solid var(--border); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; box-sizing:border-box;">
-              </div>
+            <div style="display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:flex-end;">
+              <input type="hidden" id="simlab-url-input" value="http://localhost:4000">
               <div>
                 <label style="display:block; font-size:12px; font-weight:700; color:#e9d5ff; margin-bottom:4px;">Sim Lab
-                  API Key / Pairing Token (Required)</label>
-                <input type="password" id="simlab-key-input" placeholder="Enter API Key (simlab_live_... or test key)"
+                  API Key / License Token (Auto-routes: Localhost → Cloud)</label>
+                <input type="password" id="simlab-key-input" placeholder="Enter API Key (e.g. simlab_live_...)"
                   onchange="saveSimLabFeaturesFromUI()"
                   style="width:100%; background:var(--bg3); border:1px solid rgba(168,85,247,0.4); color:#fff; padding:9px 12px; border-radius:8px; font-size:13px; font-family:'JetBrains Mono',monospace; box-sizing:border-box;">
               </div>
