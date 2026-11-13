@@ -1216,39 +1216,46 @@ export class StandaloneTradingEngine {
     if (simPairDir?.targetAssets && Array.isArray(simPairDir.targetAssets) && simPairDir.targetAssets.length > 0) {
       effectiveTargetAssets = simPairDir.targetAssets;
     }
-    if (effectiveTargetAssets && effectiveTargetAssets.length > 0) {
-      const normSym = symbol.toUpperCase().replace(/[-_/]/g, '');
-      const isTargetWhitelisted = effectiveTargetAssets.some(
-        (t) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')) || t.toUpperCase().replace(/[-_/]/g, '').includes(normSym)
-      );
-      if (!isTargetWhitelisted) {
-        return {
-          symbol,
-          action: 'HOLD',
-          trend: 'NEUTRAL',
-          riskLevel: 'LOW',
-          triggered: false,
-          entryPrice: 0,
-          stopLoss: 0,
-          takeProfit: 0,
-          riskRewardRatio: 0,
-          suggestedLeverage: 1,
-          confidence: 0,
-          baseScore: 0,
-          indicators: ind ? ind : {
-            ema9: 0, ema21: 0, ema50: 0, ema9Previous: 0, ema21Previous: 0,
-            emaCrossover: 'NEUTRAL', rsi14: 50, stochRsi14: 50, adx14: 20, atr14: 0, rvol: 1.0,
-            upperWickPct: 0, lowerWickPct: 0, bodyPct: 0, isTopWickRejection: false, isBottomWickRejection: false,
-            isPullbackBounce: false, distToEma25Pct: 0, pullbackStatus: 'NORMAL',
-            swingHigh: 0, swingLow: 0, trend1h: 'NEUTRAL', structureTrend: 'SIDEWAYS', lastPattern: 'NEUTRAL',
-          },
-          reasons: [`Symbol ${symbol} held: Whitelisted target assets for ${activeStrategy.name} are strictly [${effectiveTargetAssets.join(', ')}]`],
-          strategyName: activeStrategy.name,
-          strategyTags: [activeStrategy.id],
-          entryRationale: `Selective Target Filter: Only ${effectiveTargetAssets.join(' and ')} active for execution.`,
-          timestamp,
-        };
-      }
+    const normSym = symbol.toUpperCase().replace(/[-_/]/g, '');
+    const isTargetWhitelisted = !effectiveTargetAssets || effectiveTargetAssets.length === 0 || effectiveTargetAssets.some(
+      (t) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')) || t.toUpperCase().replace(/[-_/]/g, '').includes(normSym)
+    );
+    const watchPairsList = typeof config.WATCH_PAIRS === 'string'
+      ? config.WATCH_PAIRS.split(',').map((p: string) => p.trim()).filter(Boolean)
+      : (Array.isArray(config.WATCH_PAIRS) ? (config.WATCH_PAIRS as string[]) : []);
+    const isWatchPair = watchPairsList.some(
+      (wp: string) => wp.toUpperCase().replace(/[-_/]/g, '') === normSym
+    );
+    const isReboundOpportunity = Boolean(simPairDir?.reboundOpportunity?.isReboundActive);
+
+    // Permit execution across all configured watch pairs and active AI rebound triggers
+    if (!isTargetWhitelisted && !isWatchPair && !isReboundOpportunity) {
+      return {
+        symbol,
+        action: 'HOLD',
+        trend: 'NEUTRAL',
+        riskLevel: 'LOW',
+        triggered: false,
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit: 0,
+        riskRewardRatio: 0,
+        suggestedLeverage: 1,
+        confidence: 0,
+        baseScore: 0,
+        indicators: ind ? ind : {
+          ema9: 0, ema21: 0, ema50: 0, ema9Previous: 0, ema21Previous: 0,
+          emaCrossover: 'NEUTRAL', rsi14: 50, stochRsi14: 50, adx14: 20, atr14: 0, rvol: 1.0,
+          upperWickPct: 0, lowerWickPct: 0, bodyPct: 0, isTopWickRejection: false, isBottomWickRejection: false,
+          isPullbackBounce: false, distToEma25Pct: 0, pullbackStatus: 'NORMAL',
+          swingHigh: 0, swingLow: 0, trend1h: 'NEUTRAL', structureTrend: 'SIDEWAYS', lastPattern: 'NEUTRAL',
+        },
+        reasons: [`Symbol ${symbol} held: Neither whitelisted [${(effectiveTargetAssets || []).join(', ')}] nor configured in WATCH_PAIRS`],
+        strategyName: activeStrategy.name,
+        strategyTags: [activeStrategy.id],
+        entryRationale: `Selective Target Filter: ${symbol} is outside active trading universe.`,
+        timestamp,
+      };
     }
 
     if (!ind || klines.length === 0) {

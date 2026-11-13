@@ -798,6 +798,44 @@ export class PortfolioHarvester {
         } catch { }
       }
 
+      // ── Multi-Source Whale & Taker Netflow Assessment (Symmetric Two-Way Matrix) ──
+      try {
+        const { getLastSyncedBundle } = require('../pipeline/sim-consumer');
+        const bundle = getLastSyncedBundle();
+        const cqNetflow = bundle?.marketIntelligence?.cryptoQuant?.btcExchangeNetflow;
+        const flow = (bundle?.marketIntelligence as any)?.flow;
+        const aggFlow4h = flow?.aggregate4hNetflowUsd;
+        const btcFlow4h = flow?.btcNetflow4hUsd;
+
+        const isDistribution = (typeof cqNetflow === 'number' && cqNetflow >= 300) ||
+                               (typeof aggFlow4h === 'number' && aggFlow4h <= -40_000_000) ||
+                               (typeof btcFlow4h === 'number' && btcFlow4h <= -25_000_000);
+
+        const isAccumulation = (typeof cqNetflow === 'number' && cqNetflow <= -300 && cqNetflow !== -450) ||
+                               (typeof aggFlow4h === 'number' && aggFlow4h >= 40_000_000) ||
+                               (typeof btcFlow4h === 'number' && btcFlow4h >= 25_000_000);
+
+        if (isDistribution) {
+          if (isLong) {
+            score += weights.whaleAbsorptionPenalty || 20;
+            const flowM = aggFlow4h ? ` ($${(aggFlow4h / 1e6).toFixed(1)}M 4h)` : '';
+            factors.push(`🚨 Heavy Market Distribution${flowM}: Spot dump risk on LONG (+${weights.whaleAbsorptionPenalty || 20}pts)`);
+          } else {
+            score = Math.max(0, score - 15);
+            const flowM = aggFlow4h ? ` ($${(aggFlow4h / 1e6).toFixed(1)}M 4h)` : '';
+            factors.push(`📉 Confirmed Distribution Flow${flowM}: Heavy sell pressure supporting SHORT runner (-15pts)`);
+          }
+        } else if (isAccumulation) {
+          if (!isLong) {
+            score += weights.whaleAbsorptionPenalty || 20;
+            factors.push(`🐋 Spot Accumulation Squeeze Risk (${cqNetflow || ''} BTC): Buying pressure absorption risk on SHORT (+${weights.whaleAbsorptionPenalty || 20}pts)`);
+          } else {
+            score = Math.max(0, score - 15);
+            factors.push(`📈 Spot Accumulation Flow: Supply removal supporting LONG runner (-15pts)`);
+          }
+        }
+      } catch {}
+
       // ── Time Stagnation Decay: +5 pts per hour after 2 hours without breakeven ──
       const holdTimeMs = trade.openedAt ? Date.now() - trade.openedAt : 0;
       const holdHours = holdTimeMs > 0 ? (holdTimeMs / (1000 * 60 * 60)) : (trade.barsHeld ? trade.barsHeld * 0.25 : 0);

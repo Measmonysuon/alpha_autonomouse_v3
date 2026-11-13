@@ -866,9 +866,25 @@ export class TradeExecutor {
         }
 
         // Auto-arm on-chain hard SL & dynamic hard TP if position is open without an active stop or TP order
-        const targetTp = (existing?.takeProfit1 && existing.takeProfit1 > 0)
-          ? existing.takeProfit1
-          : ((existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || activeTp));
+        const isTradeNoFixedTp = Boolean(
+          existing?.noFixedTp ||
+          (existing as any)?.strategyTags?.includes('Dynamic-Harvest30') ||
+          (existing as any)?.strategyTags?.includes('champion_confirmed_retest_harvest30') ||
+          existing?.strategyName?.includes('Robust Island')
+        );
+
+        if (isTradeNoFixedTp && existing?.takeProfit && existing.takeProfit > 0) {
+          logger.info(`🌊 [DYNAMIC RUNNER TP PURGE] Clearing fixed TP ($${existing.takeProfit}) for ${existing.symbol} — runner uses Dynamic 30% Harvest + 50% Midpoint exit.`);
+          existing.takeProfit = 0;
+          existing.dynamicTakeProfit = 0;
+          modified = true;
+        }
+
+        const targetTp = isTradeNoFixedTp
+          ? 0
+          : ((existing?.takeProfit1 && existing.takeProfit1 > 0)
+            ? existing.takeProfit1
+            : ((existing?.takeProfit && existing.takeProfit > 0) ? existing.takeProfit : (pos.takeProfit || activeTp)));
 
         // Fix gas drawdown: Decibel DEX get_positions does not return trigger order triggers on the position struct.
         // Once armed for this specific position entry price, remember permanently so we never loop or spam txs!
