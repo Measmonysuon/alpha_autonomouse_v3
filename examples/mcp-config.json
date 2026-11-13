@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "simlab-alpha": {
+      "url": "https://simlab.measmony.me/mcp/sse",
+      "headers": {
+        "x-client-id": "my-quant-agent"
+      }
+    }
+  }
+}
+

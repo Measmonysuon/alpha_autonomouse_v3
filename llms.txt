@@ -1,0 +1,160 @@
+# Sim Lab Alpha Intelligence — MCP & x402 Protocol Specification
+> Machine-readable interface guide for Autonomous AI Agents, LLM tool-calling engines, and quantitative trading bots.
+
+## Overview
+Sim Lab provides quantitative trading intelligence, market microstructure physics, trap shields, and dynamic execution directives across 55 cryptocurrency perpetual markets (Hyperliquid, Decibel DEX, Bybit).
+
+- **Public Showcase & Docs**: https://alpha.measmony.me
+- **x402 Discovery Document**: https://alpha.measmony.me/x402/info
+- **x402 Well-Known URI**: https://alpha.measmony.me/.well-known/x402
+- **MCP Remote SSE Endpoint**: https://simlab.measmony.me/mcp/sse
+- **x402 Top-Up Endpoint**: POST https://simlab.measmony.me/x402/topup
+- **x402 Balance Endpoint**: GET https://simlab.measmony.me/x402/balance
+- **Contact & Support**: alpha@measmony.me | Telegram: @measmonysuon | X: @measmonysuon
+
+---
+
+## Monetization Model: "Free Proves, Paid Decides"
+
+Autonomous agents interact with Sim Lab without human checkout or credit cards. Micro-payments are settled in USDC on Base via the standard HTTP 402 / JSON-RPC -32042 payment flow (Solana multi-rail planned for Phase 2).
+
+1. **Free Tier (Zero Friction)**:
+   - Tool `get_market_regime`: Returns coarse headline market regime and macro bias at zero cost.
+   - Honest Teaser Receipts: Evaluative tools return a coarse risk band (`LOW`, `ELEVATED`, `HIGH`), fleet proof, and top-up instructions when unpaid (capped at 20 free teasers/day per client).
+2. **Paid Tier (Autonomous Micropayments)**:
+   - Evaluative tools deduct atomic micro-credits ($0.02 – $0.15 USDC) per successful execution.
+   - Top-up credits are purchased via `POST /x402/topup` using signed authorizations.
+3. **Institutional Licensed Desks**:
+   - Clients presenting an authenticated API key (`key_live_...`) bypass the credit ledger with 100% free unlimited execution.
+
+---
+
+## x402 Supported Networks & Payment Rails
+
+Sim Lab accepts USDC micro-payments on Base mainnet (Solana multi-rail planned for Phase 2):
+
+### 1. Base Network (Ethereum L2) — LIVE IN PRODUCTION
+- **Network ID**: `eip155:8453`
+- **Asset Contract (USDC)**: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- **Pay-To Wallet**: `0x5ae6a0d1c1698be0b08d1a4b701fa8a9489ee5af`
+- **Decimals**: 6 (1 USDC = 1,000,000 atomic units)
+- **Settlement Facilitator**: Open community facilitator (`https://facilitator.payai.network`)
+
+### 2. Solana Network — PLANNED (PHASE 2)
+- **Network ID**: `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
+- **Asset Mint (USDC)**: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- **Pay-To Wallet**: `Bn8QgFB4sMdr9PK4oeZhEyZ4kWxhnYcbVAVhUxac3GmJ`
+- **Status**: Deferred to Phase 2 pending dedicated SVM testnet/mainnet proof run. Pay-To address preserved on file.
+
+### Top-Up Credit Packs & Expiry Policy
+Agents can purchase call credits in predefined packs or any custom amount $\ge$ $1.00 USD:
+- **Trial Pack**: $1.00 USD $\rightarrow$ 1,000,000 micro-credits (0% bonus)
+- **Bot Pack**: $10.00 USD $\rightarrow$ 10,500,000 micro-credits (+5% bonus)
+- **Fleet Pack**: $50.00 USD $\rightarrow$ 55,000,000 micro-credits (+10% bonus)
+- **Custom Top-Up**: Any amount $\ge$ $1.00 USD with automatic bonus tiers (+5% $\ge$ $10, +10% $\ge$ $50).
+- **Credit Expiry**: **NEVER EXPIRE** (v1 specification policy: credits remain available indefinitely).
+
+---
+
+## Tool Catalog & Pricing Table
+
+| Tool Name | Price (USDC) | Price (Atomic) | Description |
+|---|---|---|---|
+| `get_market_regime` | **FREE** | 0 | Coarse headline macro regime, bias, and cooling status (Paid upgrade: $0.02 for full directive). |
+| `check_pair_directive` | $0.05 | 50,000 | Dynamic fast/slow SMA thresholds, confidence gates, leverage cap, and retest zone validation. |
+| `get_market_microstructure` | $0.05 | 50,000 | Tick-level orderflow imbalance, Shannon entropy, and taker volume imbalance. |
+| `get_robust_island_status` | $0.05 | 50,000 | Parameter surface neighbor robustness analysis (verifies candidate is not an overfit needle peak). |
+| `get_top_picks` | $0.05 | 50,000 | Top ranked candidate assets scored by multi-factor quantitative fleet filters. |
+| `get_harvest_targets` | $0.05 | 50,000 | Volatility-adjusted dynamic harvest targets and breakeven ratchet levels. |
+| `get_active_strategy` | $0.05 | 50,000 | Returns the active champion strategy parameters, calibrated win-rate gate, dynamic score floor, and asset rankings. |
+| `evaluate_trap_shield` | $0.10 | 100,000 | Volume-synchronized probability of toxicity (VPIN), L2 orderbook skew, and spoofing detection. |
+| `get_alpha_bundle` | $0.15 | 150,000 | Complete proprietary alpha bundle across all 55 tracked perpetual markets. |
+| `pre_trade_check` | $0.15 | 150,000 | **Composite All-in-One Verdict**: Evaluates pair directive, trap shield, and microstructure into a single definitive `ALLOW` or `VETO` verdict. |
+
+---
+
+## Standard Workflow for Autonomous AI Agents
+
+### Step 1: Read Discovery Document
+Query `GET https://alpha.measmony.me/x402/info` or `GET https://simlab.measmony.me/x402/info` to fetch live prices, accepted networks, and payment recipient addresses.
+
+### Step 2: Connect to MCP Server
+Establish a remote Server-Sent Events (SSE) session:
+```http
+GET https://simlab.measmony.me/mcp/sse HTTP/1.1
+x-client-id: agent_arbitrum_01
+x-wallet: 0xYourAgentWalletAddress
+```
+
+### Step 3: Call Free Tool
+Query headline market state without payment:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "tools/call",
+  "params": {
+    "name": "get_market_regime",
+    "arguments": {}
+  }
+}
+```
+
+### Step 4: Top Up Credits (x402 Challenge & Payment)
+1. Send initial top-up request:
+   ```http
+   POST https://simlab.measmony.me/x402/topup HTTP/1.1
+   Content-Type: application/json
+   x-client-id: agent_arbitrum_01
+   
+   {"packUsd": 10, "clientId": "agent_arbitrum_01"}
+   ```
+2. Receive `HTTP 402 Payment Required` with `PAYMENT-REQUIRED` base64 challenge header.
+3. Sign EIP-712 TransferWithAuthorization on Base (Solana: Phase 2, not yet accepted):
+   - **Base (`eip155:8453`) EIP-712 Domain**: `{ name: "USD Coin", version: "2", chainId: 8453, verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }`
+   - **Payload Requirement**: Ensure the submitted `PAYMENT-SIGNATURE` payload echoes back the selected challenge entry in the `accepted` field.
+4. Retry request with `PAYMENT-SIGNATURE` base64 header.
+5. Server settles payment on-chain via facilitator and credits account balance (+5% bonus).
+
+### Step 5: Execute High-Conviction Trade Check
+Execute composite `pre_trade_check`:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "2",
+  "method": "tools/call",
+  "params": {
+    "name": "pre_trade_check",
+    "arguments": {
+      "symbol": "ETH/USD",
+      "side": "SHORT"
+    }
+  }
+}
+```
+Response deducts $0.15 USDC from ledger and returns full decision payload:
+```json
+{
+  "symbol": "ETH/USD",
+  "candidateAction": "SHORT",
+  "verdict": "ALLOW",
+  "vetoCount": 0,
+  "vetoReasons": [],
+  "underlying": {
+    "directiveStatus": "ACTIVE",
+    "trapShield": {"vpinToxicity": 0.139, "isToxicFlow": false},
+    "microstructure": {"entropy": 0.953, "takerBuyRatio": 0.373}
+  },
+  "advice": "ALLOW: High-edge setup approved by Sim Lab AI"
+}
+```
+
+---
+
+## Strategy Attribution & Live Proof
+- **Active Strategy**: Robust Island SMA Retest & 30% Dynamic Harvest Champion V3
+- **Fleet Closed Trades**: 442 verified on-chain & simulated executions
+- **Calibrated Win-Rate**: 65.3%
+- **Profit Factor**: 3.71
+- **Tracked Universe**: 55 Perpetual Markets
+
