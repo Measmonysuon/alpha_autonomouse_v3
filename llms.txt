@@ -82,9 +82,11 @@ Query `GET https://alpha.measmony.me/x402/info` or `GET https://simlab.measmony.
 Establish a remote Server-Sent Events (SSE) session:
 ```http
 GET https://simlab.measmony.me/mcp/sse HTTP/1.1
-x-client-id: agent_arbitrum_01
+x-client-id: agent_private_uuid_or_secret_string
 x-wallet: 0xYourAgentWalletAddress
 ```
+
+> 🔒 **Security Best Practice**: Treat `x-client-id` as a private client credential and generate a high-entropy string (e.g. UUID v4) bound to your `x-wallet`. Both `x-client-id` and `x-wallet` are strictly required together for paid tool executions and `/x402/balance` queries.
 
 ### Step 3: Call Free Tool
 Query headline market state without payment:
