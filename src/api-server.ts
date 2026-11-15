@@ -229,10 +229,10 @@ export function triggerImmediateScan(): void {
 }
 
 export const DEFAULT_PAIR_PRICES: Record<string, number> = {
-  'BTC/USD': 79589.5,
-  'ETH/USD': 2386.2,
-  'HYPE/USD': 81.55,
-  'SOL/USD': 95.24,
+  'BTC/USD': 64500.0,
+  'ETH/USD': 1780.0,
+  'HYPE/USD': 64.0,
+  'SOL/USD': 71.0,
   'LINK/USD': 11.416,
   'ZEC/USD': 1303.12,
   'DOGE/USD': 0.07588,
@@ -240,7 +240,7 @@ export const DEFAULT_PAIR_PRICES: Record<string, number> = {
   'XRP/USD': 1.3066,
   'MON/USD': 0.017817,
   'AAVE/USD': 130.2,
-  'ADA/USD': 0.19477,
+  'ADA/USD': 0.1502,
   'APT/USD': 0.6321,
   'NEAR/USD': 3.9329,
   'TAO/USD': 231.62,
@@ -258,7 +258,7 @@ export const DEFAULT_PAIR_PRICES: Record<string, number> = {
   'PUMP/USD': 0.004202,
   'XPL/USD': 0.06402,
   'AVAX/USD': 8.652,
-  'UNI/USD': 7.2868,
+  'UNI/USD': 5.05,
   'GME/USD': 25.173,
   'WLFI/USD': 0.04545,
   'TRX/USD': 0.31771,
@@ -266,8 +266,8 @@ export const DEFAULT_PAIR_PRICES: Record<string, number> = {
   'SONY/USD': 27.497,
   'TTWO/USD': 213.16,
   'APT/USDC': 0.6321,
-  'ETH/USDC': 2386.2,
-  'BTC/USDC': 79589.5,
+  'ETH/USDC': 1780.0,
+  'BTC/USDC': 64500.0,
   'XRP/USDC': 1.3066,
   'TSLA/USD': 375.04,
   'MSTR/USD': 139.81,
@@ -695,6 +695,47 @@ export async function fetchLiveBulkTickers(): Promise<void> {
     } catch {}
   }
 
+  // 3. Fallback: CoinGecko bulk simple price for altcoins/unlisted tokens
+  if (tickerMap.size < watchPairs.length) {
+    try {
+      const cgMap: Record<string, string> = {
+        BTC: 'bitcoin',
+        ETH: 'ethereum',
+        SOL: 'solana',
+        APT: 'aptos',
+        SUI: 'sui',
+        HYPE: 'hyperliquid',
+        UNI: 'uniswap',
+        ADA: 'cardano',
+        LINK: 'chainlink',
+        DOGE: 'dogecoin',
+        AVAX: 'avalanche-2',
+        NEAR: 'near',
+      };
+      const ids = Object.values(cgMap).join(',');
+      const res = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`, {
+        timeout: 3000,
+      });
+      if (res.data) {
+        for (const [symKey, cgId] of Object.entries(cgMap)) {
+          const coinData = res.data[cgId];
+          if (coinData && typeof coinData.usd === 'number' && coinData.usd > 0) {
+            const bybitKey = `${symKey}USDT`;
+            if (!tickerMap.has(bybitKey) || (tickerMap.get(bybitKey)?.lastPrice ?? 0) === 0) {
+              tickerMap.set(bybitKey, {
+                lastPrice: coinData.usd,
+                change24h: coinData.usd_24h_change || 0,
+                high24h: coinData.usd * 1.02,
+                low24h: coinData.usd * 0.98,
+                volume24hUsd: coinData.usd * 50000,
+              });
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
   let priceChanged = false;
 
   for (const sym of watchPairs) {
@@ -703,7 +744,13 @@ export async function fetchLiveBulkTickers(): Promise<void> {
     const bybitSym = `${cleanBase}USDT`;
     const item = tickerMap.get(bybitSym);
 
-    // PRIORITY 1: Authentic On-Chain Decibel DEX Mark & Oracle Prices
+    // Keep dynamic fallback baseline updated
+    if (item && item.lastPrice > 0) {
+      DEFAULT_PAIR_PRICES[sym] = item.lastPrice;
+      DEFAULT_PAIR_PRICES[`${cleanBase}/USD`] = item.lastPrice;
+    }
+
+    // PRIORITY 1: Authentic On-Chain Decibel DEX Mark & Oracle Prices (verified fresh)
     const decibelPx = decibelPriceFeed.getPrice(sym);
 
     let price = 0;
@@ -716,8 +763,22 @@ export async function fetchLiveBulkTickers(): Promise<void> {
     let volume24hUsd = item?.volume24hUsd ?? 0;
 
     if (decibelPx && decibelPx.markPrice > 0) {
-      price = decibelPx.markPrice;
-      oraclePrice = decibelPx.oraclePrice;
+      // Divergence check against live CEX ticker
+      const cexPx = item?.lastPrice ?? 0;
+      if (cexPx > 0) {
+        const divPct = Math.abs(decibelPx.markPrice - cexPx) / cexPx * 100;
+        if (divPct > 15) {
+          logger.warn(`🚨 [V3 PRICE DIVERGENCE] Decibel markPrice ($${decibelPx.markPrice}) diverged ${divPct.toFixed(1)}% from CEX ($${cexPx}) for ${sym}. Overriding with live CEX price.`);
+          price = cexPx;
+          oraclePrice = cexPx;
+        } else {
+          price = decibelPx.markPrice;
+          oraclePrice = decibelPx.oraclePrice;
+        }
+      } else {
+        price = decibelPx.markPrice;
+        oraclePrice = decibelPx.oraclePrice;
+      }
       fundingRate = decibelPx.fundingRatePct;
       openInterestUsd = decibelPx.openInterestUsd;
       if (decibelPx.change24h !== undefined && item?.change24h === undefined) {

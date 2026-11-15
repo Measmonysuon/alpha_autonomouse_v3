@@ -125,23 +125,31 @@ async function runTradingCycle(): Promise<void> {
             : ((typeof existingMkt?.change24h === 'number') ? existingMkt.change24h : undefined);
 
           // Authoritative current price resolution:
-          // Priority 1: Live Decibel on-chain / Bybit markPrice from MCP
-          // Priority 2: Existing verified market price (from live SSE / Bybit ticker / Decibel feed)
-          // Priority 3: Latest kline close
-          // Priority 4: DEFAULT_PAIR_PRICES fallback
+          // Priority 1: Latest fresh kline close (real market structure)
+          // Priority 2: Live Decibel on-chain / Bybit markPrice from MCP (if consistent)
+          // Priority 3: Existing verified market price
+          // Priority 4: Dynamic DEFAULT_PAIR_PRICES fallback
+          const klineLastClose = (klines.length > 0 && klines[klines.length - 1].close > 0)
+            ? klines[klines.length - 1].close
+            : 0;
+
           const existingPx = existingMkt?.markPrice;
-          let currentPrice = (mcpPrice?.markPrice && mcpPrice.markPrice > 0)
+          let candidatePx = (mcpPrice?.markPrice && mcpPrice.markPrice > 0)
             ? mcpPrice.markPrice
             : (existingPx && existingPx > 0 && Math.abs(existingPx - 10) > 0.001 ? existingPx : 0);
 
-          if (!currentPrice || currentPrice <= 0) {
-            if (klines.length > 0 && klines[klines.length - 1].close > 0) {
-              currentPrice = klines[klines.length - 1].close;
-            } else if (existingPx && existingPx > 0) {
-              currentPrice = existingPx;
-            } else {
-              currentPrice = DEFAULT_PAIR_PRICES[symbol] || 1.0;
+          // If candidate price diverges > 15% from fresh kline close, prefer kline close
+          if (klineLastClose > 0 && candidatePx > 0) {
+            const div = Math.abs(candidatePx - klineLastClose) / klineLastClose * 100;
+            if (div > 15) {
+              logger.warn(`🚨 [V3 PRICE DIVERGENCE] candidatePx ($${candidatePx}) diverged ${div.toFixed(1)}% from kline close ($${klineLastClose}) for ${symbol}! Using kline close.`);
+              candidatePx = klineLastClose;
             }
+          }
+
+          let currentPrice = candidatePx > 0 ? candidatePx : klineLastClose;
+          if (!currentPrice || currentPrice <= 0) {
+            currentPrice = DEFAULT_PAIR_PRICES[symbol] || 1.0;
           }
 
           // Scale reconciliation guard: If klines were seeded with an old/mismatched scale, normalize them

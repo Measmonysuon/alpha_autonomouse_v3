@@ -398,26 +398,32 @@ export class DecibelPriceFeed {
   }
 
   /**
-   * Get authentic on-chain Decibel price for a symbol
+   * Get authentic on-chain Decibel price for a symbol (enforces freshness TTL)
    */
-  public getPrice(symbol: string): DecibelPriceRecord | undefined {
+  public getPrice(symbol: string, maxAgeMs = 10 * 60 * 1000): DecibelPriceRecord | undefined {
     if (!symbol) return undefined;
+    const now = Date.now();
+    const isFresh = (r?: DecibelPriceRecord): r is DecibelPriceRecord => {
+      return Boolean(r && r.markPrice > 0 && (now - r.updatedAt < maxAgeMs));
+    };
+
     const norm = this.normalizeKey(symbol);
     const p = this.priceCache.get(norm);
-    if (p) return p;
+    if (isFresh(p)) return p;
 
     const raw = this.normalizeRaw(symbol);
     const pRaw = this.priceCache.get(raw);
-    if (pRaw) return pRaw;
+    if (isFresh(pRaw)) return pRaw;
 
     const base = this.normalizeBase(symbol);
     if (base) {
       const pBase = this.priceCache.get(base);
-      if (pBase) return pBase;
+      if (isFresh(pBase)) return pBase;
     }
 
     if (symbol.startsWith('0x')) {
-      return this.priceCache.get(symbol.toLowerCase());
+      const pAddr = this.priceCache.get(symbol.toLowerCase());
+      if (isFresh(pAddr)) return pAddr;
     }
 
     return undefined;
@@ -454,10 +460,17 @@ export class DecibelPriceFeed {
   }
 
   /**
-   * Get all cached Decibel market prices
+   * Get all cached Decibel market prices (filtered to fresh records within maxAgeMs)
    */
-  public getAllPrices(): Map<string, DecibelPriceRecord> {
-    return new Map(this.priceCache);
+  public getAllPrices(maxAgeMs = 10 * 60 * 1000): Map<string, DecibelPriceRecord> {
+    const now = Date.now();
+    const fresh = new Map<string, DecibelPriceRecord>();
+    for (const [k, v] of this.priceCache.entries()) {
+      if (v.markPrice > 0 && (now - v.updatedAt < maxAgeMs)) {
+        fresh.set(k, v);
+      }
+    }
+    return fresh;
   }
 
   /**

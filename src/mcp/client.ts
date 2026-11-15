@@ -45,6 +45,30 @@ async function getBackupPrice(symbol: string): Promise<number> {
     const p = parseFloat(data.price);
     if (Number.isFinite(p) && p > 0) return p;
   } catch {}
+  // CoinGecko fallback for tokens without Bybit/Binance USDT pairs
+  const cgMap: Record<string, string> = {
+    BTC: 'bitcoin',
+    ETH: 'ethereum',
+    SOL: 'solana',
+    APT: 'aptos',
+    SUI: 'sui',
+    HYPE: 'hyperliquid',
+    UNI: 'uniswap',
+    ADA: 'cardano',
+    LINK: 'chainlink',
+    DOGE: 'dogecoin',
+    AVAX: 'avalanche-2',
+    NEAR: 'near',
+  };
+  const cgId = cgMap[cleanBase];
+  if (cgId) {
+    try {
+      const raw = await httpsGetText(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`, 2500);
+      const data = JSON.parse(raw);
+      const p = parseFloat(data?.[cgId]?.usd);
+      if (Number.isFinite(p) && p > 0) return p;
+    } catch {}
+  }
   return 0;
 }
 
@@ -869,20 +893,34 @@ export class DecibelMCPClient {
       }
     }
 
-    // Fallback: If Decibel MCP and feed returned 0, null, or failed, use Binance/Bybit public ticker
-    if (!markPrice || !Number.isFinite(markPrice) || markPrice <= 0) {
+    // Sanity Cross-Check: Query backup price to guard against stale swing-high prices in MCP or decibel feed
+    try {
       const backupPrice = await getBackupPrice(symbol);
       if (backupPrice > 0) {
-        const lastWarn = this.lastPriceWarnLog.get(symbol) || 0;
-        if (now - lastWarn > 300_000) {
-          logger.warn(`⚠️ Decibel MCP ${toolName} unavailable or 0 for ${symbol} — using backup price feed: $${backupPrice}`);
-          this.lastPriceWarnLog.set(symbol, now);
+        if (!markPrice || !Number.isFinite(markPrice) || markPrice <= 0) {
+          const lastWarn = this.lastPriceWarnLog.get(symbol) || 0;
+          if (now - lastWarn > 300_000) {
+            logger.warn(`⚠️ Decibel MCP ${toolName} unavailable or 0 for ${symbol} — using backup price feed: $${backupPrice}`);
+            this.lastPriceWarnLog.set(symbol, now);
+          }
+          markPrice = backupPrice;
+          if (!indexPrice || indexPrice <= 0) indexPrice = backupPrice;
+          if (!lastPrice || lastPrice <= 0) lastPrice = backupPrice;
+        } else {
+          const divergencePct = Math.abs(markPrice - backupPrice) / backupPrice * 100;
+          if (divergencePct > 15) {
+            logger.warn(`🚨 [V3 PRICE DIVERGENCE] Decibel MCP markPrice ($${markPrice}) diverged ${divergencePct.toFixed(1)}% from spot backup ($${backupPrice}) for ${symbol}! Overriding with authentic backup price.`);
+            markPrice = backupPrice;
+            indexPrice = backupPrice;
+            lastPrice = backupPrice;
+          }
         }
-        markPrice = backupPrice;
-        if (!indexPrice || indexPrice <= 0) indexPrice = backupPrice;
-        if (!lastPrice || lastPrice <= 0) lastPrice = backupPrice;
-      } else {
+      } else if (!markPrice || !Number.isFinite(markPrice) || markPrice <= 0) {
         throw new Error(`Invalid price feed for ${symbol}: both Decibel MCP and backup price feeds returned 0`);
+      }
+    } catch (err: any) {
+      if (!markPrice || markPrice <= 0) {
+        throw new Error(`Invalid price feed for ${symbol}: ${err.message}`);
       }
     }
 
