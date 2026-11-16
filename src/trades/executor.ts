@@ -108,6 +108,9 @@ export interface TradeRecord {
   gap30Price?: number;
   gap50Price?: number;
   peakPrice?: number;
+  lockedAtOpen?: boolean;
+  lockedStrategyId?: string;
+  lockedStrategyName?: string;
 }
 
 export interface ShadowTrade {
@@ -642,10 +645,6 @@ export class TradeExecutor {
           (isLong ? pos.takeProfit >= pos.entryPrice * 1.008 : pos.takeProfit <= pos.entryPrice * 0.992) &&
           Math.abs(pos.takeProfit - pos.entryPrice) / pos.entryPrice <= 0.04;
 
-        const activeTp = isPosTpDirectionallyValid
-          ? pos.takeProfit
-          : dynamicTp;
-
         // If not found open, check if this position was recently closed (prevent ghost flickering from delayed RPC indexer responses)
         let recentClosed: TradeRecord | undefined;
         if (!existing) {
@@ -680,6 +679,20 @@ export class TradeExecutor {
           layersActive: { layer1: false, layer2: false, layer3: false, layer4: false, layer5: false },
         };
 
+        const isTradeNoFixedTp = Boolean(
+          existing?.noFixedTp ||
+          existing?.isManual ||
+          existing?.strategyName === 'human trade DEX' ||
+          isHumanTrade ||
+          (existing as any)?.strategyTags?.includes('Dynamic-Harvest30') ||
+          (existing as any)?.strategyTags?.includes('champion_confirmed_retest_harvest30') ||
+          existing?.strategyName?.includes('Robust Island')
+        );
+
+        const activeTp = isTradeNoFixedTp
+          ? 0
+          : (isPosTpDirectionallyValid ? pos.takeProfit : dynamicTp);
+
         if (!existing) {
           const newTrade: TradeRecord = {
             id: isHumanTrade ? `dex-manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : `decibel-onchain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -689,6 +702,7 @@ export class TradeExecutor {
             isManual: isHumanTrade,
             entryPrice: pos.entryPrice || 0,
             takeProfit: activeTp,
+            noFixedTp: isTradeNoFixedTp,
             stopLoss: softRatchet,
             hardStopLoss: hardSl,
             softRatchetPrice: softRatchet,
@@ -709,6 +723,9 @@ export class TradeExecutor {
               ? 'human trade DEX'
               : ((recentClosed?.strategyName && !recentClosed.strategyName.includes('On-Chain')) ? recentClosed.strategyName : simStratName),
             strategyAttribution: isHumanTrade ? humanAttribution : simStratAttribution,
+            lockedAtOpen: true,
+            lockedStrategyId: isHumanTrade ? 'human_trade_dex' : simStratId,
+            lockedStrategyName: isHumanTrade ? 'human trade DEX' : simStratName,
             notes: isHumanTrade ? 'human trade DEX (detected on-chain with no internal record)' : 'Reconciled directly from Aptos on-chain DEX state',
             estimatedProfitPct: (activeTp && pos.entryPrice) ? Number((Math.abs((activeTp - pos.entryPrice) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 7.5,
             estimatedLossPct: softRatchet && pos.entryPrice ? Number((Math.abs((pos.entryPrice - softRatchet) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 5.3,
@@ -744,8 +761,15 @@ export class TradeExecutor {
           if (pos.markPrice && pos.markPrice > 0) {
             existing.currentPrice = pos.markPrice;
           }
-          // Update strategy name and attribution only for bot trades (never overwrite human trade DEX)
-          const isGenericStrat = !existing.isManual && existing.strategyName !== 'human trade DEX' && (
+          // Grandfathering: Ensure open position is locked to its inception strategy
+          if (!existing.lockedAtOpen) {
+            existing.lockedAtOpen = true;
+            existing.lockedStrategyId = existing.strategyAttribution?.strategyId || (existing.isManual ? 'human_trade_dex' : simStratId);
+            existing.lockedStrategyName = existing.strategyName || (existing.isManual ? 'human trade DEX' : simStratName);
+          }
+
+          // Invariant: Once lockedAtOpen is true, NEVER overwrite strategy name or attribution on fleet rotation
+          const isGenericStrat = !existing.lockedAtOpen && !existing.isManual && existing.strategyName !== 'human trade DEX' && (
             !existing.strategyName ||
             existing.strategyName === 'Decibel On-Chain Position' ||
             existing.strategyName === 'Autonomous Engine' ||
@@ -753,14 +777,16 @@ export class TradeExecutor {
             existing.strategyName === 'Turtle Soup & Liquidity Grab' ||
             existing.strategyName.includes('V10') ||
             existing.strategyName.includes('V12') ||
-            existing.strategyName.includes('V13') ||
-            (existing.id.startsWith('decibel-onchain-') && existing.strategyName !== simStratName)
+            existing.strategyName.includes('V13')
           );
 
           if (isGenericStrat && simStratName) {
             logger.info(`🏷️ [RECONCILE] Updating ${existing.symbol} strategy name to active Sim Lab directive: "${simStratName}"`);
             existing.strategyName = simStratName;
             existing.strategyAttribution = simStratAttribution;
+            existing.lockedAtOpen = true;
+            existing.lockedStrategyId = simStratId;
+            existing.lockedStrategyName = simStratName;
             modified = true;
           }
           const refEntry = pos.entryPrice || existing.entryPrice;
@@ -768,7 +794,18 @@ export class TradeExecutor {
           const isTpDirectionallySane = (tp: number) =>
             isExistingLong ? (tp >= refEntry * 1.008) : (tp <= refEntry * 0.992);
 
-          if (!existing.noFixedTp) {
+          // Respect trade's locked TP regime (never force Strategy B's TP model onto Strategy A's position)
+          const effectiveNoFixedTp = Boolean(
+            existing.noFixedTp ||
+            existing.lockedStrategyName?.includes('Robust Island') ||
+            existing.strategyName?.includes('Robust Island') ||
+            (existing as any).strategyTags?.includes('Dynamic-Harvest30') ||
+            (existing as any).strategyTags?.includes('champion_confirmed_retest_harvest30') ||
+            existing.isManual ||
+            existing.strategyName === 'human trade DEX'
+          );
+
+          if (!effectiveNoFixedTp) {
             const isTpUnrealistic = existing.takeProfit > 0 &&
               (!isTpDirectionallySane(existing.takeProfit) || Math.abs(existing.takeProfit - refEntry) / refEntry > 0.04);
 
@@ -782,6 +819,14 @@ export class TradeExecutor {
               logger.info(`🎯 [DYNAMIC TP REALIGN] Calibrated TP for ${existing.symbol}: $${oldTp} → $${existing.takeProfit}`);
             } else if (pos.takeProfit && pos.takeProfit !== existing.takeProfit && isTpDirectionallySane(pos.takeProfit)) {
               existing.takeProfit = pos.takeProfit;
+              modified = true;
+            }
+          } else {
+            existing.noFixedTp = true;
+            if (existing.takeProfit > 0 || (existing.dynamicTakeProfit || 0) > 0) {
+              logger.info(`🌊 [DYNAMIC RUNNER TP PURGE] Clearing fixed TP ($${existing.takeProfit}) for ${existing.symbol} — runner uses Dynamic Amber Band / Midpoint exit locked at open.`);
+              existing.takeProfit = 0;
+              existing.dynamicTakeProfit = 0;
               modified = true;
             }
           }
@@ -866,18 +911,22 @@ export class TradeExecutor {
         }
 
         // Auto-arm on-chain hard SL & dynamic hard TP if position is open without an active stop or TP order
-        const isTradeNoFixedTp = Boolean(
-          existing?.noFixedTp ||
-          (existing as any)?.strategyTags?.includes('Dynamic-Harvest30') ||
-          (existing as any)?.strategyTags?.includes('champion_confirmed_retest_harvest30') ||
-          existing?.strategyName?.includes('Robust Island')
-        );
-
-        if (isTradeNoFixedTp && existing?.takeProfit && existing.takeProfit > 0) {
-          logger.info(`🌊 [DYNAMIC RUNNER TP PURGE] Clearing fixed TP ($${existing.takeProfit}) for ${existing.symbol} — runner uses Dynamic 30% Harvest + 50% Midpoint exit.`);
+        if (isTradeNoFixedTp && existing && (existing.takeProfit > 0 || (existing.dynamicTakeProfit || 0) > 0)) {
+          logger.info(`🌊 [DYNAMIC RUNNER TP PURGE] Clearing fixed TP ($${existing.takeProfit}) for ${existing.symbol} — runner uses Dynamic Amber Band / Midpoint exit.`);
           existing.takeProfit = 0;
           existing.dynamicTakeProfit = 0;
+          existing.noFixedTp = true;
           modified = true;
+        }
+
+        // If an on-chain fixed TP was registered on Decibel DEX, strip it so the position can run dynamically
+        if (isTradeNoFixedTp && pos.takeProfit && pos.takeProfit > 0 && isClientConfigured() && !config.PAPER_TRADING) {
+          logger.info(`🛡️ [STRIP ON-CHAIN TP] Removing resting on-chain TP ($${pos.takeProfit}) on Decibel DEX for ${pos.symbol} (runner uses Dynamic Amber Band exit)`);
+          mcpClient.setTpSl({
+            symbol: pos.symbol,
+            tpTrigger: undefined,
+            slTrigger: existing?.hardStopLoss || hardSl,
+          }).catch((err: any) => logger.warn(`Failed stripping on-chain TP for ${pos.symbol}: ${err.message}`));
         }
 
         const targetTp = isTradeNoFixedTp
@@ -1472,6 +1521,9 @@ export class TradeExecutor {
         strategyName: signal.strategyName || risk.directivesUsed.activeStrategy,
         regime: risk.directivesUsed.regime,
         strategyAttribution: signal.strategyAttribution,
+        lockedAtOpen: true,
+        lockedStrategyId: (signal.strategyAttribution as any)?.strategyId || directivesAny?.activeStrategyId || 'champion_confirmed_retest_harvest30',
+        lockedStrategyName: signal.strategyName || risk.directivesUsed.activeStrategy || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3',
         notes: aiEval.reasoning,
         hardStopLoss: hardSlPrice,
         softRatchetPrice: safeSoftSl,
