@@ -338,6 +338,10 @@ export function applySimStrategyDirectives(strat: SimStrategyDirectives): void {
     } else {
       simStrategiesCache.unshift(updatedStrat);
     }
+    if (storageCache.activeId !== stratId && activeStrategySyncConfig.syncGlobalStrategy) {
+      storageCache.activeId = stratId;
+      saveStorage(storageCache);
+    }
   }
 
   // GUARD: If global strategy sync is disabled by user, ignore external global directives
@@ -507,7 +511,8 @@ export function getActiveStrategy(): StrategyConfig {
   // 1. Sim Lab Supercharged Mode: Only active if SIMLAB_KEY is connected & global sync is on
   if (isSimLabConnected() && activeStrategySyncConfig.syncGlobalStrategy) {
     if (simStrategiesCache.length > 0) {
-      const activeSim = simStrategiesCache.find(s => s.id === storageCache.activeId) || simStrategiesCache[0];
+      const preferredId = cachedLastSimDirectives?.activeStrategyId || simStrategyDirectives?.activeStrategyId || storageCache.activeId;
+      const activeSim = (preferredId ? simStrategiesCache.find(s => s.id === preferredId) : null) || simStrategiesCache[0];
       if (activeSim) {
         if (cachedLastSimDirectives?.targetAssets && cachedLastSimDirectives.targetAssets.length > 0) {
           activeSim.targetAssets = cachedLastSimDirectives.targetAssets;

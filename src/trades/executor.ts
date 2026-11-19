@@ -662,8 +662,14 @@ export class TradeExecutor {
         }
 
         const simDirectives = standaloneEngine.getDirectives();
-        const simStratName = simDirectives?.activeStrategy || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
-        const simStratId = 'champion_confirmed_retest_harvest30';
+        let simStratName = simDirectives?.activeStrategy || 'Robust Island SMA Retest & 30% Dynamic Harvest Champion V3';
+        let simStratId = 'champion_confirmed_retest_harvest30';
+        try {
+          const { getActiveStrategy } = require('../strategy/manager');
+          const currStrat = getActiveStrategy();
+          if (currStrat?.id) simStratId = currStrat.id;
+          if (currStrat?.name) simStratName = currStrat.name;
+        } catch {}
         const simStratAttribution: StrategyAttribution = {
           strategyId: simStratId,
           strategyName: simStratName,
