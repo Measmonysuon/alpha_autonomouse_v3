@@ -322,7 +322,7 @@ export function applySimStrategyDirectives(strat: SimStrategyDirectives): void {
         leverage: strat.leverage ?? 4,
         minAllocPct: strat.minAllocPct ?? 20,
         maxAllocPct: strat.maxAllocPct ?? 35,
-        minMarginUsd: Math.max(20, Number(strat.minMarginUsd ?? strat.fullStrategy?.layer5?.minMarginUsd ?? 20)),
+        minMarginUsd: Math.max(80, Number(strat.minMarginUsd ?? strat.fullStrategy?.layer5?.minMarginUsd ?? 80)),
         minRiskRewardRatio: strat.minRiskRewardRatio ?? 2.5,
         tp1CloseRatio: strat.tp1CloseRatio ?? 0.5,
         stagnationTimeStopBars: strat.stagnationTimeStopBars ?? 8,
@@ -1104,7 +1104,7 @@ export function saveCustomStrategy(config: StrategyConfig): StrategyConfig {
   const existingIdx = storageCache.customStrategies.findIndex((s) => s.id === config.id);
 
   if (config.layer5) {
-    config.layer5.minMarginUsd = Math.max(20, Number(config.layer5.minMarginUsd ?? 20));
+    config.layer5.minMarginUsd = Math.max(80, Number(config.layer5.minMarginUsd ?? 80));
   }
 
   const updated: StrategyConfig = {

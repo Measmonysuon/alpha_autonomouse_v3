@@ -52,7 +52,7 @@ const configSchema = z.object({
 
   // ── Trading Settings (Default $0.00 for pre-onboard safety until configured) ─
   BUDGET_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('BUDGET_USD') || 0.0)),
-  MIN_POSITION_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('MIN_POSITION_USD') || 0.0)),
+  MIN_POSITION_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('MIN_POSITION_USD') || 80.0)),
   MAX_POSITION_USD: z.coerce.number().min(0).default(() => Number(envOrFallback('MAX_POSITION_USD') || 0.0)),
   MAX_OPEN_POSITIONS: z.coerce.number().min(1).max(20).default(() => Number(envOrFallback('MAX_OPEN_POSITIONS') || 3)),
   CLIENT_ID: z.string().default(() => {

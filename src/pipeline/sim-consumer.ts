@@ -479,7 +479,7 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
         layer3: flags.syncIndicators ? bundle.strategy.layer3 : undefined,
         layer4: bundle.strategy.layer4,
         dynamicScoreFloor: bundle.strategy.dynamicScoreFloor,
-        minMarginUsd: Math.max(20, bundle.strategy.minMarginUsd || 20),
+        minMarginUsd: Math.max(80, bundle.strategy.minMarginUsd || 80),
         overallWinRatePct: bundle.learning?.overallWinRatePct,
       });
     }

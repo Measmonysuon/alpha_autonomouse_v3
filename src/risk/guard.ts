@@ -582,19 +582,21 @@ export class RiskGuard {
     }
 
     const isReversalLoop = signal.strategyName === 'Robust Island SMA Reversal Loop';
-    const clientMinPosUsd = isReversalLoop ? ((signal as any).customMarginUsd || 30.0) : ((config as any).MIN_POSITION_USD || 35.0);
+    const minMarginFloor = 80.0;
+    const clientMinPosUsd = isReversalLoop ? ((signal as any).customMarginUsd || minMarginFloor) : Math.max(minMarginFloor, (config as any).MIN_POSITION_USD || minMarginFloor);
     const stratMinMargin = isReversalLoop
-      ? ((signal as any).customMarginUsd || 30.0)
+      ? ((signal as any).customMarginUsd || minMarginFloor)
       : Math.max(
+          minMarginFloor,
           clientMinPosUsd,
           activeDirectives?.strategy?.layer5?.minMarginUsd ??
           (activeDirectives?.strategy as any)?.minMarginUsd ??
-          20.0,
+          minMarginFloor,
         );
 
     let targetAllocUsd: number;
     if (isReversalLoop) {
-      targetAllocUsd = Math.min((signal as any).customMarginUsd || 30.0, remainingBudget);
+      targetAllocUsd = Math.min((signal as any).customMarginUsd || minMarginFloor, remainingBudget);
     } else {
       // Dynamic Percentage Sizing: Respects client working budget and pair tier allocation %
       const pairAllocPct = (typeof pairDir?.tierAllocPct === 'number')
@@ -608,6 +610,16 @@ export class RiskGuard {
         userMaxPosUsd,
       );
       targetAllocUsd = Number((baseTargetAlloc * macroMultiplier).toFixed(2));
+
+      // Dynamic Confluence Score Sizing Scale:
+      // Minimum floor at base confidence (70-75%) = $80.00
+      // Scales up to $160 - $200+ as confluence score reaches 85-95%+
+      const confScore = signal.confidence || 75;
+      const baseGate = activeDirectives?.strategy?.layer5?.minConfidenceGate || 70;
+      const confFactor = Math.min(1.0, Math.max(0.0, (confScore - baseGate) / Math.max(10, 100 - baseGate)));
+      const maxConfluenceAlloc = Math.min(remainingBudget, userMaxPosUsd, Math.max(stratMinMargin * 2.25, 180.0));
+      const confluenceScaledAlloc = stratMinMargin + (confFactor * (maxConfluenceAlloc - stratMinMargin));
+      targetAllocUsd = Math.max(targetAllocUsd, Number(confluenceScaledAlloc.toFixed(2)));
 
       // Kronos Confidence-Calibrated Sizing Multiplier (0.3x for chop up to 1.0x for high conviction)
       if (typeof pairDir?.confidenceSizing?.positionMultiplier === 'number') {
