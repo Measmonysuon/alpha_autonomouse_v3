@@ -2465,7 +2465,13 @@ function triggerBackgroundOnChainSync(): void {
       try {
         const sqliteTrades = dbClient.getTrades({ limit: limitParam });
         if (sqliteTrades && sqliteTrades.length > 0) {
-          trades = sqliteTrades.map(dbTradeToFrontendTrade);
+          // Strictly return verified on-chain closed trades or active open positions; exclude orphan ghost rows without on-chain confirmation
+          const validTrades = sqliteTrades.filter(t => {
+            const isOpen = t.status === 'OPEN' || t.status === 'open';
+            const hasTx = Boolean(t.tx_version && String(t.tx_version).trim().length > 0);
+            return isOpen || hasTx;
+          });
+          trades = validTrades.map(dbTradeToFrontendTrade);
         }
       } catch (err: any) {
         logger.debug(`SQLite trades read error: ${err.message}`);

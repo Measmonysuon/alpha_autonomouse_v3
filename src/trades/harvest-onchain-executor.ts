@@ -81,6 +81,20 @@ export class HarvestOnChainExecutor {
         return { success: false, symbol: req.symbol, executedRatio: 0, error: 'No open trade found' };
       }
 
+      // 2b. Invariant Protection: Never execute Take Profit or Harvest on a losing trade!
+      // Losing positions must be managed strictly and exclusively by Stop Loss.
+      const isTpOrHarvest = req.triggerReason.includes('TIER') || req.triggerReason.includes('HARVEST') || req.triggerReason.includes('TP') || req.triggerReason.includes('TOUCH');
+      if (isTpOrHarvest) {
+        const isLong = trade.action === 'LONG';
+        const curPrice = req.expectedPrice || trade.currentPrice || trade.entryPrice;
+        const isPriceLoss = isLong ? (curPrice < trade.entryPrice) : (curPrice > trade.entryPrice);
+        const isPnlLoss = (trade.pnlUsd !== undefined && trade.pnlUsd < -0.05);
+        if (isPriceLoss || isPnlLoss) {
+          logger.warn(`🛑 [HARVEST EXECUTOR REJECTED] Refusing Take Profit (${req.triggerReason}) on losing trade ${trade.symbol} (entry: $${trade.entryPrice}, current: $${curPrice}, PnL: $${trade.pnlUsd}). Losing trades must be handled by Stop Loss.`);
+          return { success: false, symbol: trade.symbol, executedRatio: 0, error: 'Trade is not in profit; TP/Harvest rejected' };
+        }
+      }
+
       // If partial harvest requested but already performed on this trade:
       if (!isFullClose && trade.harvest30Done) {
         logger.info(`ℹ️ [HARVEST EXECUTOR] Partial harvest already completed for ${trade.symbol}. Runner active.`);

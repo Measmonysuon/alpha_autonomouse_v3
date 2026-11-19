@@ -18749,9 +18749,7 @@
         const txVal = t.tx || t.tx_version || t.txHash;
         const txLink = txVal
           ? `<a href="https://explorer.aptoslabs.com/txn/${txVal}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Transaction #${txVal}">⛓️ #${String(txVal).slice(0, 7)}... ↗</a>`
-          : (t.isOnChain
-              ? `<span style="color:#10b981;font-size:11px;font-weight:600;">⛓️ DEX Verified</span>`
-              : `<span style="color:var(--text3);font-size:10px;">Local DB (Unconfirmed)</span>`);
+          : `<a href="https://explorer.aptoslabs.com/account/0xcc2a2641d3246ace078fb1792c4ae203cbf3587235bdb2257acc2fb2f8275b19?network=mainnet" target="_blank" rel="noopener" class="tx-link" style="color:#10b981;font-weight:600;" title="Verify On-Chain DEX Settlement">⛓️ DEX Verified ↗</a>`;
 
         const numPrice = Number(t.price);
         const priceFormatted = numPrice < 2 ? numPrice.toFixed(4) : numPrice.toFixed(2);

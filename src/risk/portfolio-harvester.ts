@@ -369,27 +369,36 @@ export class PortfolioHarvester {
         (harvestStyle === 'SMA_DYNAMIC_GAP' && !trade.isManual)
       );
 
+      // Take Profit Harvest Gate: A trade MUST be strictly profitable before any Tier 1 or Tier 2 TP can be evaluated.
+      // Losing trades (pnlUsd <= 0 or price unfavorable vs entry) are governed exclusively by Soft SL and Hard SL!
+      const isPriceProfitable = isLong ? (currentPrice > trade.entryPrice) : (currentPrice < trade.entryPrice);
+      const isNetProfitable = pnlPct > 0.25 && pnlUsd > 0.05;
+      const isEligibleForTakeProfit = isPriceProfitable && isNetProfitable;
+
       // Branch 1: Confluence Score Decay Harvest Style
       if (harvestStyle === 'CONFLUENCE_SCORE') {
-        const tier1Floor = harvestPolicy?.tier1ScoreThreshold ?? 60;
-        const tier2Floor = harvestPolicy?.tier2ScoreThreshold ?? 40;
-        const tier1Ratio = harvestPolicy?.tier1Ratio ?? 0.30;
-        const currentConfluence = (trade as any).confluenceScore ?? (trade.confidence || 75);
-        if (currentConfluence <= tier1Floor && pnlPct > 0.5 && !trade.harvest30Done) {
-          logger.info(`🌾 [CONFLUENCE SCORE HARVEST] ${trade.symbol} confluence score (${currentConfluence}) fell below Tier 1 floor (${tier1Floor}). Executing ${(tier1Ratio * 100).toFixed(0)}% partial close.`);
-          tradeExecutor.execute30PercentHarvest(trade.symbol, tier1Ratio).catch((err: any) => {
-            logger.error(`execute30PercentHarvest failed: ${err.message}`);
-          });
-        } else if (currentConfluence <= tier2Floor && trade.harvest30Done) {
-          logger.info(`🎯 [CONFLUENCE SCORE FULL EXIT] ${trade.symbol} confluence score (${currentConfluence}) fell below Tier 2 floor (${tier2Floor}). Closing 100% remaining runner.`);
-          tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
-            logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
-          });
-          continue;
+        if (isEligibleForTakeProfit) {
+          const tier1Floor = harvestPolicy?.tier1ScoreThreshold ?? 60;
+          const tier2Floor = harvestPolicy?.tier2ScoreThreshold ?? 40;
+          const tier1Ratio = harvestPolicy?.tier1Ratio ?? 0.30;
+          const currentConfluence = (trade as any).confluenceScore ?? (trade.confidence || 75);
+          if (currentConfluence <= tier1Floor && !trade.harvest30Done) {
+            logger.info(`🌾 [CONFLUENCE SCORE HARVEST] ${trade.symbol} confluence score (${currentConfluence}) fell below Tier 1 floor (${tier1Floor}). Executing ${(tier1Ratio * 100).toFixed(0)}% partial close.`);
+            tradeExecutor.execute30PercentHarvest(trade.symbol, tier1Ratio).catch((err: any) => {
+              logger.error(`execute30PercentHarvest failed: ${err.message}`);
+            });
+          } else if (currentConfluence <= tier2Floor && trade.harvest30Done) {
+            logger.info(`🎯 [CONFLUENCE SCORE FULL EXIT] ${trade.symbol} confluence score (${currentConfluence}) fell below Tier 2 floor (${tier2Floor}). Closing 100% remaining runner.`);
+            tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
+              logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
+            });
+            continue;
+          }
         }
       } else {
         // Branch 2: Robust Island Dynamic Amber Band Gap Harvest (Default: SMA_DYNAMIC_GAP)
-        if (isRobustHarvestTrade && currentPrice > 0) {
+        // Strictly gated to trades that are currently profitable:
+        if (isRobustHarvestTrade && currentPrice > 0 && isEligibleForTakeProfit) {
           if (!trade.peakPrice) trade.peakPrice = trade.entryPrice;
           if (isLong) {
             if (currentPrice > trade.peakPrice) trade.peakPrice = currentPrice;
@@ -446,7 +455,11 @@ export class PortfolioHarvester {
           if (gap30 && gap50) {
             trade.gap30Price = gap30;
             trade.gap50Price = gap50;
-            const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
+
+            // Tier 1 Harvest: Price reversed to Gap level while remaining securely in profit
+            const isGap30InProfit = isLong ? (gap30 > trade.entryPrice * 1.002) : (gap30 < trade.entryPrice * 0.998);
+            const isTier1Reached = isGap30InProfit && (isLong ? (currentPrice <= gap30) : (currentPrice >= gap30));
+
             if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
               const partialRatio = (activeStratL5 as any)?.tp1CloseRatio ?? harvestPolicy?.tier1Ratio ?? 0.30;
               logger.info(
@@ -457,7 +470,10 @@ export class PortfolioHarvester {
               });
             }
 
-            const isTier2Reached = isLong ? (currentPrice <= gap50) : (currentPrice >= gap50);
+            // Tier 2 Full Take Profit Close: Price touched Midpoint while maintaining profit
+            const isGap50InProfit = isLong ? (gap50 > trade.entryPrice * 1.002) : (gap50 < trade.entryPrice * 0.998);
+            const isTier2Reached = isGap50InProfit && (isLong ? (currentPrice <= gap50) : (currentPrice >= gap50));
+
             if (isTier2Reached && trade.harvest30Done) {
               logger.info(
                 `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)} and cash bank. Executing 100% Full Take Profit Close!`,
