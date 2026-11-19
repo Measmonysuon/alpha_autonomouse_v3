@@ -713,6 +713,19 @@ export class DecibelMCPClient {
   private lastPriceWarnLog: Map<string, number> = new Map();
   private activeMcpCalls = 0;
   private mcpWaitQueue: Array<() => void> = [];
+  private onChainTxLock: Promise<void> = Promise.resolve();
+
+  private async acquireTxLock<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.onChainTxLock;
+    let release!: () => void;
+    this.onChainTxLock = new Promise<void>((r) => { release = r; });
+    try {
+      await prev;
+      return await fn();
+    } finally {
+      release();
+    }
+  }
 
   private async throttleMcpCall<T>(fn: () => Promise<T>, maxConcurrent = 3): Promise<T> {
     if (this.activeMcpCalls >= maxConcurrent) {
@@ -1362,8 +1375,10 @@ export class DecibelMCPClient {
     if (this.aptos && this.aptosAccount && config.DECIBEL_SUBACCOUNT_ADDRESS) {
       for (let sdkAttempt = 1; sdkAttempt <= 3; sdkAttempt++) {
         try {
-          const market = await this.getMarketDetail(params.symbol);
-          if (market) {
+          const res = await this.acquireTxLock(async () => {
+            const market = await this.getMarketDetail(params.symbol);
+            if (!market) return null;
+
             const toChainPrice = (price?: number) => {
               if (!price || price <= 0) return undefined;
               return Math.round((price * Math.pow(10, market.priceDecimals)) / market.tickSize) * market.tickSize;
@@ -1384,8 +1399,8 @@ export class DecibelMCPClient {
             const chainTpSize = toChainSize(params.tpSize);
             const chainSlSize = toChainSize(params.slSize);
 
-            const tx = await this.aptos.transaction.build.simple({
-              sender: this.aptosAccount.accountAddress,
+            const tx = await this.aptos!.transaction.build.simple({
+              sender: this.aptosAccount!.accountAddress,
               data: {
                 function: '0x50ead22afd6ffd9769e3b3d6e0e64a2a350d68e8b102c4e72e33d0b8cfdfdb06::dex_accounts_entry::place_tp_sl_order_for_position',
                 typeArguments: [],
@@ -1404,17 +1419,17 @@ export class DecibelMCPClient {
               },
             });
 
-            const senderAuth = this.aptos.transaction.sign({
-              signer: this.aptosAccount,
+            const senderAuth = this.aptos!.transaction.sign({
+              signer: this.aptosAccount!,
               transaction: tx,
             });
 
-            const committed = await this.aptos.transaction.submit.simple({
+            const committed = await this.aptos!.transaction.submit.simple({
               transaction: tx,
               senderAuthenticator: senderAuth,
             });
 
-            const executed = await this.aptos.waitForTransaction({
+            const executed = await this.aptos!.waitForTransaction({
               transactionHash: committed.hash,
             });
 
@@ -1424,8 +1439,15 @@ export class DecibelMCPClient {
 
             logger.info(`✅ On-chain TP/SL set! Tx: ${committed.hash} (gas: ${executed.gas_used})`);
             return { success: true, txHash: committed.hash };
-          }
+          });
+          if (res) return res;
         } catch (err: any) {
+          const isSeq = err.message?.includes('SEQUENCE_NUMBER_TOO_OLD') || err.message?.includes('SEQUENCE_NUMBER') || err.message?.includes('vm_error_code":3');
+          if (isSeq && sdkAttempt < 3) {
+            logger.warn(`⏳ [ON-CHAIN TP/SL] Sequence number collision detected (attempt ${sdkAttempt}/3: SEQUENCE_NUMBER_TOO_OLD). Refreshing account state in 2s...`);
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
           const isNoPos = err.message?.includes('ENO_POSITION_FOR_TP_SL') || err.message?.includes('0xc');
           if (isNoPos && sdkAttempt < 3) {
             logger.warn(`⏳ [ON-CHAIN TP/SL] Position settlement pending on Decibel DEX (attempt ${sdkAttempt}/3: ENO_POSITION_FOR_TP_SL). Retrying in 1.8s...`);

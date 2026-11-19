@@ -347,11 +347,6 @@ export class PortfolioHarvester {
 
       // ── Strategy-Adoptive Harvest Policy (SMA_DYNAMIC_GAP, CONFLUENCE_SCORE, VOLATILITY_ATR_TRAIL) ──
       const normSym = trade.symbol.toUpperCase().replace(/[-_/]/g, '');
-      const isTargetAsset = (activeStratL5 as any)?.targetAssets && (activeStratL5 as any).targetAssets.length > 0
-        ? (activeStratL5 as any).targetAssets.some((t: string) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')))
-        : (normSym.includes('SOL') || normSym.includes('ETH'));
-      const isRobustHarvestTrade = Boolean(trade.noFixedTp || (isTargetAsset && activeStratL5?.noFixedTp));
-
       let activeStrategyObj: any = null;
       try {
         const { getActiveStrategy } = require('../strategy/manager');
@@ -359,6 +354,20 @@ export class PortfolioHarvester {
       } catch {}
       const harvestPolicy = (activeStratL5 as any)?.harvestPolicy || activeStrategyObj?.harvestPolicy;
       const harvestStyle = harvestPolicy?.style || 'SMA_DYNAMIC_GAP';
+
+      const isTargetAsset = (activeStratL5 as any)?.targetAssets && (activeStratL5 as any).targetAssets.length > 0
+        ? (activeStratL5 as any).targetAssets.some((t: string) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')))
+        : (normSym.includes('SOL') || normSym.includes('ETH'));
+      const isRobustHarvestTrade = Boolean(
+        trade.noFixedTp ||
+        trade.takeProfit === 0 ||
+        (isTargetAsset && activeStratL5?.noFixedTp) ||
+        (trade as any).strategyTags?.includes('Dynamic-Harvest30') ||
+        (trade as any).strategyTags?.includes('champion_confirmed_retest_harvest30') ||
+        trade.strategyName?.includes('Robust Island') ||
+        trade.strategyName?.includes('Liquidity Sweep') ||
+        (harvestStyle === 'SMA_DYNAMIC_GAP' && !trade.isManual)
+      );
 
       // Branch 1: Confluence Score Decay Harvest Style
       if (harvestStyle === 'CONFLUENCE_SCORE') {
@@ -411,7 +420,32 @@ export class PortfolioHarvester {
             }
           } catch {}
 
+          // Fallback to local indicators from standaloneEngine if Sim Lab pairRolling is not active
+          if (!gap30 || !gap50) {
+            try {
+              const { standaloneEngine } = require('../engine/standalone-engine');
+              const localInd = standaloneEngine.getLatestIndicators(trade.symbol);
+              if (localInd?.smaFast && localInd?.smaSlow) {
+                const innerSma = localInd.smaFast;
+                const longerSma = localInd.smaSlow;
+                const lambda30 = (activeStratL5 as any)?.dynamicGapLambda ?? harvestPolicy?.dynamicGapLambda ?? 0.30;
+                const lambda50 = (activeStratL5 as any)?.dynamicGapExitLambda ?? harvestPolicy?.dynamicGapExitLambda ?? 0.50;
+                gap30 = Number(((1 - lambda30) * innerSma + lambda30 * longerSma).toFixed(4));
+                gap50 = Number(((1 - lambda50) * innerSma + lambda50 * longerSma).toFixed(4));
+              }
+            } catch {}
+          }
+
+          // Dynamic ATR expansion anchor if SMAs are still warming up
+          if (!gap30 || !gap50) {
+            const atrSpread = (trade.atr && trade.atr > 0) ? trade.atr : (trade.entryPrice * 0.012);
+            gap30 = isLong ? Number((trade.entryPrice + atrSpread * 1.35).toFixed(4)) : Number((trade.entryPrice - atrSpread * 1.35).toFixed(4));
+            gap50 = isLong ? Number((trade.entryPrice + atrSpread * 2.35).toFixed(4)) : Number((trade.entryPrice - atrSpread * 2.35).toFixed(4));
+          }
+
           if (gap30 && gap50) {
+            trade.gap30Price = gap30;
+            trade.gap50Price = gap50;
             const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
             if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
               const partialRatio = (activeStratL5 as any)?.tp1CloseRatio ?? harvestPolicy?.tier1Ratio ?? 0.30;

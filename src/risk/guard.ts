@@ -745,6 +745,8 @@ export class RiskGuard {
 
     const positionSizeBase = signal.entryPrice > 0 ? positionSizeUsd / signal.entryPrice : 0;
 
+    this.recordEntryValidation(signal.symbol, signal.action, signal.entryPrice || 0);
+
     return {
       approved: true,
       reason: `✅ Trade Approved: Score ${aiEval.confidenceScore} >= ${scoreFloor} | Alloc $${targetAllocUsd.toFixed(2)} @ ${leverage}x | Wick safe`,
@@ -756,6 +758,21 @@ export class RiskGuard {
       availableMarginUsd: availableMargin,
       directivesUsed: directives,
     };
+  }
+
+  private validatedEntries: Map<string, { timestamp: number; action: string; entryPrice: number }> = new Map();
+
+  public recordEntryValidation(symbol: string, action: string, entryPrice: number): void {
+    const sym = symbol.replace('-', '/').toUpperCase();
+    this.validatedEntries.set(sym, { timestamp: Date.now(), action, entryPrice });
+  }
+
+  public hasEntryValidation(symbol: string): boolean {
+    const sym = symbol.replace('-', '/').toUpperCase();
+    const entry = this.validatedEntries.get(sym);
+    if (!entry) return false;
+    // Valid for 24 hours
+    return Date.now() - entry.timestamp < 86_400_000;
   }
 
   private reject(

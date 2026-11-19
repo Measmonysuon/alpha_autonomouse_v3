@@ -966,6 +966,12 @@ export class StandaloneTradingEngine {
     return this.lastIndicatorsMap.get(sym) || this.lastIndicatorsMap.get(symbol);
   }
 
+  public hasArmedSignal(symbol: string): boolean {
+    const sym = symbol.replace('-', '/').toUpperCase();
+    const ind = this.getLatestIndicators(sym);
+    return Boolean(ind && ind.smaFast && ind.smaSlow);
+  }
+
   public getDirectives(): StrategyDirectives {
     return { ...this.directives };
   }

@@ -678,7 +678,37 @@ export class TradeExecutor {
           layersActive: { layer1: true, layer2: true, layer3: true, layer4: true, layer5: true },
         };
 
-        const isHumanTrade = !recentClosed || Boolean(recentClosed.isManual || recentClosed.strategyName === 'human trade DEX');
+        // Authoritative Human Trade Detection:
+        // A trade is classified as "human trade DEX" ONLY when discovered on-chain
+        // without ANY arm or validation entry record in memory or local DB.
+        const cacheBotTrade = this.tradesCache.find(
+          (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm &&
+            (!t.isManual && t.strategyName !== 'human trade DEX')
+        );
+
+        let dbBotTrade: any = null;
+        try {
+          const dbTrades = dbClient.getTrades({ symbol: pos.symbol, isManual: false, limit: 10 });
+          dbBotTrade = dbTrades.find(t => 
+            Math.abs(t.entry_price - (pos.entryPrice || 0)) < ((pos.entryPrice || 1) * 0.02) ||
+            t.action === (isLong ? 'LONG' : 'SHORT')
+          );
+        } catch {}
+
+        const hasRiskValidation = riskGuard.hasEntryValidation(pos.symbol);
+        const hasArmedSignal = standaloneEngine.hasArmedSignal(pos.symbol);
+        const hasBotClientOrderId = Boolean(
+          (pos as any).clientOrderId &&
+          (String((pos as any).clientOrderId).startsWith('decibel-') || String((pos as any).clientOrderId).startsWith('bot-'))
+        );
+
+        const hasBotEntryRecord = Boolean(cacheBotTrade || dbBotTrade || hasRiskValidation || hasArmedSignal || hasBotClientOrderId);
+        const isHumanTrade = !hasBotEntryRecord;
+
+        const resolvedStrategyName = isHumanTrade
+          ? 'human trade DEX'
+          : (dbBotTrade?.strategy_name || cacheBotTrade?.strategyName || (recentClosed?.strategyName && !recentClosed.strategyName.includes('On-Chain') ? recentClosed.strategyName : simStratName));
+
         const humanAttribution: StrategyAttribution = {
           strategyId: 'human_trade_dex',
           strategyName: 'human trade DEX',
@@ -687,13 +717,14 @@ export class TradeExecutor {
         };
 
         const isTradeNoFixedTp = Boolean(
+          !isHumanTrade ||
           existing?.noFixedTp ||
-          existing?.isManual ||
-          existing?.strategyName === 'human trade DEX' ||
-          isHumanTrade ||
           (existing as any)?.strategyTags?.includes('Dynamic-Harvest30') ||
           (existing as any)?.strategyTags?.includes('champion_confirmed_retest_harvest30') ||
-          existing?.strategyName?.includes('Robust Island')
+          existing?.strategyName?.includes('Robust Island') ||
+          existing?.strategyName?.includes('Liquidity Sweep') ||
+          resolvedStrategyName.includes('Robust Island') ||
+          resolvedStrategyName.includes('Liquidity Sweep')
         );
 
         const activeTp = isTradeNoFixedTp
@@ -726,14 +757,18 @@ export class TradeExecutor {
             pnlUsd: pos.unrealizedPnl !== undefined ? Number(pos.unrealizedPnl.toFixed(4)) : 0,
             netPnlUsd: pos.unrealizedPnl !== undefined ? Number(pos.unrealizedPnl.toFixed(4)) : 0,
             currentPrice: pos.markPrice || pos.entryPrice || 0,
-            strategyName: isHumanTrade
-              ? 'human trade DEX'
-              : ((recentClosed?.strategyName && !recentClosed.strategyName.includes('On-Chain')) ? recentClosed.strategyName : simStratName),
-            strategyAttribution: isHumanTrade ? humanAttribution : simStratAttribution,
+            strategyName: resolvedStrategyName,
+            strategyTags: isHumanTrade ? ['Manual', 'DEX', 'human trade DEX'] : ['Dynamic-Harvest30', 'champion_confirmed_retest_harvest30', 'Auto-AI'],
+            strategyAttribution: isHumanTrade ? humanAttribution : {
+              strategyId: dbBotTrade?.id || simStratId,
+              strategyName: resolvedStrategyName,
+              isPairOverride: false,
+              layersActive: { layer1: true, layer2: true, layer3: true, layer4: true, layer5: true },
+            },
             lockedAtOpen: true,
             lockedStrategyId: isHumanTrade ? 'human_trade_dex' : simStratId,
-            lockedStrategyName: isHumanTrade ? 'human trade DEX' : simStratName,
-            notes: isHumanTrade ? 'human trade DEX (detected on-chain with no internal record)' : 'Reconciled directly from Aptos on-chain DEX state',
+            lockedStrategyName: resolvedStrategyName,
+            notes: isHumanTrade ? 'human trade DEX (detected on-chain with no internal record)' : `Autonomous strategy position (${resolvedStrategyName}) synchronized with on-chain DEX state`,
             estimatedProfitPct: (activeTp && pos.entryPrice) ? Number((Math.abs((activeTp - pos.entryPrice) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 7.5,
             estimatedLossPct: softRatchet && pos.entryPrice ? Number((Math.abs((pos.entryPrice - softRatchet) / pos.entryPrice) * 100 * (pos.leverage || 1)).toFixed(1)) : 5.3,
             estimatedWinRatePct: isHumanTrade ? 100 : 85,
@@ -742,6 +777,23 @@ export class TradeExecutor {
           modified = true;
           logger.info(`🔄 [RECONCILE] Ingested live on-chain position: ${newTrade.symbol} ${newTrade.action} (${newTrade.sizeBase} units @ $${newTrade.entryPrice}, ${newTrade.leverage}x) [Strategy: ${newTrade.strategyName} | isManual: ${newTrade.isManual}]`);
         } else {
+          // If existing position was previously stamped as human trade DEX, rectify it if bot entry record exists!
+          if (existing.isManual && hasBotEntryRecord) {
+            logger.info(`🛠️ [RECONCILE RECTIFICATION] Position ${existing.symbol} has confirmed bot entry/arm records. Rectifying from "human trade DEX" to "${resolvedStrategyName}".`);
+            existing.isManual = false;
+            existing.strategyName = resolvedStrategyName;
+            existing.lockedStrategyName = resolvedStrategyName;
+            existing.noFixedTp = isTradeNoFixedTp;
+            existing.takeProfit = activeTp;
+            existing.strategyTags = ['Dynamic-Harvest30', 'champion_confirmed_retest_harvest30', 'Auto-AI'];
+            existing.strategyAttribution = {
+              strategyId: dbBotTrade?.id || simStratId,
+              strategyName: resolvedStrategyName,
+              isPairOverride: false,
+              layersActive: { layer1: true, layer2: true, layer3: true, layer4: true, layer5: true },
+            };
+            modified = true;
+          }
           // ALWAYS update live on-chain leverage, position size, and margin for existing/restored positions
           if (pos.leverage && pos.leverage > 0 && existing.leverage !== pos.leverage) {
             logger.info(`⚙️ [RECONCILE] Updating ${existing.symbol} leverage to on-chain: ${existing.leverage}x → ${pos.leverage}x`);
@@ -927,13 +979,22 @@ export class TradeExecutor {
         }
 
         // If an on-chain fixed TP was registered on Decibel DEX, strip it so the position can run dynamically
+        const tradeKey = `${pos.symbol}_${Number(pos.entryPrice || 0).toFixed(4)}`;
         if (isTradeNoFixedTp && pos.takeProfit && pos.takeProfit > 0 && isClientConfigured() && !config.PAPER_TRADING) {
-          logger.info(`🛡️ [STRIP ON-CHAIN TP] Removing resting on-chain TP ($${pos.takeProfit}) on Decibel DEX for ${pos.symbol} (runner uses Dynamic Amber Band exit)`);
-          mcpClient.setTpSl({
-            symbol: pos.symbol,
-            tpTrigger: undefined,
-            slTrigger: existing?.hardStopLoss || hardSl,
-          }).catch((err: any) => logger.warn(`Failed stripping on-chain TP for ${pos.symbol}: ${err.message}`));
+          if (!this.autoArmCooldownMap.has(tradeKey)) {
+            this.autoArmCooldownMap.set(tradeKey, Date.now());
+            logger.info(`🛡️ [STRIP ON-CHAIN TP] Removing resting on-chain TP ($${pos.takeProfit}) on Decibel DEX for ${pos.symbol} (runner uses Dynamic Amber Band exit)`);
+            mcpClient.setTpSl({
+              symbol: pos.symbol,
+              tpTrigger: undefined,
+              slTrigger: existing?.hardStopLoss || hardSl,
+            }).then(() => {
+              if (existing) {
+                existing.onChainTpSlSecured = true;
+                this.saveTrades();
+              }
+            }).catch((err: any) => logger.warn(`Failed stripping on-chain TP for ${pos.symbol}: ${err.message}`));
+          }
         }
 
         const targetTp = isTradeNoFixedTp
@@ -944,24 +1005,23 @@ export class TradeExecutor {
 
         // Fix gas drawdown: Decibel DEX get_positions does not return trigger order triggers on the position struct.
         // Once armed for this specific position entry price, remember permanently so we never loop or spam txs!
-        const tradeKey = `${pos.symbol}_${Number(pos.entryPrice || 0).toFixed(4)}`;
         const isAlreadyArmed = existing?.onChainTpSlSecured === true || this.autoArmCooldownMap.has(tradeKey);
         const needsOnChainSl = !isAlreadyArmed && hardSl > 0;
-        const needsOnChainTp = !isAlreadyArmed && targetTp > 0;
+        const needsOnChainTp = !isAlreadyArmed && targetTp > 0 && !isTradeNoFixedTp;
 
         if ((needsOnChainSl || needsOnChainTp) && isClientConfigured() && !config.PAPER_TRADING) {
           this.autoArmCooldownMap.set(tradeKey, Date.now());
-          logger.info(`🛡️🎯 [CONCRETE ARMOR] Auto-arming on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
+          logger.info(`🛡️🎯 [CONCRETE ARMOR] Securing on-chain stop for ${pos.symbol}: TP: ${isTradeNoFixedTp ? 'DYNAMIC_AMBER_BAND' : `$${targetTp}`} | SL: $${hardSl}`);
           mcpClient.setTpSl({
             symbol: pos.symbol,
-            tpTrigger: targetTp > 0 ? targetTp : undefined,
+            tpTrigger: isTradeNoFixedTp ? undefined : (targetTp > 0 ? targetTp : undefined),
             slTrigger: hardSl,
           }).then(() => {
             if (existing) {
               existing.onChainTpSlSecured = true;
               this.saveTrades();
             }
-            logger.info(`🛡️🎯 [CONCRETE ARMOR] Successfully secured hard on-chain TP/SL for ${pos.symbol}: TP: $${targetTp} | SL: $${hardSl}`);
+            logger.info(`🛡️🎯 [CONCRETE ARMOR] Successfully secured hard on-chain SL for ${pos.symbol}: TP: ${isTradeNoFixedTp ? 'DYNAMIC_AMBER_BAND' : `$${targetTp}`} | SL: $${hardSl}`);
           }).catch((err: any) => {
             logger.warn(`Failed auto-arming TP/SL for ${pos.symbol}: ${err.message}`);
           });
