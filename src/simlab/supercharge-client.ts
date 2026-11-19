@@ -91,6 +91,8 @@ export class SimLabSuperchargeClient {
     syncStrategyStudio: true,
   };
   private lastBundleLearning: any = null;
+  private isKeyExpired: boolean = false;
+  private keyExpiredMessage: string = '';
 
   constructor() {
     this.loadPersistentConfig();
@@ -302,15 +304,20 @@ export class SimLabSuperchargeClient {
       this.keyId = clean;
     }
 
+    this.resetKeyExpired();
     this.isEnabled = true;
     this.updateFeatureFlags({}, this.serverUrl);
 
     const connected = await this.connect();
+    let message = connected
+      ? `Successfully connected & authenticated with Sim Lab at ${this.serverUrl}`
+      : `Authentication failed at ${this.serverUrl}. Please ensure your API key is valid and authorized by Sim Lab.`;
+    if (!connected && this.isKeyExpired) {
+      message = this.keyExpiredMessage || 'Authentication failed: Sim Lab API key has expired. Please renew your license.';
+    }
     return {
       success: connected,
-      message: connected
-        ? `Successfully connected & authenticated with Sim Lab at ${this.serverUrl}`
-        : `Authentication failed at ${this.serverUrl}. Please ensure your API key is valid and authorized by Sim Lab.`,
+      message,
     };
   }
 
@@ -334,6 +341,38 @@ export class SimLabSuperchargeClient {
     this.updateFeatureFlags({}, this.serverUrl);
   }
 
+  public markKeyExpired(reason?: string): void {
+    const msg = reason || 'Sim Lab API key has expired. Please renew your license.';
+    this.isKeyExpired = true;
+    this.keyExpiredMessage = msg;
+    this.isConnected = false;
+    this.isEnabled = false;
+    config.OPERATING_MODE = 'STANDALONE';
+    logger.warn(`⛔ [SIM LAB] Key Expired: ${msg}. Disconnected from Supercharge mode and running in pure Standalone.`);
+    try {
+      const { stopSimPipelineConsumer } = require('../pipeline/sim-consumer');
+      stopSimPipelineConsumer();
+    } catch {}
+    try {
+      const { resetSimLabOverrides } = require('../strategy/manager');
+      resetSimLabOverrides();
+    } catch {}
+    standaloneEngine.resetToStandaloneDirectives(msg);
+    this.updateFeatureFlags({}, this.serverUrl);
+  }
+
+  public getKeyExpiredStatus(): { isExpired: boolean; message: string } {
+    return {
+      isExpired: this.isKeyExpired,
+      message: this.keyExpiredMessage,
+    };
+  }
+
+  public resetKeyExpired(): void {
+    this.isKeyExpired = false;
+    this.keyExpiredMessage = '';
+  }
+
   public configureToken(token: string): boolean {
     const cleanToken = (token || '').trim();
     if (!cleanToken.startsWith('simlab_live_')) {
@@ -351,6 +390,7 @@ export class SimLabSuperchargeClient {
   }
 
   public isActive(): boolean {
+    if (this.isKeyExpired) return false;
     return this.isConnected && Boolean(this.rawToken && this.rawToken.trim());
   }
 
@@ -481,10 +521,20 @@ export class SimLabSuperchargeClient {
             this.startHeartbeat();
             return true;
           } else {
+            const isExp = Boolean((res.data as any)?.expired || res.data?.message?.toLowerCase().includes('expired'));
+            if (isExp) {
+              this.markKeyExpired(res.data?.message || 'Sim Lab API key has expired');
+              return false;
+            }
             logger.warn(`⚠️ [SIM LAB] Token rejected by ${candUrl}: ${res.data?.message || 'Unauthorized'}`);
           }
         } catch (err: any) {
           const errDetail = err.response?.data?.error || err.message;
+          const isExp = Boolean(err.response?.data?.expired || errDetail?.toLowerCase().includes('expired'));
+          if (isExp) {
+            this.markKeyExpired(errDetail);
+            return false;
+          }
           logger.warn(`⚠️ [SIM LAB] Token pair failed at ${candUrl}: ${errDetail}`);
         }
       }
@@ -503,6 +553,15 @@ export class SimLabSuperchargeClient {
           headers: probeHeaders,
           timeout: 60000,
         }).catch((err) => err.response || null);
+
+        if (bundleRes) {
+          const isExp = (bundleRes.status === 403 || bundleRes.data?.expired) &&
+            Boolean(bundleRes.data?.expired || bundleRes.data?.error?.toLowerCase().includes('expired') || bundleRes.data?.message?.toLowerCase().includes('expired'));
+          if (isExp) {
+            this.markKeyExpired(bundleRes.data?.error || bundleRes.data?.message || 'Sim Lab API key has expired');
+            return false;
+          }
+        }
 
         if (bundleRes && bundleRes.status === 200 && bundleRes.data) {
           if (bundleRes.data.success === true || bundleRes.data.license) {
@@ -789,6 +848,7 @@ export class SimLabSuperchargeClient {
    * open positions, execution trade fills, portfolio metrics, and active strategy state.
    */
   public async sendHeartbeat(telemetryData?: any): Promise<void> {
+    if (this.isKeyExpired) return;
     if (!this.serverUrl || (config.OPERATING_MODE === 'STANDALONE' && !this.isEnabled)) return;
 
     // 0. Auto-Reconnect Recovery: If disconnected but previously enabled, auto-probe Sim Lab
@@ -1037,27 +1097,46 @@ export class SimLabSuperchargeClient {
         }
 
         try {
-          await axios.post(`${candUrl}/api/pipeline/telemetry`, payload, {
+          const telemRes = await axios.post(`${candUrl}/api/pipeline/telemetry`, payload, {
             headers: activeTelemHeaders,
             timeout: candUrl.includes('https://') ? 15000 : 5000,
           });
+          if (telemRes.data?.expired || (telemRes.data?.licensed === false && telemRes.data?.message?.toLowerCase().includes('expired'))) {
+            this.markKeyExpired(telemRes.data?.message || 'Sim Lab API key has expired');
+            return;
+          }
           telemetryPosted = true;
           if (this.serverUrl !== candUrl) {
             this.serverUrl = candUrl;
           }
           break;
-        } catch {
+        } catch (telemErr: any) {
+          if (telemErr.response?.status === 403 && (telemErr.response?.data?.expired || telemErr.response?.data?.error?.toLowerCase().includes('expired'))) {
+            this.markKeyExpired(telemErr.response.data.error || 'Sim Lab API key has expired');
+            return;
+          }
           try {
-            await axios.post(`${candUrl}/api/clients/heartbeat`, payload, {
+            const hbRes = await axios.post(`${candUrl}/api/clients/heartbeat`, payload, {
               headers: activeTelemHeaders,
               timeout: candUrl.includes('https://') ? 15000 : 5000,
             });
-            telemetryPosted = true;
+            if (hbRes.data?.expired || (hbRes.data?.licensed === false && hbRes.data?.message?.toLowerCase().includes('expired'))) {
+              this.markKeyExpired(hbRes.data?.message || 'Sim Lab API key has expired');
+              return;
+            }
+            if (hbRes.data?.licensed !== false) {
+              telemetryPosted = true;
+            }
             if (this.serverUrl !== candUrl) {
               this.serverUrl = candUrl;
             }
             break;
-          } catch {}
+          } catch (hbErr: any) {
+            if (hbErr.response?.status === 403 && (hbErr.response?.data?.expired || hbErr.response?.data?.error?.toLowerCase().includes('expired'))) {
+              this.markKeyExpired(hbErr.response.data.error || 'Sim Lab API key has expired');
+              return;
+            }
+          }
         }
       }
     }
@@ -1079,6 +1158,10 @@ export class SimLabSuperchargeClient {
             timeout: candUrl.includes('https://') ? 60000 : 8000,
           });
           if (bundleRes?.data) {
+            if (bundleRes.data.expired || bundleRes.data.status === 'EXPIRED') {
+              this.markKeyExpired(bundleRes.data.error || bundleRes.data.message || 'Sim Lab API key has expired');
+              return;
+            }
             this.applyBundleDirectives(bundleRes.data);
             bundleSynced = true;
             if (this.serverUrl !== candUrl) {
@@ -1086,7 +1169,12 @@ export class SimLabSuperchargeClient {
             }
             break;
           }
-        } catch {}
+        } catch (bErr: any) {
+          if (bErr.response?.status === 403 && (bErr.response?.data?.expired || bErr.response?.data?.error?.toLowerCase().includes('expired'))) {
+            this.markKeyExpired(bErr.response.data.error || 'Sim Lab API key has expired');
+            return;
+          }
+        }
       }
     }
 

@@ -411,6 +411,12 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
     //   isLicensed = true  → server explicitly confirmed a valid license
     //   isLicensed = false → UNLICENSED, unknown status, or no status field
     //                        Steps 4-6 are BLOCKED; engine gets macro only.
+    if ((bundle as any).status === 'EXPIRED' || (result.data as any)?.expired) {
+      logger.warn(`⛔ [SIM PIPELINE] Sim Lab confirmed API key is EXPIRED! Halting consumer and reverting to Standalone.`);
+      superchargeClient.markKeyExpired((result.data as any)?.error || 'Sim Lab API key has expired');
+      return null;
+    }
+
     const isLicensed = bundle.status === 'LICENSED';
 
     if (!isLicensed) {
@@ -604,6 +610,12 @@ export async function fetchAlphaBundle(): Promise<AlphaBundleResponse | null> {
 
     return bundle;
   } catch (err: any) {
+    if (err.response?.status === 403 && (err.response?.data?.expired || err.response?.data?.error?.toLowerCase().includes('expired'))) {
+      logger.warn(`⛔ [SIM PIPELINE] Sim Lab rejected connection (403 Expired): ${err.response.data.error || 'Sim Lab API key has expired'}`);
+      superchargeClient.markKeyExpired(err.response.data.error || 'Sim Lab API key has expired');
+      return null;
+    }
+
     consecutiveErrors++;
 
     // ── Failure: Advance retry state ————————————————————————

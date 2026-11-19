@@ -153,6 +153,7 @@ export const agentState: AgentState = {
 };
 
 export function getSimLabConnectionStatus(): boolean {
+  if (superchargeClient.getKeyExpiredStatus().isExpired) return false;
   let isConsumerActive = false;
   try {
     const { isSimPipelineActive } = require('./pipeline/sim-consumer');
@@ -528,6 +529,14 @@ export function buildStreamStatePayload() {
     operatingMode: isSimLabConn ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
     isSimLabSupercharged: isSimLabConn,
     isSimLabConnected: isSimLabConn,
+    isKeyExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+    keyExpiredMessage: superchargeClient.getKeyExpiredStatus().message,
+    simlabLicense: {
+      isConnected: isSimLabConn,
+      isExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+      expiredMessage: superchargeClient.getKeyExpiredStatus().message,
+      operatingMode: isSimLabConn ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+    },
     simPipeline: {
       connected: isSimLabConn,
       isStale: false,
@@ -1616,6 +1625,14 @@ export function startApiServer(): http.Server {
           operatingMode: isSimLabConn ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
           isSimLabSupercharged: isSimLabConn,
           isSimLabConnected: isSimLabConn,
+          isKeyExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+          keyExpiredMessage: superchargeClient.getKeyExpiredStatus().message,
+          simlabLicense: {
+            isConnected: isSimLabConn,
+            isExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+            expiredMessage: superchargeClient.getKeyExpiredStatus().message,
+            operatingMode: isSimLabConn ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+          },
           simPipeline: {
             connected: isSimLabConn,
             isStale: false,
@@ -1841,6 +1858,14 @@ export function startApiServer(): http.Server {
         clientName: config.CLIENT_NAME,
         operatingMode: isSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
         isSimLabSupercharged: isSupercharged,
+        isKeyExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+        keyExpiredMessage: superchargeClient.getKeyExpiredStatus().message,
+        simlabLicense: {
+          isConnected: isSupercharged,
+          isExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+          expiredMessage: superchargeClient.getKeyExpiredStatus().message,
+          operatingMode: isSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
+        },
         simPipeline: {
           connected: isSupercharged,
           isStale: false,
@@ -2002,7 +2027,7 @@ export function startApiServer(): http.Server {
     if (pathname === '/api/harvester/action' && req.method === 'POST') {
       const body = await parseBody(req);
       const action = body.action || 'SWEEP_ALL';
-      const result = portfolioHarvester.executeHarvest(action, body.symbol);
+      const result = await portfolioHarvester.executeHarvest(action, body.symbol);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
       return;
@@ -2193,14 +2218,19 @@ function dbTradeToFrontendTrade(t: DbTrade): any {
     rawTrade.is_manual === '1'
   );
 
+  const isOnChain = Boolean(t.tx_version && String(t.tx_version).trim().length > 0);
+
   return {
     ...t,
     id: t.id,
     orderId: t.client_order_id || t.id,
     client_order_id: t.client_order_id || t.id,
+    isOnChain,
+    is_on_chain: isOnChain,
     txHash: t.tx_version || null,
     tx_version: t.tx_version || null,
     transaction_version: t.tx_version || null,
+    explorerUrl: isOnChain ? `https://explorer.aptoslabs.com/txn/${t.tx_version}?network=${config.NETWORK || 'mainnet'}` : null,
     symbol: t.symbol,
     side: t.side,
     action: t.action,
@@ -3575,7 +3605,9 @@ function triggerBackgroundOnChainSync(): void {
         res.end(
           JSON.stringify({
             success: true,
-            isConnected: superchargeClient.isActive(),
+            isConnected: getSimLabConnectionStatus(),
+            isExpired: superchargeClient.getKeyExpiredStatus().isExpired,
+            expiredMessage: superchargeClient.getKeyExpiredStatus().message,
             simLabKey: superchargeClient.getRawToken(),
             serverUrl: superchargeClient.getServerUrl(),
             features: superchargeClient.getFeatureFlags(),
@@ -3693,7 +3725,8 @@ function triggerBackgroundOnChainSync(): void {
         isConsumerActive = isSimPipelineActive();
       } catch {}
 
-      const hasValidKey = Boolean(superchargeClient.getRawToken() && superchargeClient.getRawToken().trim());
+      const isExpired = superchargeClient.getKeyExpiredStatus().isExpired;
+      const hasValidKey = Boolean(superchargeClient.getRawToken() && superchargeClient.getRawToken().trim()) && !isExpired;
       const isSupercharged = hasValidKey && superchargeClient.isActive();
       const directives = standaloneEngine.getDirectives();
       const activeServerUrl = superchargeClient.getServerUrl() || (config.SIM_PIPELINE_URL ? config.SIM_PIPELINE_URL.replace(/\/api\/pipeline\/alpha-bundle\/?$/, '') : (config.SIMLAB_SERVER_URL || 'http://127.0.0.1:4000'));
@@ -3703,6 +3736,8 @@ function triggerBackgroundOnChainSync(): void {
         JSON.stringify({
           connected: isSupercharged,
           isStale: false,
+          isKeyExpired: isExpired,
+          keyExpiredMessage: superchargeClient.getKeyExpiredStatus().message,
           operatingMode: isSupercharged ? 'SIMLAB_SUPERCHARGED' : 'STANDALONE',
           serverUrl: activeServerUrl,
           url: activeServerUrl + '/api/pipeline/alpha-bundle',

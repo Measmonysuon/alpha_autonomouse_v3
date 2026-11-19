@@ -541,30 +541,39 @@ export class LocalAIBrain {
 
     const prompt = this.buildPrompt(signal, role, directives);
 
+    const modelCandidates = Array.from(new Set([
+      model,
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+    ])).filter(Boolean);
+
     let response: any = null;
     let lastErr: any = null;
-    for (const key of keyCandidates) {
-      const urls = [
-        `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/global/publishers/google/models/${model}:generateContent?key=${key}`,
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`
-      ];
-      for (const url of urls) {
-        try {
-          response = await axios.post(
-            url,
-            {
-              contents: [{ role: 'user', parts: [{ text: prompt }] }],
-              generationConfig: {
-                responseMimeType: 'application/json',
-                temperature: 0.2,
+    for (const mod of modelCandidates) {
+      for (const key of keyCandidates) {
+        const urls = [
+          `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${key}`,
+          `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/global/publishers/google/models/${mod}:generateContent?key=${key}`,
+        ];
+        for (const url of urls) {
+          try {
+            response = await axios.post(
+              url,
+              {
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.2,
+                },
               },
-            },
-            { timeout: 15000 },
-          );
-          if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
-        } catch (err: any) {
-          lastErr = err;
+              { timeout: 8000 },
+            );
+            if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
+          } catch (err: any) {
+            lastErr = err;
+          }
         }
+        if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
       }
       if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) break;
     }
@@ -669,22 +678,35 @@ export class LocalAIBrain {
         { timeout: 15000 },
       );
     } catch (err: any) {
-      // If remote tunnel fails and not already targeting localhost, attempt local fallback directly
-      if (!url.includes('localhost') && !url.includes('127.0.0.1')) {
-        const localUrl = 'http://127.0.0.1:11434/api/generate';
-        logger.warn(`⚠️ [AI BRAIN] Ollama endpoint (${url}) failed: ${err.message}. Retrying via localhost (${localUrl})...`);
-        response = await axios.post(
-          localUrl,
-          {
-            model: model,
-            prompt: prompt,
-            format: 'json',
-            stream: false,
-            options: { temperature: 0.2 },
-          },
-          { timeout: 15000 },
-        );
-      } else {
+      const fallbackUrls = [
+        'http://ollama:11434/api/generate',
+        'http://127.0.0.1:11434/api/generate',
+        'http://localhost:11434/api/generate',
+        'http://172.17.0.1:11434/api/generate',
+      ].filter((u) => u !== url);
+
+      let fallbackSuccess = false;
+      for (const fbUrl of fallbackUrls) {
+        try {
+          logger.warn(`⚠️ [AI BRAIN] Ollama endpoint (${url}) failed: ${err.message}. Retrying via fallback (${fbUrl})...`);
+          response = await axios.post(
+            fbUrl,
+            {
+              model: model,
+              prompt: prompt,
+              format: 'json',
+              stream: false,
+              options: { temperature: 0.2 },
+            },
+            { timeout: 8000 },
+          );
+          if (response?.data?.response) {
+            fallbackSuccess = true;
+            break;
+          }
+        } catch { }
+      }
+      if (!fallbackSuccess) {
         throw err;
       }
     }

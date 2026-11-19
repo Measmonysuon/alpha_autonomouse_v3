@@ -2,6 +2,7 @@ import fs from 'fs';
 import { writeJsonAtomicSync, updateJsonFileSync } from '../utils/atomic-write';
 import path from 'path';
 import { tradeExecutor, TradeRecord } from '../trades/executor';
+import { harvestOnChainExecutor } from '../trades/harvest-onchain-executor';
 import { mcpClient } from '../mcp/client';
 import { logger } from '../utils/logger';
 import { getSimPairDirective } from '../strategy/manager';
@@ -326,94 +327,112 @@ export class PortfolioHarvester {
         : (trade.stopLoss > 0 && currentPrice > 0 && currentPrice >= trade.stopLoss && (trade.breakevenMoved || trade.stopLoss <= trade.entryPrice));
 
       if (isTrailingOrBeHit) {
-        logger.info(`🌾 [TRAILING / BREAKEVEN HIT] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched soft ratchet ($${trade.stopLoss})! Securing profit/breakeven exit...`);
-        const symKey = trade.symbol.replace('-', '/').toUpperCase();
-        tradeExecutor.markExecutionInFlight(symKey);
         const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
         const estPnlUsd = (trade.allocatedUsd * ((priceDiff / trade.entryPrice) * trade.leverage));
         const isActuallyProfitable = estPnlUsd > 0.05;
         const isBreakeven = estPnlUsd >= 0;
-        trade.status = (isActuallyProfitable || isBreakeven) ? 'closed_tp' : 'closed_sl';
-        trade.exitPrice = currentPrice;
-        trade.exitReason = isActuallyProfitable ? 'TRAILING_TP' : (isBreakeven ? 'BREAKEVEN' : 'STOP_LOSS');
-        trade.closedAt = Date.now();
-        tradeExecutor.saveTrades();
-        if (!trade.isPaper) {
-          mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during trailing exit: ${err.message}`);
-          }).finally(() => {
-            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
-          });
-        }
-        tradeExecutor.notifyTradeClosed(trade);
+        const exitReason = isActuallyProfitable ? 'TRAILING_TP' : (isBreakeven ? 'BREAKEVEN' : 'STOP_LOSS');
+        logger.info(`🌾 [TRAILING / BREAKEVEN HIT] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched soft ratchet ($${trade.stopLoss})! Executing on-chain ${exitReason}...`);
+        
+        harvestOnChainExecutor.executeHarvest({
+          symbol: trade.symbol,
+          closeRatio: 1.0,
+          triggerReason: exitReason,
+          expectedPrice: currentPrice,
+        }).catch((err: any) => {
+          logger.error(`Trailing/BE exit failed for ${trade.symbol}: ${err.message}`);
+        });
         continue;
       }
 
-      // ── Robust Island Dynamic Amber Band Gap Harvest (Tier 1: 30% Scale-Out -> Tier 2: 50% Full Exit) ──
+      // ── Strategy-Adoptive Harvest Policy (SMA_DYNAMIC_GAP, CONFLUENCE_SCORE, VOLATILITY_ATR_TRAIL) ──
       const normSym = trade.symbol.toUpperCase().replace(/[-_/]/g, '');
       const isTargetAsset = (activeStratL5 as any)?.targetAssets && (activeStratL5 as any).targetAssets.length > 0
         ? (activeStratL5 as any).targetAssets.some((t: string) => normSym.includes(t.toUpperCase().replace(/[-_/]/g, '')))
         : (normSym.includes('SOL') || normSym.includes('ETH'));
       const isRobustHarvestTrade = Boolean(trade.noFixedTp || (isTargetAsset && activeStratL5?.noFixedTp));
 
-      if (isRobustHarvestTrade && currentPrice > 0) {
-        // Enforce peak price tracking on active trade
-        if (!trade.peakPrice) trade.peakPrice = trade.entryPrice;
-        if (isLong) {
-          if (currentPrice > trade.peakPrice) trade.peakPrice = currentPrice;
-        } else {
-          if (currentPrice < trade.peakPrice) trade.peakPrice = currentPrice;
+      let activeStrategyObj: any = null;
+      try {
+        const { getActiveStrategy } = require('../strategy/manager');
+        activeStrategyObj = getActiveStrategy();
+      } catch {}
+      const harvestPolicy = (activeStratL5 as any)?.harvestPolicy || activeStrategyObj?.harvestPolicy;
+      const harvestStyle = harvestPolicy?.style || 'SMA_DYNAMIC_GAP';
+
+      // Branch 1: Confluence Score Decay Harvest Style
+      if (harvestStyle === 'CONFLUENCE_SCORE') {
+        const tier1Floor = harvestPolicy?.tier1ScoreThreshold ?? 60;
+        const tier2Floor = harvestPolicy?.tier2ScoreThreshold ?? 40;
+        const tier1Ratio = harvestPolicy?.tier1Ratio ?? 0.30;
+        const currentConfluence = (trade as any).confluenceScore ?? (trade.confidence || 75);
+        if (currentConfluence <= tier1Floor && pnlPct > 0.5 && !trade.harvest30Done) {
+          logger.info(`🌾 [CONFLUENCE SCORE HARVEST] ${trade.symbol} confluence score (${currentConfluence}) fell below Tier 1 floor (${tier1Floor}). Executing ${(tier1Ratio * 100).toFixed(0)}% partial close.`);
+          tradeExecutor.execute30PercentHarvest(trade.symbol, tier1Ratio).catch((err: any) => {
+            logger.error(`execute30PercentHarvest failed: ${err.message}`);
+          });
+        } else if (currentConfluence <= tier2Floor && trade.harvest30Done) {
+          logger.info(`🎯 [CONFLUENCE SCORE FULL EXIT] ${trade.symbol} confluence score (${currentConfluence}) fell below Tier 2 floor (${tier2Floor}). Closing 100% remaining runner.`);
+          tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
+            logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
+          });
+          continue;
         }
-
-        // Dynamic minimum post-breakaway expansion required (defaults to >= +0.50%)
-        const minExpansionPct = (activeStratL5 as any)?.minExpansionPct ?? 0.0050;
-        const hadSubstantialProfit = isLong
-          ? (trade.peakPrice >= trade.entryPrice * (1 + minExpansionPct))
-          : (trade.peakPrice <= trade.entryPrice * (1 - minExpansionPct));
-
-        let gap30 = trade.gap30Price;
-        let gap50 = trade.gap50Price;
-
-        // Continuously refresh dynamic Amber Band SMAs from live telemetry or strategy lambdas
-        try {
-          const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
-          const pairRolling = getPairRollingDirectives(trade.symbol);
-          if (pairRolling?.currentFastSma && pairRolling?.currentSlowSma) {
-            const innerSma = pairRolling.exit3FastSma ?? pairRolling.currentFastSma;
-            const longerSma = pairRolling.exit3SlowSma ?? pairRolling.currentSlowSma;
-            const lambda30 = (activeStratL5 as any)?.dynamicGapLambda ?? 0.30;
-            const lambda50 = (activeStratL5 as any)?.dynamicGapExitLambda ?? 0.50;
-            gap30 = pairRolling.gap30Price ?? Number(((1 - lambda30) * innerSma + lambda30 * longerSma).toFixed(4));
-            gap50 = pairRolling.gap50Price ?? Number(((1 - lambda50) * innerSma + lambda50 * longerSma).toFixed(4));
-            trade.gap30Price = gap30;
-            trade.gap50Price = gap50;
-          }
-        } catch {}
-
-        if (gap30 && gap50) {
-          // Tier 1: Price reverses/retraces back down (LONG) or up (SHORT) into Amber Band (Dynamic Gap Level 1) after substantial profit expansion
-          const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
-          if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
-            const partialRatio = (activeStratL5 as any)?.tp1CloseRatio ?? 0.30;
-            logger.info(
-              `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing ${(partialRatio * 100).toFixed(0)}% partial close & locking BE+0.30%!`,
-            );
-            tradeExecutor.execute30PercentHarvest(trade.symbol, partialRatio).catch((err: any) => {
-              logger.error(`execute30PercentHarvest failed: ${err.message}`);
-            });
+      } else {
+        // Branch 2: Robust Island Dynamic Amber Band Gap Harvest (Default: SMA_DYNAMIC_GAP)
+        if (isRobustHarvestTrade && currentPrice > 0) {
+          if (!trade.peakPrice) trade.peakPrice = trade.entryPrice;
+          if (isLong) {
+            if (currentPrice > trade.peakPrice) trade.peakPrice = currentPrice;
+          } else {
+            if (currentPrice < trade.peakPrice) trade.peakPrice = currentPrice;
           }
 
-          // Tier 2: Price reverses further to 50% Gap Midpoint Touch -> 100% Terminal Take Profit All!
-          // Invariant: Must have already banked Tier 1 (cash bank) to qualify as a valid midpoint harvest runner close
-          const isTier2Reached = isLong ? (currentPrice <= gap50) : (currentPrice >= gap50);
-          if (isTier2Reached && trade.harvest30Done) {
-            logger.info(
-              `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)} and cash bank. Executing 100% Full Take Profit Close!`,
-            );
-            tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
-              logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
-            });
-            continue;
+          const minExpansionPct = (activeStratL5 as any)?.minExpansionPct ?? harvestPolicy?.minExpansionPct ?? 0.0050;
+          const hadSubstantialProfit = isLong
+            ? (trade.peakPrice >= trade.entryPrice * (1 + minExpansionPct))
+            : (trade.peakPrice <= trade.entryPrice * (1 - minExpansionPct));
+
+          let gap30 = trade.gap30Price;
+          let gap50 = trade.gap50Price;
+
+          try {
+            const { getPairRollingDirectives } = require('../pipeline/sim-consumer');
+            const pairRolling = getPairRollingDirectives(trade.symbol);
+            if (pairRolling?.currentFastSma && pairRolling?.currentSlowSma) {
+              const innerSma = pairRolling.exit3FastSma ?? pairRolling.currentFastSma;
+              const longerSma = pairRolling.exit3SlowSma ?? pairRolling.currentSlowSma;
+              const lambda30 = (activeStratL5 as any)?.dynamicGapLambda ?? harvestPolicy?.dynamicGapLambda ?? 0.30;
+              const lambda50 = (activeStratL5 as any)?.dynamicGapExitLambda ?? harvestPolicy?.dynamicGapExitLambda ?? 0.50;
+              gap30 = pairRolling.gap30Price ?? Number(((1 - lambda30) * innerSma + lambda30 * longerSma).toFixed(4));
+              gap50 = pairRolling.gap50Price ?? Number(((1 - lambda50) * innerSma + lambda50 * longerSma).toFixed(4));
+              trade.gap30Price = gap30;
+              trade.gap50Price = gap50;
+            }
+          } catch {}
+
+          if (gap30 && gap50) {
+            const isTier1Reached = isLong ? (currentPrice <= gap30) : (currentPrice >= gap30);
+            if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
+              const partialRatio = (activeStratL5 as any)?.tp1CloseRatio ?? harvestPolicy?.tier1Ratio ?? 0.30;
+              logger.info(
+                `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing ${(partialRatio * 100).toFixed(0)}% partial close & locking BE+0.30%!`,
+              );
+              tradeExecutor.execute30PercentHarvest(trade.symbol, partialRatio).catch((err: any) => {
+                logger.error(`execute30PercentHarvest failed: ${err.message}`);
+              });
+            }
+
+            const isTier2Reached = isLong ? (currentPrice <= gap50) : (currentPrice >= gap50);
+            if (isTier2Reached && trade.harvest30Done) {
+              logger.info(
+                `🎯 [ROBUST ISLAND TIER 2 FULL CLOSE] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reached Gap Midpoint ($${gap50.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)} and cash bank. Executing 100% Full Take Profit Close!`,
+              );
+              tradeExecutor.execute50PercentTerminalClose(trade.symbol, currentPrice).catch((err: any) => {
+                logger.error(`execute50PercentTerminalClose failed: ${err.message}`);
+              });
+              continue;
+            }
           }
         }
       }
@@ -429,22 +448,16 @@ export class PortfolioHarvester {
 
       if (isInitialSlHit) {
         const isProfitableRatchet = pnlUsd > 0.04;
-        logger.info(`🛑 [${isProfitableRatchet ? 'STRUCTURAL RATCHET EXIT' : 'SOFT SL HIT'}] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched stop ($${trade.stopLoss})! PnL: $${pnlUsd.toFixed(2)}`);
-        const symKey = trade.symbol.replace('-', '/').toUpperCase();
-        tradeExecutor.markExecutionInFlight(symKey);
-        trade.status = isProfitableRatchet ? 'closed_tp' : 'closed_sl';
-        trade.exitPrice = currentPrice;
-        trade.exitReason = isProfitableRatchet ? 'STRUCTURAL_RATCHET_TP' : 'SOFT_STOP_LOSS';
-        trade.closedAt = Date.now();
-        tradeExecutor.saveTrades();
-        if (!trade.isPaper) {
-          mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during SL/ratchet exit: ${err.message}`);
-          }).finally(() => {
-            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
-          });
-        }
-        tradeExecutor.notifyTradeClosed(trade);
+        const exitReason = isProfitableRatchet ? 'STRUCTURAL_RATCHET_TP' : 'SOFT_STOP_LOSS';
+        logger.info(`🛑 [${exitReason}] ${trade.symbol} ${trade.action} price ($${currentPrice}) touched stop ($${trade.stopLoss})! Executing on-chain close...`);
+        harvestOnChainExecutor.executeHarvest({
+          symbol: trade.symbol,
+          closeRatio: 1.0,
+          triggerReason: exitReason,
+          expectedPrice: currentPrice,
+        }).catch((err: any) => {
+          logger.error(`Soft SL exit failed for ${trade.symbol}: ${err.message}`);
+        });
         continue;
       }
 
@@ -580,43 +593,16 @@ export class PortfolioHarvester {
 
       if (shouldHarvest) {
         if (this.config.executionStyle === 'FULL_CLOSE_ONLY') {
-          const symKey = trade.symbol.replace('-', '/').toUpperCase();
-          tradeExecutor.markExecutionInFlight(symKey);
-          trade.status = 'closed_tp';
-          trade.exitPrice = currentPrice;
-          trade.closedAt = Date.now();
-          trade.exitReason = 'PORTFOLIO_HARVEST';
-          trade.pnlPct = Number(pnlPct.toFixed(2));
-          trade.pnlUsd = Number(pnlUsd.toFixed(2));
-
-          if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
-          trade.lifecycleEvents.push({
-            timestamp: trade.closedAt,
-            stage: 'HARVEST',
-            title: `🌾 Full Profit Harvest Executed @ $${currentPrice.toFixed(4)}`,
-            description: `Portfolio Harvester banked +$${pnlUsd.toFixed(2)} (+${pnlPct.toFixed(2)}%) to lock in realized gains.`,
-            price: currentPrice,
-            pnlUsd: pnlUsd,
-            details: [
-              `Target profit threshold reached (+${pnlPct.toFixed(2)}%).`,
-              `Execution style: FULL_CLOSE_ONLY.`,
-              `Net PnL banked: +$${pnlUsd.toFixed(2)}.`
-            ]
+          logger.info(`🌾 [PROFIT HARVEST: FULL CLOSE] ${trade.symbol} target met (+${pnlPct.toFixed(2)}%). Executing on-chain close via HarvestOnChainExecutor...`);
+          harvestOnChainExecutor.executeHarvest({
+            symbol: trade.symbol,
+            closeRatio: 1.0,
+            triggerReason: 'PORTFOLIO_HARVEST',
+            expectedPrice: currentPrice,
+          }).catch((err: any) => {
+            logger.error(`Profit harvest full close failed for ${trade.symbol}: ${err.message}`);
           });
-          trade.exitSummary = `Portfolio Profit Harvester banked +${pnlPct.toFixed(2)}% (+$${pnlUsd.toFixed(2)}) as market conditions met harvest criteria.`;
-
-          tradeExecutor.saveTrades();
-          if (!trade.isPaper) {
-            mcpClient.closePosition(trade.symbol).catch((err: any) => {
-              logger.warn(`Could not close on-chain position for ${trade.symbol} during harvest: ${err.message}`);
-            }).finally(() => {
-              setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
-            });
-          } else {
-            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 1000);
-          }
-          logger.info(`🌾 [PROFIT HARVEST: FULL CLOSE] ${trade.symbol} banked at +${pnlPct.toFixed(2)}% (+$${pnlUsd.toFixed(2)} USD). Mode: ${this.config.syncMode}`);
-          tradeExecutor.notifyTradeClosed(trade);
+          continue;
         } else {
           // PARTIAL_FIRST / Trailing profit lock: dynamically driven by Sim Lab pair directives and market regime
           // Regime-aware retracement buffer ensures trades have breathing room for natural market pullbacks
@@ -966,47 +952,17 @@ export class PortfolioHarvester {
               ? `⏱️ STAGNATION TIME-CUT: Prolonged adverse chop (${holdHours.toFixed(1)}h, ${pnlPct.toFixed(1)}% PnL), liberating capital`
               : '🩸 DEFENSIVE BLEED CUT: Heavy drawdown past threshold (-15% margin), exiting to protect capital')
         );
-        if (this.config.enabled && !trade.isPaper) {
-          const symKey = trade.symbol.replace('-', '/').toUpperCase();
-          tradeExecutor.markExecutionInFlight(symKey);
-          trade.status = 'closed_sl';
-          trade.exitPrice = currentPrice;
-          trade.closedAt = Date.now();
-          trade.exitReason = cutReason;
-          trade.pnlPct = Number(pnlPct.toFixed(2));
-          trade.pnlUsd = Number(pnlUsd.toFixed(2));
-
-          const cutTitle = isStructureBreakCut
-            ? `💥 Structure Break Cut @ $${currentPrice.toFixed(4)}`
-            : (isStagCut ? `⏱️ Stagnation Time-Cut @ $${currentPrice.toFixed(4)}` : `🩸 Defensive Bleed Cut @ $${currentPrice.toFixed(4)}`);
-
-          if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
-          trade.lifecycleEvents.push({
-            timestamp: trade.closedAt,
-            stage: 'EXIT',
-            title: cutTitle,
-            description: isStructureBreakCut
-              ? `Market structure broke against trade under Sim Lab directive. Drawdown capped at ${pnlPct.toFixed(2)}%.`
-              : `Liberated capital after ${holdHours.toFixed(1)}h stagnation. Drawdown capped at ${pnlPct.toFixed(2)}%.`,
-            price: currentPrice,
-            pnlUsd: pnlUsd,
-            details: [
-              `Vulnerability score high (${score}/100).`,
-              isStructureBreakCut
-                ? `Sim Lab Layer 3 structure shift triggered early invalidation cut.`
-                : `Stagnation time decay limit exceeded (${holdHours.toFixed(1)}h). Exited on-chain to protect capital.`
-            ]
+        if (this.config.enabled) {
+          logger.warn(`💥 [${cutReason}] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% to preserve capital under Sim Lab directive.`);
+          harvestOnChainExecutor.executeHarvest({
+            symbol: trade.symbol,
+            closeRatio: 1.0,
+            triggerReason: cutReason,
+            expectedPrice: currentPrice,
+          }).catch((err: any) => {
+            logger.error(`Defensive cut failed for ${trade.symbol}: ${err.message}`);
           });
-          trade.exitSummary = `${cutReason} executed. Drawdown capped at ${pnlPct.toFixed(2)}% to preserve trading capital under Sim Lab directive.`;
-
-          tradeExecutor.saveTrades();
-          mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during ${trade.exitReason}: ${err.message}`);
-          }).finally(() => {
-            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
-          });
-          logger.warn(`💥 [${trade.exitReason}] ${trade.symbol} exited at ${pnlPct.toFixed(2)}% to preserve capital under Sim Lab directive.`);
-          tradeExecutor.notifyTradeClosed(trade);
+          continue;
         }
       }
 
@@ -1229,11 +1185,11 @@ export class PortfolioHarvester {
   }
 
   /**
-   * Execute profit harvest:
+   * Execute profit harvest via authoritative on-chain executor:
    * - HARVEST_NOW: Closes a specific position in green
    * - SWEEP_ALL: Closes all positions with positive PnL
    */
-  public executeHarvest(action: 'HARVEST_NOW' | 'SWEEP_ALL', targetSymbol?: string): { success: boolean; closedCount: number; harvestedUsd: number; message: string } {
+  public async executeHarvest(action: 'HARVEST_NOW' | 'SWEEP_ALL', targetSymbol?: string): Promise<{ success: boolean; closedCount: number; harvestedUsd: number; message: string }> {
     const openTrades = tradeExecutor.getOpenTrades();
     let closedCount = 0;
     let harvestedUsd = 0;
@@ -1241,59 +1197,30 @@ export class PortfolioHarvester {
     for (const trade of openTrades) {
       const isTarget = action === 'SWEEP_ALL' ? (trade.pnlUsd || 0) > 0 : trade.symbol === targetSymbol;
       if (isTarget) {
-        const symKey = trade.symbol.replace('-', '/').toUpperCase();
         const exitPriceVal = this.lastLivePrices[trade.symbol] || trade.entryPrice;
-        tradeExecutor.markExecutionInFlight(symKey);
-        trade.status = 'closed_tp';
-        trade.exitPrice = exitPriceVal;
-        trade.closedAt = Date.now();
-        trade.exitReason = action === 'SWEEP_ALL' ? 'SWEEP_ALL_PROFIT' : 'MANUAL_HARVEST';
-        harvestedUsd += (trade.pnlUsd || 0);
-        closedCount++;
-
-        if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
-        trade.lifecycleEvents.push({
-          timestamp: trade.closedAt,
-          stage: 'HARVEST',
-          title: `🌾 ${action === 'SWEEP_ALL' ? 'Basket Profit Sweep' : 'Manual Harvest'} @ $${exitPriceVal.toFixed(4)}`,
-          description: `Banked +$${(trade.pnlUsd || 0).toFixed(2)} realized profit via Harvester command.`,
-          price: exitPriceVal,
-          pnlUsd: trade.pnlUsd,
-          details: [
-            `Operator / algorithmic harvest trigger: ${action}.`,
-            `On-chain market close dispatched to Decibel DEX.`,
-            `Net profit banked: +$${(trade.pnlUsd || 0).toFixed(2)}.`
-          ]
+        logger.info(`🌾 [MANUAL HARVEST] Closing ${trade.symbol} on-chain via HarvestOnChainExecutor (${action})...`);
+        const res = await harvestOnChainExecutor.executeHarvest({
+          symbol: trade.symbol,
+          closeRatio: 1.0,
+          triggerReason: action === 'SWEEP_ALL' ? 'SWEEP_ALL_PROFIT' : 'MANUAL_HARVEST',
+          expectedPrice: exitPriceVal,
         });
-        trade.exitSummary = `${action === 'SWEEP_ALL' ? 'All profitable positions closed simultaneously' : 'Manual operator harvest'} banking +$${(trade.pnlUsd || 0).toFixed(2)} in net profit.`;
 
-        if (!trade.isPaper) {
-          mcpClient.closePosition(trade.symbol).catch((err: any) => {
-            logger.warn(`Could not close on-chain position for ${trade.symbol} during manual harvest: ${err.message}`);
-          }).finally(() => {
-            setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 8000);
-          });
-        } else {
-          setTimeout(() => tradeExecutor.clearExecutionInFlight(symKey), 1000);
+        if (res.success) {
+          harvestedUsd += (res.realizedPnlUsd || 0);
+          closedCount++;
         }
       }
     }
 
     if (closedCount > 0) {
       this.lastHarvestAt = Date.now();
-      tradeExecutor.saveTrades();
-      logger.info(`🌾 [HARVEST EXECUTED] Closed ${closedCount} positions. Banked profit: +$${harvestedUsd.toFixed(2)} USD.`);
-      for (const trade of openTrades) {
-        const isTarget = action === 'SWEEP_ALL' ? (trade.pnlUsd || 0) > 0 : trade.symbol === targetSymbol;
-        if (isTarget) {
-          tradeExecutor.notifyTradeClosed(trade);
-        }
-      }
+      logger.info(`🌾 [HARVEST EXECUTED] Closed ${closedCount} positions on-chain. Banked profit: +$${harvestedUsd.toFixed(2)} USD.`);
       return {
         success: true,
         closedCount,
         harvestedUsd: Number(harvestedUsd.toFixed(2)),
-        message: `Successfully harvested ${closedCount} position(s), banking +$${harvestedUsd.toFixed(2)} profit!`,
+        message: `Successfully harvested ${closedCount} position(s) on-chain, banking +$${harvestedUsd.toFixed(2)} profit!`,
       };
     }
 
@@ -1301,7 +1228,7 @@ export class PortfolioHarvester {
       success: false,
       closedCount: 0,
       harvestedUsd: 0,
-      message: action === 'SWEEP_ALL' ? 'No open positions currently in net profit.' : `Position ${targetSymbol} not found or not in profit.`,
+      message: action === 'SWEEP_ALL' ? 'No open positions currently in net profit.' : `Position ${targetSymbol} could not be harvested on-chain.`,
     };
   }
 

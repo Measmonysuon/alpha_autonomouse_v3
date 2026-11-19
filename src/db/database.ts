@@ -251,6 +251,57 @@ class TradeDatabase {
           AND (id NOT LIKE 'agent-%' AND id NOT LIKE 'decibel-%');
       `);
     } catch { }
+
+    this.consolidateAndCleanRecords();
+  }
+
+  /**
+   * Consolidate local records and purge phantom/unconfirmed local trades
+   */
+  public consolidateAndCleanRecords(): { purgedPhantomCount: number } {
+    if (!this.db) return { purgedPhantomCount: 0 };
+    try {
+      // 1. Delete empty zero-pnl closed_manual placeholder records with no tx_version
+      const zeroPnlRes = this.db.prepare(`
+        DELETE FROM trades
+        WHERE (tx_version IS NULL OR tx_version = '')
+          AND (status = 'CLOSED_MANUAL' OR status = 'closed_manual')
+          AND (realized_pnl = 0 OR realized_pnl IS NULL)
+          AND (fee_usd = 0 OR fee_usd IS NULL)
+      `).run();
+
+      // 2. Delete duplicate phantom records with no tx_version where a verified on-chain trade exists on the same symbol within 2 hours
+      const dupRes = this.db.prepare(`
+        DELETE FROM trades
+        WHERE (tx_version IS NULL OR tx_version = '')
+          AND id NOT LIKE 'txn-%'
+          AND EXISTS (
+            SELECT 1 FROM trades t2
+            WHERE t2.tx_version IS NOT NULL 
+              AND t2.tx_version != ''
+              AND t2.symbol = trades.symbol
+              AND ABS(t2.opened_at - trades.opened_at) < 7200000
+          )
+      `).run();
+
+      // 3. For any remaining phantom records with no tx_version (not paper trading):
+      // Clean them so they don't corrupt live PnL and trade history
+      const remainingPhantom = this.db.prepare(`
+        DELETE FROM trades
+        WHERE (tx_version IS NULL OR tx_version = '')
+          AND id NOT LIKE 'paper-%'
+          AND id NOT LIKE 'txn-%'
+      `).run();
+
+      const totalPurged = zeroPnlRes.changes + dupRes.changes + remainingPhantom.changes;
+      if (totalPurged > 0) {
+        logger.info(`🧹 [DB CONSOLIDATION] Purged ${totalPurged} phantom/duplicate unconfirmed local trade records. Ledger consolidated with authoritative on-chain state.`);
+      }
+      return { purgedPhantomCount: totalPurged };
+    } catch (err: any) {
+      logger.warn(`[DB CONSOLIDATION] Error consolidating trade records: ${err.message}`);
+      return { purgedPhantomCount: 0 };
+    }
   }
 
   /**
@@ -818,7 +869,7 @@ class TradeDatabase {
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) as profit,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) as loss
       FROM trades
-      WHERE status != 'OPEN'
+      WHERE status != 'OPEN' AND (tx_version IS NOT NULL AND tx_version != '')
     `);
     const total = totalStmt.get() as any;
 
@@ -833,7 +884,7 @@ class TradeDatabase {
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) as profit,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) as loss
       FROM trades
-      WHERE is_manual = 0 AND status != 'OPEN'
+      WHERE is_manual = 0 AND status != 'OPEN' AND (tx_version IS NOT NULL AND tx_version != '')
     `);
     const auto = autoStmt.get() as any;
 
@@ -848,7 +899,7 @@ class TradeDatabase {
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) as profit,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) as loss
       FROM trades
-      WHERE is_manual = 1 AND status != 'OPEN'
+      WHERE is_manual = 1 AND status != 'OPEN' AND (tx_version IS NOT NULL AND tx_version != '')
     `);
     const manual = manualStmt.get() as any;
 

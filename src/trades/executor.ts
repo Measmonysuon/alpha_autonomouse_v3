@@ -30,6 +30,7 @@ import type { StrategyAttribution } from '../strategy/types';
 import { getSimPairDirective } from '../strategy/manager';
 import { dbClient } from '../db/database';
 import { decibelPriceFeed } from '../pipeline/decibel-price-feed';
+import { harvestOnChainExecutor } from './harvest-onchain-executor';
 
 export interface TradeLifecycleEvent {
   timestamp: number;
@@ -2377,7 +2378,7 @@ export class TradeExecutor {
   }
 
   /**
-   * Close a specific trade by ID or symbol with on-chain verification
+   * Close a specific trade by ID or symbol with on-chain verification via dedicated HarvestOnChainExecutor
    */
   public async closeTradeAsync(idOrSymbol: string): Promise<boolean> {
     const trade = this.tradesCache.find(
@@ -2385,27 +2386,12 @@ export class TradeExecutor {
     );
     if (!trade) return false;
 
-    if (!trade.isPaper && this.aptos && this.aptosAccount) {
-      try {
-        logger.info(`⚡ [EXECUTOR] Executing on-chain close for ${trade.symbol}...`);
-        const res = (await mcpClient.closePosition(trade.symbol, 1.0)) as any;
-        if (res && res.error) {
-          throw new Error(res.error);
-        }
-      } catch (err: any) {
-        trade.status = 'close_failed' as any;
-        this.saveTrades();
-        logger.error(`🚨 [CLOSE FAILED] Could not close on-chain position for ${trade.symbol}: ${err.message}. Retaining allocation.`);
-        return false;
-      }
-    }
-
-    trade.status = 'closed_manual';
-    trade.closedAt = Date.now();
-    this.saveTrades();
-    logger.info(`🧹 [EXECUTOR] Confirmed on-chain close for ${trade.symbol} (${trade.id}). Allocation released.`);
-    this.notifyTradeClosed(trade);
-    return true;
+    const res = await harvestOnChainExecutor.executeHarvest({
+      symbol: trade.symbol,
+      closeRatio: 1.0,
+      triggerReason: 'CLOSED_MANUAL',
+    });
+    return res.success;
   }
 
   public closeTrade(idOrSymbol: string): boolean {
@@ -2421,147 +2407,31 @@ export class TradeExecutor {
 
   /**
    * Tier 1: 30% Dynamic Gap Harvest (Banks cash + covers fees, snaps SL to BE + 0.30%)
+   * Delegated to authoritative HarvestOnChainExecutor
    */
   public async execute30PercentHarvest(symbol: string, closeRatio: number = 0.30): Promise<boolean> {
-    const norm = (s: string) => (s || '').toUpperCase().replace(/[-_/]/g, '');
-    const symKey = norm(symbol);
-    const trade = this.tradesCache.find(
-      (t) => t.status === 'open' && norm(t.symbol) === symKey,
-    );
-    if (!trade || trade.harvest30Done) return false;
-
-    const isLong = trade.action === 'LONG';
-    const symMark = trade.symbol.replace('-', '/').toUpperCase();
-    this.markExecutionInFlight(symMark);
-
-    const safeRatio = Math.max(0.05, Math.min(0.95, closeRatio));
-    const remainRatio = 1 - safeRatio;
-
-    try {
-      if (!trade.isPaper && this.aptos && this.aptosAccount) {
-        logger.info(`⚡ [TIER 1 HARVEST] Executing ${(safeRatio * 100).toFixed(0)}% on-chain partial close for ${trade.symbol}...`);
-        const res = (await mcpClient.closePosition(trade.symbol, safeRatio)) as any;
-        if (res && res.error) {
-          logger.warn(`⚠️ [TIER 1 HARVEST] On-chain partial close warning: ${res.error}`);
-        }
-      }
-
-      trade.harvest30Done = true;
-      const bankedSizeBase = Number((trade.sizeBase * safeRatio).toFixed(4));
-      trade.sizeBase = Number((trade.sizeBase * remainRatio).toFixed(4));
-      trade.sizeUsd = Number((trade.sizeBase * trade.entryPrice).toFixed(2));
-      trade.allocatedUsd = Number((trade.allocatedUsd * remainRatio).toFixed(2));
-
-      // Snap Stop Loss to Breakeven + fee cover buffer (defaults to +0.30%)
-      const beFloor = Number((isLong
-        ? trade.entryPrice * 1.003
-        : trade.entryPrice * 0.997).toFixed(4));
-      trade.stopLoss = beFloor;
-      trade.softRatchetPrice = beFloor;
-      trade.breakevenMoved = true;
-
-      const pnlPctEstimate = isLong
-        ? ((trade.currentPrice || trade.entryPrice) - trade.entryPrice) / trade.entryPrice * 100 * trade.leverage
-        : (trade.entryPrice - (trade.currentPrice || trade.entryPrice)) / trade.entryPrice * 100 * trade.leverage;
-      const bankedUsdEstimate = Number(((trade.allocatedUsd / remainRatio * safeRatio) * pnlPctEstimate / 100).toFixed(2));
-      trade.partialRealizedPnlUsd = (trade.partialRealizedPnlUsd || 0) + Math.max(0, bankedUsdEstimate);
-
-      if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
-      trade.lifecycleEvents.push({
-        timestamp: Date.now(),
-        stage: 'HARVEST',
-        title: `🌾 Tier 1: 30% Dynamic Gap Harvest Banked @ $${(trade.currentPrice || trade.entryPrice).toFixed(4)}`,
-        description: `Closed 30% (${bankedSizeBase} base). SL snapped to Breakeven+0.30% ($${trade.stopLoss}). Remaining 70% runner active risk-free.`,
-        price: trade.currentPrice || trade.entryPrice,
-        pnlUsd: bankedUsdEstimate,
-        details: [
-          `30% gap expansion target reached.`,
-          `Banked 30% partial position (+~$${bankedUsdEstimate}).`,
-          `Stop-loss moved to BE+0.30% ($${trade.stopLoss}) to cover round-trip fees.`,
-          `Remaining 70% position (${trade.sizeBase} base) held for 50% Midpoint Gap Touch.`,
-        ],
-      });
-
-      this.saveTrades();
-      logger.info(
-        `🌾 [TIER 1 HARVEST] Banked 30% on ${trade.symbol}! SL locked at BE+0.30% ($${trade.stopLoss}). Remaining 70% (${trade.sizeBase}) waiting for 50% Gap Touch.`
-      );
-      return true;
-    } catch (err: any) {
-      logger.error(`🚨 [TIER 1 HARVEST ERROR] ${trade.symbol}: ${err.message}`);
-      return false;
-    } finally {
-      setTimeout(() => this.clearExecutionInFlight(symMark), 4000);
-    }
+    const res = await harvestOnChainExecutor.executeHarvest({
+      symbol,
+      closeRatio,
+      triggerReason: 'DYNAMIC_HARVEST_TIER_1',
+      adjustStopLossToBe: true,
+      beBufferPct: 0.003,
+    });
+    return res.success;
   }
 
   /**
    * Tier 2: 50% Gap Touch Terminal Close (100% Take Profit All)
+   * Delegated to authoritative HarvestOnChainExecutor
    */
   public async execute50PercentTerminalClose(symbol: string, exitPrice: number): Promise<boolean> {
-    const norm = (s: string) => (s || '').toUpperCase().replace(/[-_/]/g, '');
-    const symKey = norm(symbol);
-    const trade = this.tradesCache.find(
-      (t) => t.status === 'open' && norm(t.symbol) === symKey,
-    );
-    if (!trade) return false;
-
-    const symMark = trade.symbol.replace('-', '/').toUpperCase();
-    this.markExecutionInFlight(symMark);
-
-    try {
-      if (!trade.isPaper && this.aptos && this.aptosAccount) {
-        logger.info(`🎯 [TIER 2 FULL CLOSE] Executing 100% full close on-chain for ${trade.symbol} @ $${exitPrice.toFixed(4)}...`);
-        const res = (await mcpClient.closePosition(trade.symbol, 1.0)) as any;
-        if (res && res.error) {
-          logger.warn(`⚠️ [TIER 2 FULL CLOSE] On-chain close notice: ${res.error}`);
-        }
-      }
-
-      const isLong = trade.action === 'LONG';
-      const priceDiff = isLong ? exitPrice - trade.entryPrice : trade.entryPrice - exitPrice;
-      const pnlPct = (priceDiff / trade.entryPrice) * 100 * trade.leverage;
-      const pnlUsd = (trade.allocatedUsd * pnlPct) / 100 + (trade.partialRealizedPnlUsd || 0);
-
-      trade.status = 'closed_tp';
-      trade.exitReason = 'DYNAMIC_ISLAND_50%_TOUCH';
-      trade.exitPrice = exitPrice;
-      trade.closedAt = Date.now();
-      trade.pnlPct = Number(pnlPct.toFixed(2));
-      trade.pnlUsd = Number(pnlUsd.toFixed(2));
-
-      const durationSec = Math.max(1, Math.round(((trade.closedAt || Date.now()) - trade.openedAt) / 1000));
-      const durationText = durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
-
-      if (!trade.lifecycleEvents) trade.lifecycleEvents = [];
-      trade.lifecycleEvents.push({
-        timestamp: trade.closedAt,
-        stage: 'EXIT',
-        title: `🎯 Tier 2: 50% Gap Midpoint Touch 100% Take Profit All @ $${exitPrice.toFixed(4)} (${durationText} hold)`,
-        description: `Robust Island Exit #3 reached. Full position closed on-chain, banking +$${pnlUsd.toFixed(2)} (+${trade.pnlPct}%).`,
-        price: exitPrice,
-        pnlUsd: trade.pnlUsd,
-        details: [
-          `50% gap midpoint touch confirmed on ${trade.symbol}.`,
-          `100% remaining runner closed at $${exitPrice.toFixed(4)}.`,
-          `Total net realized PnL banked: +$${pnlUsd.toFixed(2)}.`,
-          `Trade successfully completed under Robust Island Dynamic Harvest rules.`,
-        ],
-      });
-      trade.exitSummary = `Robust Island 50% Gap Midpoint Touch reached @ $${exitPrice.toFixed(4)}. Banked +$${pnlUsd.toFixed(2)} (+${trade.pnlPct}%).`;
-
-      this.saveTrades();
-      logger.info(
-        `🎯 [TIER 2 FULL CLOSE] 50% Gap Touch achieved on ${trade.symbol}! Banked 100% Take Profit All @ $${exitPrice.toFixed(4)} | PnL: +$${pnlUsd.toFixed(2)} (+${trade.pnlPct}%)`
-      );
-      this.notifyTradeClosed(trade);
-      return true;
-    } catch (err: any) {
-      logger.error(`🚨 [TIER 2 FULL CLOSE ERROR] ${trade.symbol}: ${err.message}`);
-      return false;
-    } finally {
-      setTimeout(() => this.clearExecutionInFlight(symMark), 4000);
-    }
+    const res = await harvestOnChainExecutor.executeHarvest({
+      symbol,
+      closeRatio: 1.0,
+      triggerReason: 'DYNAMIC_ISLAND_50%_TOUCH',
+      expectedPrice: exitPrice,
+    });
+    return res.success;
   }
 
   private cachedOnChainBalance: { balanceUsd: number; aptBalance: number; lastChecked: number } = {

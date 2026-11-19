@@ -116,6 +116,24 @@ export interface Layer5Config {
   pureRobustIslandExit?: boolean;      // When true, exits are 100% pure SMA dynamic gap (L30/L50), no multi-factor interference
   allowDiscretionaryHarvest?: boolean; // When false, discretionary multi-factor vulnerability harvests are permanently locked off
   targetAssets?: string[];             // Whitelisted symbols (e.g. ['SOL/USD', 'ETH/USD'])
+  harvestPolicy?: StrategyHarvestPolicy; // Strategy-driven dynamic harvest & scale-out policy
+}
+
+export type HarvestStyle =
+  | 'SMA_DYNAMIC_GAP'        // Tier 1: 30% gap lambda retrace, Tier 2: 50% midpoint touch
+  | 'CONFLUENCE_SCORE'       // Harvest when live multi-factor confluence score drops below threshold
+  | 'VOLATILITY_ATR_TRAIL'   // Dynamic trailing ratchet based on ATR multiples + fee buffer
+  | 'FIXED_RR_SCALE';        // Fixed Risk/Reward multiple scale-outs (e.g. 1.5R TP1, 2.5R TP2)
+
+export interface StrategyHarvestPolicy {
+  style: HarvestStyle;
+  tp1Ratio?: number;                   // e.g. 0.30 (30%), 0.50 (50%), or 0.25 (25%)
+  moveSlToBreakeven?: boolean;         // Snap SL to BE on TP1?
+  beFeeBufferPct?: number;             // Buffer to cover round-trip taker fees (e.g. 0.30%)
+  minConfluenceHarvestScore?: number;  // e.g. Harvest when score drops below 60
+  dynamicGapLambda?: number;           // Amber Band Harvest Master Tier 1 penetration (e.g. 0.30)
+  dynamicGapExitLambda?: number;       // Amber Band Harvest Master Tier 2 terminal close (e.g. 0.50)
+  trailingAtrMultiple?: number;        // e.g. 1.5x ATR trailing buffer
 }
 
 export interface StrategyConfig {

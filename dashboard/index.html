@@ -14811,6 +14811,32 @@
       }
     }
 
+    function showKeyExpiredBanner(msg) {
+      let b = document.getElementById('simlab-expired-banner');
+      if (!b) {
+        b = document.createElement('div');
+        b.id = 'simlab-expired-banner';
+        b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:linear-gradient(90deg,#991b1b,#dc2626);color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,0.4);border-bottom:1px solid rgba(255,255,255,0.2);';
+        document.body.prepend(b);
+      }
+      b.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:16px;">⚠️</span>
+          <span><strong>Sim Lab API Key Expired:</strong> ${msg || 'Current API key is expired.'} Supercharge disconnected — running in Pure Standalone Mode.</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button onclick="openSimPipelineModal()" style="background:#fff;color:#dc2626;border:none;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;">Update Key</button>
+          <span onclick="this.parentElement.parentElement.style.display='none'" style="cursor:pointer;padding:0 4px;font-size:16px;opacity:0.8;">&times;</span>
+        </div>
+      `;
+      b.style.display = 'flex';
+    }
+
+    function hideKeyExpiredBanner() {
+      const b = document.getElementById('simlab-expired-banner');
+      if (b) b.style.display = 'none';
+    }
+
     // ── Sim Lab Supercharge Badge & Modal ─────────────────────────────────────────
     function updateSimPipelineBadge(sim) {
       const badge = document.getElementById('sim-pipeline-badge');
@@ -14821,7 +14847,41 @@
 
       if (!badge || !tagEl || !txtEl) return;
 
-      const isConnected = window._simlabConnected !== false && Boolean(
+      const isExpired = Boolean(
+        (window.lastState && (window.lastState.isKeyExpired || window.lastState.simlabLicense?.isExpired)) ||
+        (sim && (sim.isKeyExpired || sim.expired)) ||
+        window._isKeyExpired === true
+      );
+
+      if (isExpired) {
+        setSafeClass(badge, 'sim-pipeline-badge is-inactive');
+        badge.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+        badge.style.background = 'rgba(239, 68, 68, 0.15)';
+        setSafeText(tagEl, 'EXPIRED');
+        const newTxt = 'KEY EXPIRED';
+        if (txtEl.textContent !== newTxt) setSafeText(txtEl, newTxt);
+        const expReason = window.lastState?.keyExpiredMessage || sim?.keyExpiredMessage || 'Sim Lab API key has expired. Please renew your license.';
+        setSafeTitle(badge, `⛔ SIM LAB KEY EXPIRED\n${expReason}\nDisconnected from Supercharge mode. Running in Standalone mode.`);
+
+        if (sbSimEl && sbSimEl.textContent !== 'EXPIRED') {
+          setSafeText(sbSimEl, 'EXPIRED');
+          setSafeColor(sbSimEl, '#ef4444');
+        }
+        if (navSimBadge) {
+          setSafeText(navSimBadge, 'Key Expired');
+          navSimBadge.style.background = 'rgba(239, 68, 68, 0.2)';
+          navSimBadge.style.color = '#ef4444';
+          navSimBadge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+        }
+        showKeyExpiredBanner(expReason);
+        return;
+      } else {
+        hideKeyExpiredBanner();
+        badge.style.borderColor = '';
+        badge.style.background = '';
+      }
+
+      const isConnected = window._simlabConnected !== false && !isExpired && Boolean(
         (sim && sim.connected && !sim.isStale) ||
         (window.lastState && (window.lastState.isSimLabConnected || window.lastState.isSimLabSupercharged || window.lastState?.simPipeline?.connected)) ||
         (window._simlabConnected === true)
@@ -18686,12 +18746,12 @@
           reasonBadge = `<span class="trade-reason-pill sl" title="Stop Loss Hit">🛑 SL</span>`;
         }
 
-        const subaccount = (window._subaccount || lastState?.subaccount || '');
-        const txLink = t.tx
-          ? `<a href="https://explorer.aptoslabs.com/txn/${t.tx}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Transaction #${t.tx}">🔗 #${String(t.tx).slice(0, 7)}... ↗</a>`
-          : (subaccount && subaccount.startsWith('0x')
-              ? `<a href="https://explorer.aptoslabs.com/account/${subaccount}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Subaccount Settlement">🔗 #${subaccount.slice(0, 7)}... ↗</a>`
-              : `<span style="color:var(--text3);font-size:10px;">Local DB</span>`);
+        const txVal = t.tx || t.tx_version || t.txHash;
+        const txLink = txVal
+          ? `<a href="https://explorer.aptoslabs.com/txn/${txVal}?network=mainnet" target="_blank" rel="noopener" class="tx-link" title="Verify On-Chain Transaction #${txVal}">⛓️ #${String(txVal).slice(0, 7)}... ↗</a>`
+          : (t.isOnChain
+              ? `<span style="color:#10b981;font-size:11px;font-weight:600;">⛓️ DEX Verified</span>`
+              : `<span style="color:var(--text3);font-size:10px;">Local DB (Unconfirmed)</span>`);
 
         const numPrice = Number(t.price);
         const priceFormatted = numPrice < 2 ? numPrice.toFixed(4) : numPrice.toFixed(2);
