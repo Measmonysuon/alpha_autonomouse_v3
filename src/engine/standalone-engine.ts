@@ -1401,6 +1401,30 @@ export class StandaloneTradingEngine {
       } else if (cvdTrend === 'NEUTRAL') {
         ind.cvdTrend = 'NEUTRAL';
       }
+
+      // L2 Liquidity Sweep Confluence (SSL / BSL Sweeps with Reversal Absorption)
+      const hasBullishSweep = Boolean(
+        (ind.smc?.liquiditySweep?.type === 'BULLISH_SWEEP_SSL' ||
+         ind.smc?.turtleSoup?.type === 'BULLISH_TURTLE_SOUP' ||
+         ind.smcSignal === 'SWEEP_LOW_REVERSAL') &&
+        (ind.lowerWickPct >= 20 || ind.candleColor === 'GREEN')
+      );
+      const hasBearishSweep = Boolean(
+        (ind.smc?.liquiditySweep?.type === 'BEARISH_SWEEP_BSL' ||
+         ind.smc?.turtleSoup?.type === 'BEARISH_TURTLE_SOUP' ||
+         ind.smcSignal === 'SWEEP_HIGH_REVERSAL') &&
+        (ind.upperWickPct >= 20 || ind.candleColor === 'RED')
+      );
+
+      if (hasBullishSweep) {
+        bullScore += 3;
+        coinglassScore += 2;
+        reasons.push(`🎯 L2 Liquidity Sweep: SSL swing low sweep confirmed with buyer absorption`);
+      } else if (hasBearishSweep) {
+        bearScore += 3;
+        coinglassScore += 2;
+        reasons.push(`🎯 L2 Liquidity Sweep: BSL swing high sweep confirmed with seller rejection`);
+      }
     }
 
     // Fetch live Sim Lab Pair Directives (including active Rebound Opportunity)
@@ -1412,25 +1436,75 @@ export class StandaloneTradingEngine {
     let action: 'LONG' | 'SHORT' | 'HOLD' = 'HOLD';
     const scoreDiff = bullScore - bearScore;
 
-    if (scoreDiff >= 2) {
+    const hasConfirmedSslSweep = Boolean(
+      (ind.smc?.liquiditySweep?.type === 'BULLISH_SWEEP_SSL' ||
+       ind.smc?.turtleSoup?.type === 'BULLISH_TURTLE_SOUP' ||
+       ind.smcSignal === 'SWEEP_LOW_REVERSAL') &&
+      (ind.lowerWickPct >= 20 || ind.candleColor === 'GREEN')
+    );
+    const hasConfirmedBslSweep = Boolean(
+      (ind.smc?.liquiditySweep?.type === 'BEARISH_SWEEP_BSL' ||
+       ind.smc?.turtleSoup?.type === 'BEARISH_TURTLE_SOUP' ||
+       ind.smcSignal === 'SWEEP_HIGH_REVERSAL') &&
+      (ind.upperWickPct >= 20 || ind.candleColor === 'RED')
+    );
+
+    // V-Bounce Opportunity Priority (Sim Lab Directive)
+    if (simPairDir?.reboundOpportunity?.isReboundActive) {
+      if (simPairDir.reboundOpportunity.reboundSide === 'LONG' && scoreDiff > -1.5) {
+        trend = 'BULLISH';
+        action = 'LONG';
+        reasons.push(`🚀 V-BOUNCE OPPORTUNITY: Sim Lab confirmed ${simPairDir.reboundOpportunity.summary}`);
+      } else if (simPairDir.reboundOpportunity.reboundSide === 'SHORT' && scoreDiff < 1.5) {
+        trend = 'BEARISH';
+        action = 'SHORT';
+        reasons.push(`🚀 V-BOUNCE OPPORTUNITY: Sim Lab confirmed ${simPairDir.reboundOpportunity.summary}`);
+      }
+    } else if (hasConfirmedSslSweep && !hasConfirmedBslSweep && scoreDiff > -1.5) {
       trend = 'BULLISH';
       action = 'LONG';
-    } else if (scoreDiff <= -2) {
+      reasons.push('🎯 LIQUIDITY SWEEP OPPORTUNITY: SSL swing low sweep confirmed with buyer absorption');
+    } else if (hasConfirmedBslSweep && !hasConfirmedSslSweep && scoreDiff < 1.5) {
       trend = 'BEARISH';
       action = 'SHORT';
-    } else {
-      reasons.push('⚖️ Mixed technical signals — standing by for directional expansion');
+      reasons.push('🎯 LIQUIDITY SWEEP OPPORTUNITY: BSL swing high sweep confirmed with seller rejection');
     }
+
+    if (action === 'HOLD') {
+      if (scoreDiff >= 2) {
+        trend = 'BULLISH';
+        action = 'LONG';
+      } else if (scoreDiff <= -2) {
+        trend = 'BEARISH';
+        action = 'SHORT';
+      } else {
+        reasons.push('⚖️ Mixed technical signals — standing by for directional expansion');
+      }
+    }
+
+    const isSweepOrReboundEntry = Boolean(
+      simPairDir?.reboundOpportunity?.isReboundActive ||
+      (action === 'LONG' && hasConfirmedSslSweep) ||
+      (action === 'SHORT' && hasConfirmedBslSweep)
+    );
 
     // Dynamic Top 1 Rolling-Window SMA Confluence Veto
     // The SMA periods are derived dynamically from the rolling-window parameter surface scan per pair.
     if (ind.smaAlignment && ind.smaAlignment !== 'NEUTRAL') {
       if (action === 'LONG' && ind.smaAlignment === 'BEARISH') {
-        reasons.push(`🛑 Confluence Veto: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) is BEARISH opposing LONG. Decoupled chop trap avoided.`);
-        action = 'HOLD';
+        if (isSweepOrReboundEntry) {
+          reasons.push(`⚡ REBOUND / SWEEP CONFLUENCE: Opposing SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) lag waived for confirmed V-Bounce / Liquidity Sweep.`);
+        } else {
+          reasons.push(`🛑 Confluence Veto: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) is BEARISH opposing LONG. Decoupled chop trap avoided.`);
+          action = 'HOLD';
+        }
       } else if (action === 'SHORT' && ind.smaAlignment === 'BULLISH') {
-        reasons.push(`🛑 Confluence Veto: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) is BULLISH opposing SHORT. Decoupled chop trap avoided.`);
-        action = 'HOLD';
+        if (isSweepOrReboundEntry) {
+          reasons.push(`⚡ REBOUND / SWEEP CONFLUENCE: Opposing SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) lag waived for confirmed V-Bounce / Liquidity Sweep.`);
+        } else {
+          reasons.push(`🛑 Confluence Veto: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) is BULLISH opposing SHORT. Decoupled chop trap avoided.`);
+          action = 'HOLD';
+        }
       } else if ((action === 'LONG' && ind.smaAlignment === 'BULLISH') || (action === 'SHORT' && ind.smaAlignment === 'BEARISH')) {
         reasons.push(`✨ Dynamic SMA Confluence: Dynamic SMA(${ind.fastSmaPeriod}/${ind.slowSmaPeriod}) confirms ${action} trend alignment.`);
       }
@@ -1471,6 +1545,24 @@ export class StandaloneTradingEngine {
           slDist = sl - entry;
           reasons.push(`🎯 AI REBOUND SL: Calibrated stop placed above sweep wick high ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} volatility buffer`);
         }
+      }
+    } else if (hasConfirmedSslSweep && action === 'LONG') {
+      const sweepAnchor = ind.swingLow > 0 ? ind.swingLow : entry * (1 - (ind.lowerWickPct / 100) * 0.01);
+      const dynamicBuffer = Math.max(entry * 0.003, atr * 0.5);
+      const candidateSl = sweepAnchor - dynamicBuffer;
+      if (candidateSl < entry && candidateSl >= entry * 0.96) {
+        sl = Number(candidateSl.toFixed(4));
+        slDist = entry - sl;
+        reasons.push(`🎯 LIQUIDITY SWEEP SL: Calibrated stop placed below sweep low ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} buffer`);
+      }
+    } else if (hasConfirmedBslSweep && action === 'SHORT') {
+      const sweepAnchor = ind.swingHigh > 0 ? ind.swingHigh : entry * (1 + (ind.upperWickPct / 100) * 0.01);
+      const dynamicBuffer = Math.max(entry * 0.003, atr * 0.5);
+      const candidateSl = sweepAnchor + dynamicBuffer;
+      if (candidateSl > entry && candidateSl <= entry * 1.04) {
+        sl = Number(candidateSl.toFixed(4));
+        slDist = sl - entry;
+        reasons.push(`🎯 LIQUIDITY SWEEP SL: Calibrated stop placed above sweep high ($${sl.toFixed(2)}) with $${dynamicBuffer.toFixed(2)} buffer`);
       }
     } else if (action === 'LONG') {
       if (ind.isPullbackBounce && ind.ema21 > 0 && ind.ema21 < entry) {
@@ -1668,8 +1760,8 @@ export class StandaloneTradingEngine {
           ? (orderflow?.cvdTrend !== 'STRONG_SELL' && ((orderflow as any)?.takerBuyRatio === undefined || (orderflow as any)?.takerBuyRatio >= 0.48))
           : (orderflow?.cvdTrend !== 'STRONG_BUY' && ((orderflow as any)?.takerBuyRatio === undefined || (orderflow as any)?.takerBuyRatio <= 0.52));
 
-        if (simPairDir?.reboundOpportunity?.isReboundActive && isFlowSupportive) {
-          reasons.push(`⚡ REBOUND MTF EXEMPTION: 1h macro trend lag waived for AI-confirmed ${simPairDir.reboundOpportunity.reboundType}.`);
+        if ((simPairDir?.reboundOpportunity?.isReboundActive || isSweepOrReboundEntry) && isFlowSupportive) {
+          reasons.push(`⚡ REBOUND / SWEEP MTF EXEMPTION: 1h macro trend lag waived for confirmed V-Bounce / Liquidity Sweep.`);
         } else {
           technicalScore = Math.min(technicalScore, 60);
           reasons.push(`🛑 MTF HARD GATE: 15m ${action} contradicts 1h ${ind.trend1h} macro trend without supportive flow. Capped at 60%.`);
@@ -1677,8 +1769,8 @@ export class StandaloneTradingEngine {
       }
 
       // Gate 2: Overextension / Chased Breakout
-      if (simPairDir?.reboundOpportunity?.isReboundActive) {
-        reasons.push(`⚡ REBOUND MOMENTUM EXEMPTION: Fast impulse is confirmed initial expansion of ${simPairDir.reboundOpportunity.reboundType} — exempt from chased breakout penalty.`);
+      if (simPairDir?.reboundOpportunity?.isReboundActive || isSweepOrReboundEntry) {
+        reasons.push(`⚡ REBOUND / SWEEP MOMENTUM EXEMPTION: Fast impulse is confirmed initial expansion of V-Bounce / Liquidity Sweep — exempt from chased breakout penalty.`);
       } else if (ind.pullbackStatus === 'CHASED_BREAKOUT' && action === 'LONG') {
         technicalScore = Math.min(technicalScore, 55);
         reasons.push(`🛑 CHASED BREAKOUT GATE: Price rallied +${ind.distToEma25Pct}% away from value. Capped at 55%.`);
@@ -1713,13 +1805,16 @@ export class StandaloneTradingEngine {
         }
       }
 
-      // AI Institutional Rebound Conviction Boost from Sim Lab
+      // AI Institutional Rebound & Liquidity Sweep Conviction Boost
       if (simPairDir?.reboundOpportunity?.isReboundActive) {
         const ro = simPairDir.reboundOpportunity;
         if ((action === 'LONG' && ro.reboundSide === 'LONG') || (action === 'SHORT' && ro.reboundSide === 'SHORT')) {
-          technicalScore = Math.max(technicalScore, 68);
+          technicalScore = Math.max(technicalScore, 70);
           reasons.push(`🚀 AI REBOUND CONVICTION: Sim Lab verified ${ro.summary}`);
         }
+      } else if (isSweepOrReboundEntry) {
+        technicalScore = Math.max(technicalScore, 70);
+        reasons.push(`🎯 LIQUIDITY SWEEP CONVICTION: High-conviction ${action === 'LONG' ? 'SSL' : 'BSL'} sweep confirmed with reversal absorption (70% gate floor)`);
       }
 
       // Gate 6: ADX Consolidation Chop
@@ -1903,7 +1998,7 @@ export class StandaloneTradingEngine {
       // Non-bypassable core baseline: irrespective of strategy layer toggles or pair overrides,
       // never execute a Long order into an unconfirmed expanding red candle (falling knife) or buy an upper wick trap.
       const candleConfirm = evaluatePullbackConfirmation(action, ind, {
-        isReboundActive: Boolean(simPairDir?.reboundOpportunity?.isReboundActive),
+        isReboundActive: Boolean(simPairDir?.reboundOpportunity?.isReboundActive || isSweepOrReboundEntry),
         dynamicWickThreshold: simPairDir?.reboundOpportunity?.dynamicWickThreshold,
       });
       if (!candleConfirm.isConfirmed) {
@@ -2066,9 +2161,15 @@ export class StandaloneTradingEngine {
       gap50Price: gap50PriceVal,
       strategyName: simPairDir?.reboundOpportunity?.isReboundActive
         ? (simPairDir.reboundOpportunity.reboundSide === 'LONG' ? 'AI Institutional V-Rebound' : 'AI Blow-Off Top Reversal')
-        : (isCustomPair ? `${activeStrategy.name} (${symbol})` : activeStrategy.name),
+        : (isSweepOrReboundEntry
+          ? (action === 'LONG' ? 'Liquidity Sweep V-Bounce' : 'Liquidity Sweep Blow-Off Reversal')
+          : (isCustomPair ? `${activeStrategy.name} (${symbol})` : activeStrategy.name)),
       strategyTags: [
-        ...(simPairDir?.reboundOpportunity?.isReboundActive ? ['AI-Brain', 'Rebound', simPairDir.reboundOpportunity.sweepType || 'Reversal'] : [activeStrategy.id]),
+        ...(simPairDir?.reboundOpportunity?.isReboundActive
+          ? ['AI-Brain', 'Rebound', simPairDir.reboundOpportunity.sweepType || 'Reversal']
+          : (isSweepOrReboundEntry
+            ? ['Liquidity-Sweep', 'V-Bounce', activeStrategy.id]
+            : [activeStrategy.id])),
         ...(isCustomPair ? ['pair-override'] : [])
       ],
       entryRationale: reasons.slice(0, 3).join(' · '),
