@@ -390,6 +390,7 @@ export function syncHarmonizedMarkets(): Record<string, any> {
     coolMap[c.symbol.replace(/[-_/]/g, '')] = c;
   }
   const simDirs = getSimPairDirectives();
+  const curDirectives = standaloneEngine.getDirectives();
 
   // Inspect live on-chain open positions and resting limit orders
   const openTrades = getEffectiveOpenPositions();
@@ -462,44 +463,56 @@ export function syncHarmonizedMarkets(): Record<string, any> {
       m.isOrderResting = false;
     } else if (sd?.bannedSide && sd.bannedSide !== 'NONE') {
       m.action = `NO_${sd.bannedSide}S`;
-      m.isVetoed = false;
+      m.isTriggered = false;
+      m.isVetoed = true;
       m.isPositionOpen = false;
       m.isOrderResting = false;
-      m.isVetoed = false;
-      m.isPositionOpen = false;
     } else if (sd?.assignedTier === 'TIER_3_PROBATION' && (sd?.tierAllocPct === 0 || sd?.allocPct === 0)) {
       m.action = 'PROBATION';
-      m.isVetoed = false;
+      m.isTriggered = false;
+      m.isVetoed = true;
       m.isPositionOpen = false;
+      m.isOrderResting = false;
     } else {
       const minGate = typeof sd?.minConfidenceGate === 'number' ? sd.minConfidenceGate : 80;
-      const isTriggerReady = Boolean(
-        m.isTriggered && 
-        m.confidence >= minGate && 
-        (m.action === 'LONG' || m.action === 'SHORT' || m.candidateAction === 'LONG' || m.candidateAction === 'SHORT')
-      );
+      const macroBans = curDirectives.bannedSides || [];
+      const act = m.candidateAction || (m.action === 'LONG' || m.action === 'SHORT' ? m.action : 'LONG');
+      const isSideBanned = macroBans.includes(act as any) || (sd?.bannedSide && (sd.bannedSide === act || sd.bannedSide === 'BOTH'));
 
-      if (isTriggerReady) {
-        const act = m.candidateAction || (m.action === 'LONG' || m.action === 'SHORT' ? m.action : 'LONG');
-        m.action = `TRIGGER READY ${act}`;
-        m.isVetoed = false;
+      if (isSideBanned) {
+        m.action = `NO_${act}S`;
+        m.isTriggered = false;
+        m.isVetoed = true;
         m.isPositionOpen = false;
-      } else if (m.confidence >= minGate) {
-        m.action = `ARMED ${m.confidence}%`;
-        m.isVetoed = false;
-        m.isPositionOpen = false;
-      } else if (m.confidence >= 65) {
-        m.action = `MONITORING ${m.confidence}%`;
-        m.isVetoed = false;
-        m.isPositionOpen = false;
-      } else if (m.confidence >= 45) {
-        m.action = 'SCANNING';
-        m.isVetoed = false;
-        m.isPositionOpen = false;
+        m.isOrderResting = false;
       } else {
-        m.action = 'STANDBY';
-        m.isVetoed = false;
-        m.isPositionOpen = false;
+        const isTriggerReady = Boolean(
+          m.isTriggered && 
+          m.confidence >= minGate && 
+          (m.action === 'LONG' || m.action === 'SHORT' || m.candidateAction === 'LONG' || m.candidateAction === 'SHORT')
+        );
+
+        if (isTriggerReady) {
+          m.action = `TRIGGER READY ${act}`;
+          m.isVetoed = false;
+          m.isPositionOpen = false;
+        } else if (m.confidence >= minGate) {
+          m.action = `ARMED ${m.confidence}%`;
+          m.isVetoed = false;
+          m.isPositionOpen = false;
+        } else if (m.confidence >= 65) {
+          m.action = `MONITORING ${m.confidence}%`;
+          m.isVetoed = false;
+          m.isPositionOpen = false;
+        } else if (m.confidence >= 45) {
+          m.action = 'SCANNING';
+          m.isVetoed = false;
+          m.isPositionOpen = false;
+        } else {
+          m.action = 'STANDBY';
+          m.isVetoed = false;
+          m.isPositionOpen = false;
+        }
       }
     }
   }

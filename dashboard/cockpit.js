@@ -972,6 +972,48 @@
       };
     }
 
+    const macroBans = Array.isArray(state?.macro?.bannedSides) ? state.macro.bannedSides : (Array.isArray(state?.directives?.bannedSides) ? state.directives.bannedSides : []);
+    const isShortBanned = bannedSide === 'SHORT' || macroBans.includes('SHORT');
+    const isLongBanned = bannedSide === 'LONG' || macroBans.includes('LONG');
+    const isCandShort = mkt.action === 'SHORT' || mkt.candidateAction === 'SHORT' || (mkt.trend === 'BEARISH' && mkt.action !== 'LONG');
+    const isCandLong = mkt.action === 'LONG' || mkt.candidateAction === 'LONG' || (mkt.trend === 'BULLISH' && mkt.action !== 'SHORT');
+
+    if (isShortBanned && isCandShort && !isCandLong) {
+      return {
+        status: 'DIRECTIONAL_BAN',
+        badgeText: '🚫 NO SHORTS (BANNED)',
+        badgeClass: 'cockpit-tag-red',
+        shortReason: 'Shorts Prohibited',
+        reason: `Directional Ban: SHORTs banned on ${sym} by Sim Lab directive (${simDir.reason || 'Regime/Melt-up shield'})`,
+        minGate,
+        phases: {
+          phase1: { icon: '✓', iconCol: '#10b981', badge: 'ACTIVE', badgeCol: '#10b981', desc: 'Market stream active.' },
+          phase2: { icon: '🛑', iconCol: '#f43f5e', badge: 'BANNED SIDE', badgeCol: '#f43f5e', desc: 'Shorts are strictly banned by Sim Lab directive.' },
+          phase3: { icon: '🛑', iconCol: '#f43f5e', badge: 'VETOED', badgeCol: '#f43f5e', desc: 'Downside execution blocked to protect capital.' },
+          phase4: { icon: '🛑', iconCol: '#f43f5e', badge: 'BLOCKED', badgeCol: '#f43f5e', desc: 'Order routing suppressed for SHORTs.' },
+          phase5: { icon: '⏳', iconCol: '#8492a6', badge: 'STANDBY', badgeCol: '#8492a6', desc: 'Awaiting directive reset or long setup.' },
+        }
+      };
+    }
+
+    if (isLongBanned && isCandLong && !isCandShort) {
+      return {
+        status: 'DIRECTIONAL_BAN',
+        badgeText: '🚫 NO LONGS (BANNED)',
+        badgeClass: 'cockpit-tag-red',
+        shortReason: 'Longs Prohibited',
+        reason: `Directional Ban: LONGs banned on ${sym} by Sim Lab directive (${simDir.reason || 'Regime/Knife shield'})`,
+        minGate,
+        phases: {
+          phase1: { icon: '✓', iconCol: '#10b981', badge: 'ACTIVE', badgeCol: '#10b981', desc: 'Market stream active.' },
+          phase2: { icon: '🛑', iconCol: '#f43f5e', badge: 'BANNED SIDE', badgeCol: '#f43f5e', desc: 'Longs are strictly banned by Sim Lab directive.' },
+          phase3: { icon: '🛑', iconCol: '#f43f5e', badge: 'VETOED', badgeCol: '#f43f5e', desc: 'Upside execution blocked to protect capital.' },
+          phase4: { icon: '🛑', iconCol: '#f43f5e', badge: 'BLOCKED', badgeCol: '#f43f5e', desc: 'Order routing suppressed for LONGs.' },
+          phase5: { icon: '⏳', iconCol: '#8492a6', badge: 'STANDBY', badgeCol: '#8492a6', desc: 'Awaiting directive reset or short setup.' },
+        }
+      };
+    }
+
     // 7. Check Gas balance (Authoritative On-Chain APT Fuel)
     const rawGas = Number(state?.gasAptBalance ?? state?.subaccount?.gasApt ?? 0);
     const gasApt = rawGas > 0 ? rawGas : (window.lastGasApt || 2.3514);

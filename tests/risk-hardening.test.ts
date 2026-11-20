@@ -1,5 +1,6 @@
 import { riskGuard } from '../src/risk/guard';
 import { tradeExecutor } from '../src/trades/executor';
+import { config } from '../src/config';
 
 describe('Production Risk Hardening Suite (Client V3)', () => {
   beforeEach(() => {
@@ -46,9 +47,15 @@ describe('Production Risk Hardening Suite (Client V3)', () => {
       suggestedLeverage: 5,
     };
 
-    const risk = riskGuard.validateSignal(wideSlSignal, dummyAiEval, 100, 100, 0, 0);
-    expect(risk.approved).toBe(false);
-    expect(risk.reason).toContain('[HARD RISK REJECTION]');
+    const origMin = config.MIN_POSITION_USD;
+    (config as any).MIN_POSITION_USD = 35;
+    try {
+      const risk = riskGuard.validateSignal(wideSlSignal, dummyAiEval, 100, 100, 0, 0);
+      expect(risk.approved).toBe(false);
+      expect(risk.reason).toContain('[HARD RISK REJECTION]');
+    } finally {
+      (config as any).MIN_POSITION_USD = origMin;
+    }
   });
 
   it('caps allocation so max possible loss at stop loss strictly stays within user risk ceiling', () => {

@@ -582,7 +582,7 @@ export class RiskGuard {
     }
 
     const isReversalLoop = signal.strategyName === 'Robust Island SMA Reversal Loop';
-    const minMarginFloor = 80.0;
+    const minMarginFloor = Number((config as any).MIN_POSITION_USD) || 35.0;
     const clientMinPosUsd = isReversalLoop ? ((signal as any).customMarginUsd || minMarginFloor) : Math.max(minMarginFloor, (config as any).MIN_POSITION_USD || minMarginFloor);
     const stratMinMargin = isReversalLoop
       ? ((signal as any).customMarginUsd || minMarginFloor)

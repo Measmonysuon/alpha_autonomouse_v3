@@ -2071,11 +2071,11 @@ export class StandaloneTradingEngine {
       }
     }
 
-    // Institutional Veto 2: Hard Directional Ban in RISK_ON_BETA / TRENDING_BULL
-    const isRiskOnBetaOrBull = this.directives.regime === 'RISK_ON_BETA' || this.directives.regime === 'TRENDING_BULL' || this.directives.bannedSides?.includes('SHORT');
-    if (action === 'SHORT' && isRiskOnBetaOrBull) {
+    // Institutional Veto 2: Directional Ban (Single Authority: Sim Lab Directives bannedSides)
+    const isSideBanned = (action === 'LONG' || action === 'SHORT') && Boolean(this.directives.bannedSides?.includes(action));
+    if (isSideBanned) {
       isTriggered = false;
-      reasons.push(`🛑 HARD DIRECTIONAL BAN: SHORTs are strictly prohibited across all pairs under ${this.directives.regime || 'RISK_ON_BETA'} regime.`);
+      reasons.push(`🛑 DIRECTIONAL BAN: ${action} is banned by Sim Lab directive (bannedSides).`);
     }
 
     const isCustomPair = Boolean(pairOverrides && (
