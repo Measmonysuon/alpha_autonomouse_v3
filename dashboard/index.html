@@ -18983,56 +18983,12 @@
     }
 
     // ── AI Trade Intelligence Modal ───────────────────────────────────────────────
-    async function openTradeIntel(rawId, isFromActivePosition = false, isSilent = false) {
-      const tradeId = decodeURIComponent(rawId || '');
-      window._currentTradeIntelId = tradeId;
-      window._currentTradeIntelIsOpen = Boolean(isFromActivePosition);
-      const backdrop = document.getElementById('intel-modal-backdrop');
+    function renderTradeIntelView(data) {
       const title = document.getElementById('intel-title');
       const subtitle = document.getElementById('intel-subtitle');
       const body = document.getElementById('intel-body');
-      if (!backdrop || !body) return;
+      if (!body) return;
 
-      const isAlreadyOpen = backdrop.classList.contains('open');
-      backdrop.classList.add('open');
-
-      // Only show the loading state if opening freshly, NOT if already open or silent background refresh
-      if (!isAlreadyOpen && !isSilent) {
-        body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);">⏳ Loading AI Strategy Telemetry...</div>';
-      }
-
-      let localMatch = rawHistoryTrades.find(x => x.id === tradeId || x.client_order_id === tradeId || String(x.transaction_version) === tradeId.replace('txn-', ''));
-      if (!localMatch && typeof lastPositions !== 'undefined' && Array.isArray(lastPositions)) {
-        const posMatch = lastPositions.find(x =>
-          x.id === tradeId ||
-          (x.id || x.symbol + '_' + x.action).replace(/[^a-zA-Z0-9]/g, '_') === tradeId ||
-          x.symbol === tradeId
-        );
-        if (posMatch) {
-          localMatch = {
-            ...posMatch,
-            strategy_name: posMatch.strategyName || posMatch.strategy_name || 'Autonomous Strategy',
-            entry_rationale: posMatch.entryRationale || posMatch.entry_rationale,
-            status: 'OPEN',
-            exit_reason: 'ACTIVE_POSITION',
-            realized_pnl: posMatch.unrealizedPnlUsd !== undefined ? posMatch.unrealizedPnlUsd : 0,
-            realized_pnl_pct: posMatch.unrealizedPnlPct !== undefined ? posMatch.unrealizedPnlPct : 0,
-            allocated_usd: posMatch.allocatedUsd,
-          };
-        }
-      }
-
-      let telemetry = null;
-      try {
-        const res = await fetch(`/api/trades/${encodeURIComponent(tradeId)}/intel`);
-        if (res.ok) {
-          telemetry = await res.json();
-        }
-      } catch (err) {
-        console.warn('Could not fetch remote trade telemetry:', err);
-      }
-
-      const data = telemetry || localMatch || {};
       if (data.subaccount) window._subaccount = data.subaccount;
       const subaccount = window._subaccount || lastState?.subaccount || '';
 
@@ -19226,6 +19182,61 @@
       </div>
     </div>
   `;
+    }
+
+    async function openTradeIntel(rawId, isFromActivePosition = false, isSilent = false) {
+      const tradeId = decodeURIComponent(rawId || '');
+      window._currentTradeIntelId = tradeId;
+      window._currentTradeIntelIsOpen = Boolean(isFromActivePosition);
+      const backdrop = document.getElementById('intel-modal-backdrop');
+      const body = document.getElementById('intel-body');
+      if (!backdrop || !body) return;
+
+      const isAlreadyOpen = backdrop.classList.contains('open');
+      backdrop.classList.add('open');
+
+      // 1. Instant Optimistic Render (0ms): Look in local in-memory trades
+      let localMatch = rawHistoryTrades.find(x => x.id === tradeId || x.client_order_id === tradeId || String(x.transaction_version) === tradeId.replace('txn-', ''));
+      if (!localMatch && typeof lastPositions !== 'undefined' && Array.isArray(lastPositions)) {
+        const posMatch = lastPositions.find(x =>
+          x.id === tradeId ||
+          (x.id || x.symbol + '_' + x.action).replace(/[^a-zA-Z0-9]/g, '_') === tradeId ||
+          x.symbol === tradeId
+        );
+        if (posMatch) {
+          localMatch = {
+            ...posMatch,
+            strategy_name: posMatch.strategyName || posMatch.strategy_name || 'Autonomous Strategy',
+            entry_rationale: posMatch.entryRationale || posMatch.entry_rationale,
+            status: 'OPEN',
+            exit_reason: 'ACTIVE_POSITION',
+            realized_pnl: posMatch.unrealizedPnlUsd !== undefined ? posMatch.unrealizedPnlUsd : 0,
+            realized_pnl_pct: posMatch.unrealizedPnlPct !== undefined ? posMatch.unrealizedPnlPct : 0,
+            allocated_usd: posMatch.allocatedUsd,
+          };
+        }
+      }
+
+      if (localMatch) {
+        // Instant 0ms render
+        renderTradeIntelView(localMatch);
+      } else if (!isAlreadyOpen && !isSilent) {
+        body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);">⏳ Loading AI Strategy Telemetry...</div>';
+      }
+
+      // 2. Background async enrichment from SQLite API without blocking the modal
+      try {
+        const res = await fetch(`/api/trades/${encodeURIComponent(tradeId)}/intel`);
+        if (res.ok) {
+          const telemetry = await res.json();
+          if (window._currentTradeIntelId === tradeId && telemetry) {
+            renderTradeIntelView(telemetry);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch remote trade telemetry:', err);
+      }
+    }
     }
 
     function closeTradeIntel(event) {

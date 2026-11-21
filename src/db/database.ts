@@ -787,17 +787,29 @@ class TradeDatabase {
    * Get full AI telemetry for a specific trade ID
    */
   getTradeTelemetry(id: string): DbTrade | null {
+    if (!id) return null;
+    const cleanId = id.replace(/^txn-/, '');
     if (!this.db) {
       for (const t of this.memoryTrades.values()) {
-        if (t.id === id || t.client_order_id === id || t.tx_version === id) {
+        if (
+          t.id === id || t.id === cleanId ||
+          t.client_order_id === id || t.client_order_id === cleanId ||
+          t.tx_version === id || t.tx_version === cleanId
+        ) {
           return t;
         }
       }
       return null;
     }
 
-    const stmt = this.db.prepare('SELECT * FROM trades WHERE id = ? OR client_order_id = ? OR tx_version = ?');
-    const res = stmt.get(id, id, id) as DbTrade | undefined;
+    const stmt = this.db.prepare(`
+      SELECT * FROM trades 
+      WHERE id = ? OR id = ?
+         OR client_order_id = ? OR client_order_id = ?
+         OR tx_version = ? OR tx_version = ?
+      LIMIT 1
+    `);
+    const res = stmt.get(id, cleanId, id, cleanId, id, cleanId) as DbTrade | undefined;
     return res || null;
   }
 

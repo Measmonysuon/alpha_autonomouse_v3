@@ -538,6 +538,10 @@ export class TradeExecutor {
     return this.tradesCache.filter((t) => t.status !== 'open');
   }
 
+  public getTradesCache(): TradeRecord[] {
+    return this.tradesCache;
+  }
+
   public getRestingOrders(): any[] {
     return this.restingOrdersCache;
   }
@@ -1427,7 +1431,16 @@ export class TradeExecutor {
 
           // Strict Take-Profit Directional Invariant: Ensure TP is mathematically sound before on-chain DEX arming
           const isLongEntry = signal.action === 'LONG';
-          const isNoFixedTpSignal = Boolean((signal as any).noFixedTp || directivesAny?.strategy?.layer5?.noFixedTp || directivesAny?.layer5?.noFixedTp || directivesAny?.noFixedTp);
+          const isNoFixedTpSignal = Boolean(
+            (signal as any).noFixedTp ||
+            directivesAny?.strategy?.layer5?.noFixedTp ||
+            directivesAny?.layer5?.noFixedTp ||
+            directivesAny?.noFixedTp ||
+            signal.strategyName?.includes('Robust Island') ||
+            signal.strategyName?.includes('Liquidity Sweep') ||
+            signal.strategyTags?.includes('Dynamic-Harvest30') ||
+            signal.strategyTags?.includes('champion_confirmed_retest_harvest30')
+          );
           if (!isNoFixedTpSignal) {
             if (isLongEntry) {
               if (!signal.takeProfit || signal.takeProfit <= signal.entryPrice) {

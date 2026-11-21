@@ -2379,6 +2379,7 @@ function triggerBackgroundOnChainSync(): void {
     if (pathname.startsWith('/api/trades/') && (pathname.endsWith('/intel') || pathname.endsWith('/telemetry'))) {
       const parts = pathname.split('/');
       const tradeId = decodeURIComponent(parts[3] || '');
+      const cleanId = tradeId.replace(/^txn-/, '');
       let telemetry = null;
       try {
         telemetry = dbClient.getTradeTelemetry(tradeId);
@@ -2387,11 +2388,16 @@ function triggerBackgroundOnChainSync(): void {
       }
 
       if (!telemetry) {
-        const allTrades = tradeExecutor.loadTrades();
-        const found = allTrades.find((x: any) =>
-          x.id === tradeId ||
-          x.client_order_id === tradeId ||
-          x.orderId === tradeId ||
+        // Fast in-memory RAM cache lookup (0ms) instead of heavy synchronous disk I/O
+        const cachedTrades = (tradeExecutor as any).getTradesCache
+          ? (tradeExecutor as any).getTradesCache()
+          : tradeExecutor.getOpenTrades().concat(tradeExecutor.getClosedTrades());
+        const found = cachedTrades.find((x: any) =>
+          x.id === tradeId || x.id === cleanId ||
+          x.client_order_id === tradeId || x.client_order_id === cleanId ||
+          x.orderId === tradeId || x.orderId === cleanId ||
+          String(x.txHash) === tradeId || String(x.txHash) === cleanId ||
+          String(x.tx_version) === tradeId || String(x.tx_version) === cleanId ||
           (x.symbol && (x.symbol === tradeId || tradeId.startsWith(x.symbol)))
         );
         if (found) {

@@ -1678,7 +1678,15 @@ export class StandaloneTradingEngine {
     isDualTp = true;
     rrRatio = Number((tp1Dist / (slDist || 1)).toFixed(2));
 
-    const isNoFixedTp = Boolean(activeStrategy.layer5?.noFixedTp);
+    const isNoFixedTp = Boolean(
+      activeStrategy.layer5?.noFixedTp ||
+      activeStrategy.name?.includes('Robust Island') ||
+      activeStrategy.name?.includes('Liquidity Sweep') ||
+      activeStrategy.id?.includes('champion_confirmed_retest_harvest30') ||
+      (activeStrategy.layer5 as any)?.harvestPolicy?.style === 'SMA_DYNAMIC_GAP' ||
+      (simPairDir as any)?.harvestPolicy?.style === 'SMA_DYNAMIC_GAP' ||
+      isSweepOrReboundEntry
+    );
     if (isNoFixedTp) {
       isDualTp = false;
       takeProfit1 = 0;
