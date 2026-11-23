@@ -99,6 +99,7 @@ export interface StandaloneSignal {
   orderType?: 'MARKET' | 'POST_ONLY_LIMIT';
   limitPrice?: number;
   postOnly?: boolean;
+  starterSizeRatio?: number;
   executionProfile?: 'STANDARD_SWING';
   microTargetProfitUsd?: number;
   noFixedTp?: boolean;
@@ -1783,8 +1784,13 @@ export class StandaloneTradingEngine {
       }
 
       // Gate 2: Overextension / Chased Breakout
-      if (simPairDir?.reboundOpportunity?.isReboundActive || isSweepOrReboundEntry) {
-        reasons.push(`⚡ REBOUND / SWEEP MOMENTUM EXEMPTION: Fast impulse is confirmed initial expansion of V-Bounce / Liquidity Sweep — exempt from chased breakout penalty.`);
+      const isFastImpulse = isSweepOrReboundEntry ||
+        Boolean(simPairDir?.reboundOpportunity?.isReboundActive) ||
+        (simPairDir?.reboundOpportunity?.isImmediateMarketOrder === true) ||
+        (ind.rvol >= 2.0 && ind.adx14 >= 25);
+
+      if (isFastImpulse) {
+        reasons.push(`⚡ REBOUND / IGNITION MOMENTUM EXEMPTION: Fast impulse is confirmed market expansion — exempt from chased breakout penalty.`);
       } else if (ind.pullbackStatus === 'CHASED_BREAKOUT' && action === 'LONG') {
         technicalScore = Math.min(technicalScore, 55);
         reasons.push(`🛑 CHASED BREAKOUT GATE: Price rallied +${ind.distToEma25Pct}% away from value. Capped at 55%.`);
@@ -2107,8 +2113,21 @@ export class StandaloneTradingEngine {
       ? pairOverrides.makerOffsetPct
       : (isChop ? 0.0006 : isHighVol ? 0.0010 : 0.0008);
 
-    if (isTriggered && action === 'LONG') {
-      // Pullback Retest Limit Order #4: Prioritize Sim Lab pre-calculated maker limit, then fast SMA dynamic support floor, then top-of-book bid
+    const isFastImpulse = isSweepOrReboundEntry ||
+      Boolean(simPairDir?.reboundOpportunity?.isReboundActive) ||
+      (simPairDir?.reboundOpportunity?.isImmediateMarketOrder === true) ||
+      (ind.rvol >= 2.0 && ind.adx14 >= 25);
+
+    let starterSizeRatio: number | undefined = simPairDir?.reboundOpportunity?.starterSizeRatio;
+
+    if (isTriggered && isFastImpulse) {
+      // 🔥 FAST MARKET IMPULSE / DUMP & PUMP / SQUEEZE: Immediate On-Chain Taker Market Order (IOC)
+      orderType = 'MARKET';
+      postOnly = false;
+      limitPrice = 0; // Signals executor to execute on-chain IOC Market Order immediately
+      reasons.push(`⚡ FAST MARKET IMPULSE: Routing immediate on-chain Market Order (TimeInForce: IOC, 2% Slippage Cap). Zero maker delay.`);
+    } else if (isTriggered && action === 'LONG') {
+      // 🏛️ STANDARD RETEST (Passive Maker Post-Only, 0% fee)
       if (simPairDir?.retestLimitLong && simPairDir.retestLimitLong > 0) {
         limitPrice = Number(simPairDir.retestLimitLong.toFixed(4));
       } else if (ind.smaFast && ind.smaFast > 0 && Math.abs(entry - ind.smaFast) / ind.smaFast <= 0.0075) {
@@ -2157,6 +2176,7 @@ export class StandaloneTradingEngine {
       limitPrice,
       orderType,
       postOnly,
+      starterSizeRatio,
       executionProfile: 'STANDARD_SWING',
       stopLoss: sl,
       takeProfit: tp,

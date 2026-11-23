@@ -1333,6 +1333,13 @@ export class TradeExecutor {
         return { success: false, error: risk.reason };
       }
 
+      const starterRatio = (signal as any).starterSizeRatio;
+      if (typeof starterRatio === 'number' && starterRatio > 0 && starterRatio < 1.0) {
+        risk.positionSizeUsd = Number((risk.positionSizeUsd * starterRatio).toFixed(2));
+        risk.positionSizeBase = Number((risk.positionSizeBase * starterRatio).toFixed(6));
+        logger.info(`⚡ [IGNITION STARTER SIZING] Applying ${(starterRatio * 100).toFixed(0)}% initial starter allocation for ${signal.symbol}: $${risk.positionSizeUsd.toFixed(2)} (${risk.positionSizeBase} units)`);
+      }
+
       const directivesAny = risk.directivesUsed as any;
       const side = signal.action === 'LONG' ? 'buy' : 'sell';
       const isPaper = config.PAPER_TRADING || !this.aptosAccount;
