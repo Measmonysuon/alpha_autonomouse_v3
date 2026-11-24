@@ -736,6 +736,12 @@ export class TradeExecutor {
           : (isPosTpDirectionallyValid ? pos.takeProfit : dynamicTp);
 
         if (!existing) {
+          const recentHarvested = this.tradesCache.find(t => 
+            t.symbol.replace('-', '/').toUpperCase() === symNorm &&
+            (t.harvest30Done || (t.lifecycleEvents && t.lifecycleEvents.some(e => e.stage === 'HARVEST'))) &&
+            (Date.now() - (t.closedAt || t.openedAt || 0) < 900_000)
+          );
+
           const newTrade: TradeRecord = {
             id: isHumanTrade ? `dex-manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : `decibel-onchain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             symbol: pos.symbol,
@@ -763,6 +769,11 @@ export class TradeExecutor {
             currentPrice: pos.markPrice || pos.entryPrice || 0,
             strategyName: resolvedStrategyName,
             strategyTags: isHumanTrade ? ['Manual', 'DEX', 'human trade DEX'] : ['Dynamic-Harvest30', 'champion_confirmed_retest_harvest30', 'Auto-AI'],
+            harvest30Done: Boolean(recentHarvested?.harvest30Done),
+            gap30Price: recentHarvested?.gap30Price,
+            gap50Price: recentHarvested?.gap50Price,
+            peakPrice: recentHarvested?.peakPrice || pos.markPrice || pos.entryPrice,
+            breakevenMoved: Boolean(recentHarvested?.breakevenMoved),
             strategyAttribution: isHumanTrade ? humanAttribution : {
               strategyId: dbBotTrade?.id || simStratId,
               strategyName: resolvedStrategyName,
@@ -2490,6 +2501,12 @@ export class TradeExecutor {
    * Delegated to authoritative HarvestOnChainExecutor
    */
   public async execute30PercentHarvest(symbol: string, closeRatio: number = 0.30): Promise<boolean> {
+    const symKey = symbol.replace('-', '/').toUpperCase();
+    const trade = this.tradesCache.find(t => t.symbol.replace('-', '/').toUpperCase() === symKey && t.status === 'open');
+    if (trade) {
+      trade.harvest30Done = true;
+      this.saveTrades();
+    }
     const res = await harvestOnChainExecutor.executeHarvest({
       symbol,
       closeRatio,

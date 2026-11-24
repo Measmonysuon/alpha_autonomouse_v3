@@ -170,6 +170,7 @@ export class PortfolioHarvester {
   private lastLivePrices: Record<string, number> = {};
   private lastSlPushTime: Record<string, number> = {};
   private lastPushedSl: Record<string, number> = {};
+  private lastTier1HarvestTime: Map<string, number> = new Map();
 
   constructor() {
     this.loadConfig();
@@ -459,12 +460,15 @@ export class PortfolioHarvester {
             // Tier 1 Harvest: Price reversed to Gap level while remaining securely in profit
             const isGap30InProfit = isLong ? (gap30 > trade.entryPrice * 1.002) : (gap30 < trade.entryPrice * 0.998);
             const isTier1Reached = isGap30InProfit && (isLong ? (currentPrice <= gap30) : (currentPrice >= gap30));
+            const isTier1OnCooldown = (Date.now() - (this.lastTier1HarvestTime.get(normSym) || 0)) < 900_000;
 
-            if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done) {
+            if (isTier1Reached && hadSubstantialProfit && !trade.harvest30Done && !isTier1OnCooldown) {
               const partialRatio = (activeStratL5 as any)?.tp1CloseRatio ?? harvestPolicy?.tier1Ratio ?? 0.30;
               logger.info(
                 `🌾 [ROBUST ISLAND TIER 1 HARVEST] ${trade.symbol} mark ($${currentPrice.toFixed(4)}) reversed to Gap Level ($${gap30.toFixed(4)}) after peak $${trade.peakPrice.toFixed(4)}. Executing ${(partialRatio * 100).toFixed(0)}% partial close & locking BE+0.30%!`,
               );
+              trade.harvest30Done = true;
+              this.lastTier1HarvestTime.set(normSym, Date.now());
               tradeExecutor.execute30PercentHarvest(trade.symbol, partialRatio).catch((err: any) => {
                 logger.error(`execute30PercentHarvest failed: ${err.message}`);
               });
