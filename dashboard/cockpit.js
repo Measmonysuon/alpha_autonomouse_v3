@@ -2226,8 +2226,25 @@
 
     // Card 3: EXECUTION GATES & RISK ALLOCATION (User Settings Sovereignty)
     const riskBudget = getEl('cockpit-risk-budget');
+    const riskBudgetSub = getEl('cockpit-risk-budget-sub');
+    const equityVal = Number(state.accountEquityUsd || state.accountEquity || 0);
+    const configuredBudget = Number(state.configuredBudgetUsd ?? (state.riskSettings?.budgetUsd ?? budgetVal));
+    const effectiveWorkingBudget = Number(state.effectiveBudgetUsd ?? (equityVal > 0 ? (configuredBudget > 0 ? Math.min(configuredBudget, equityVal) : equityVal) : budgetVal));
+
     if (riskBudget) {
-      riskBudget.textContent = `$${budgetVal.toFixed(2)}`;
+      riskBudget.textContent = `$${effectiveWorkingBudget.toFixed(2)}`;
+    }
+    if (riskBudgetSub) {
+      if (equityVal > 0 && configuredBudget > equityVal) {
+        riskBudgetSub.textContent = `Auto-Clamped ($${equityVal.toFixed(0)} / $${configuredBudget.toFixed(0)} Cap)`;
+        riskBudgetSub.style.color = '#38bdf8';
+      } else if (configuredBudget <= 0 && equityVal > 0) {
+        riskBudgetSub.textContent = `Auto Sized to Balance ($${equityVal.toFixed(2)})`;
+        riskBudgetSub.style.color = '#10b981';
+      } else {
+        riskBudgetSub.textContent = `Settings Sovereignty ($${configuredBudget.toFixed(0)} Cap)`;
+        riskBudgetSub.style.color = '';
+      }
     }
 
     const riskConcurrent = getEl('cockpit-risk-concurrent');
@@ -2238,14 +2255,17 @@
 
     const riskConcurrentSub = getEl('cockpit-risk-concurrent-sub');
     if (riskConcurrentSub) {
-      riskConcurrentSub.textContent = `Min Pos: $${minPosUsd.toFixed(2)} | Max: $${maxPosUsd.toFixed(2)}`;
+      const configuredMin = Number(state.minPositionUsd || 0);
+      const autoMin = Math.max(25.0, Math.min(35.0, effectiveWorkingBudget * 0.15));
+      const effectiveMin = configuredMin > 0 ? configuredMin : autoMin;
+      riskConcurrentSub.textContent = `Min Pos: $${effectiveMin.toFixed(2)} (${configuredMin > 0 ? 'Fixed' : 'Auto'}) | Max: $${maxPosUsd.toFixed(2)}`;
     }
 
     const riskLossCeiling = getEl('cockpit-risk-loss-ceiling');
     if (riskLossCeiling) {
-      const riskPct = state.maxRiskPct || 2.0;
-      const dollarRisk = budgetVal > 0 ? Math.max(2.50, budgetVal * (riskPct / 100)) : 0;
-      riskLossCeiling.textContent = budgetVal > 0 ? `${riskPct.toFixed(1)}% Max Risk ($${dollarRisk.toFixed(2)})` : 'Locked (Budget $0.00)';
+      const riskPct = state.maxRiskPct || 5.0;
+      const dollarRisk = effectiveWorkingBudget > 0 ? Number((effectiveWorkingBudget * (riskPct / 100)).toFixed(2)) : 0;
+      riskLossCeiling.textContent = effectiveWorkingBudget > 0 ? `${riskPct.toFixed(1)}% Max Risk ($${dollarRisk.toFixed(2)})` : 'Locked (Budget $0.00)';
     }
 
     const riskLeverage = getEl('cockpit-risk-leverage');

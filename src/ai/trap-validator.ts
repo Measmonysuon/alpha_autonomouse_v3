@@ -170,21 +170,28 @@ export function evaluateAITrapShield(
 
   // B. Sim Lab Directional Bans
   if (directives?.bannedSides && directives.bannedSides.includes(candidateAction)) {
-    const res: AITrapValidationResult = {
-      timestamp: Date.now(),
-      symbol,
-      candidateAction,
-      signalConfidence: signal.confidence,
-      verdict: 'TRAP_EVENT',
-      trapCategory: 'DIRECTIONAL_BAN',
-      vetoTrade: true,
-      confidence: 88,
-      convictionBonus: 0,
-      metricsEvaluated: metrics,
-      reasoning: `🛡️ [DIRECTIONAL BAN] Side ${candidateAction} is strictly banned by active regime directive (${directives.regime || 'Macro Directive'}).`,
-      modelUsed: modelUsedStr,
-    };
-    return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    const isTacticalSweep = (signal.confidence >= 80) && Boolean(
+      (signal as any).isSweepOrReboundEntry ||
+      signal.indicators?.isPullbackBounce ||
+      simDir?.reboundOpportunity?.isReboundActive
+    );
+    if (!isTacticalSweep) {
+      const res: AITrapValidationResult = {
+        timestamp: Date.now(),
+        symbol,
+        candidateAction,
+        signalConfidence: signal.confidence,
+        verdict: 'TRAP_EVENT',
+        trapCategory: 'DIRECTIONAL_BAN',
+        vetoTrade: true,
+        confidence: 88,
+        convictionBonus: 0,
+        metricsEvaluated: metrics,
+        reasoning: `🛡️ [DIRECTIONAL BAN] Side ${candidateAction} is strictly banned by active regime directive (${directives.regime || 'Macro Directive'}).`,
+        modelUsed: modelUsedStr,
+      };
+      return cacheAndReturn(res, symbol, candidateAction, currentPrice, shieldGate);
+    }
   }
 
   // C. Sim Lab Pair Directive Banning

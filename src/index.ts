@@ -514,11 +514,15 @@ async function runTradingCycle(): Promise<void> {
 
           // 4. Decibel Execution & Risk Guard Validation
           if (aiEval.confirmed) {
-            // Execution Guard: Fail-closed lock if unconfigured or budget ceiling is 0
-            if (!isReady || config.BUDGET_USD <= 0) {
+            // Execution Guard: Fail-closed lock if unconfigured or budget and available equity are 0
+            const effectiveBudgetCheck = (config.BUDGET_USD > 0)
+              ? config.BUDGET_USD
+              : (agentState.accountEquityUsd || agentState.availableMarginUsd || 0);
+
+            if (!isReady || effectiveBudgetCheck <= 0) {
               const lockReason = !isReady
                 ? 'Operator onboarding pending (credentials not configured)'
-                : 'Budget ceiling is $0.00 (fail-safe risk lock)';
+                : 'Budget ceiling and available account equity are $0.00 (fail-safe risk lock)';
               logger.info(`🔒 [EXECUTION LOCKED] ${symbol} ${signal.action} setup detected (${confidence}%), but on-chain order routing is paused: ${lockReason}`);
               tradeExecutor.recordShadowTrade({
                 symbol,

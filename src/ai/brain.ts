@@ -224,18 +224,24 @@ export class LocalAIBrain {
 
     // C. Sim Lab Directional Ban VETO
     if (directives?.bannedSides && directives.bannedSides.includes(action)) {
-      const reason = `Direction ${action} is strictly banned by Sim Lab directives (${directives.regime || 'Macro Directive'}).`;
-      return {
-        confirmed: false,
-        confidenceScore: 30,
-        action: 'HOLD',
-        sentiment: 'NEUTRAL',
-        reasoning: `🛡️ AI Shield VETO: ${reason}`,
-        provider: 'simlab_ai_shield',
-        role,
-        riskFlags: ['SIMLAB_DIRECTIONAL_BAN'],
-        trapCategory: 'DIRECTIONAL_BAN',
-      };
+      const isTacticalSweep = (signal.confidence >= 80) && Boolean(
+        (signal as any).isSweepOrReboundEntry ||
+        signal.indicators?.isPullbackBounce
+      );
+      if (!isTacticalSweep) {
+        const reason = `Direction ${action} is strictly banned by Sim Lab directives (${directives.regime || 'Macro Directive'}).`;
+        return {
+          confirmed: false,
+          confidenceScore: 30,
+          action: 'HOLD',
+          sentiment: 'NEUTRAL',
+          reasoning: `🛡️ AI Shield VETO: ${reason}`,
+          provider: 'simlab_ai_shield',
+          role,
+          riskFlags: ['SIMLAB_DIRECTIONAL_BAN'],
+          trapCategory: 'DIRECTIONAL_BAN',
+        };
+      }
     }
 
     // D. Sim Lab Rejection Wick Trap (bull/bear pin bar traps)

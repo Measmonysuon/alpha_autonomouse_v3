@@ -2088,8 +2088,17 @@ export class StandaloneTradingEngine {
     // Institutional Veto 2: Directional Ban (Single Authority: Sim Lab Directives bannedSides)
     const isSideBanned = (action === 'LONG' || action === 'SHORT') && Boolean(this.directives.bannedSides?.includes(action));
     if (isSideBanned) {
-      isTriggered = false;
-      reasons.push(`🛑 DIRECTIONAL BAN: ${action} is banned by Sim Lab directive (bannedSides).`);
+      // Tactical Counter-Regime Confluence Exception:
+      // If setup has high confluence (confidence >= 80%) with a confirmed liquidity sweep or V-rebound,
+      // waive the macro ban so the client does not stay silent on genuine opportunities.
+      const hasHighConfluenceSweep = (confidence >= 80) && Boolean(isSweepOrReboundEntry || ind.isPullbackBounce || simPairDir?.reboundOpportunity?.isReboundActive);
+
+      if (hasHighConfluenceSweep) {
+        reasons.push(`⚡ TACTICAL COUNTER-REGIME: ${action} macro-ban waived for high-confluence (${confidence}%) sweep setup.`);
+      } else {
+        isTriggered = false;
+        reasons.push(`🛑 DIRECTIONAL BAN: ${action} is banned by Sim Lab directive (bannedSides).`);
+      }
     }
 
     const isCustomPair = Boolean(pairOverrides && (

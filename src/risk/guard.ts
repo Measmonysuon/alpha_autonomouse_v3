@@ -529,7 +529,7 @@ export class RiskGuard {
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
 
-    const maxDirMargin = 80.0;
+    const maxDirMargin = Math.max(50.0, Math.min((accountEquity > 0 ? accountEquity : 100.0) * 0.60, 100.0));
     if (sameDirMargin >= maxDirMargin) {
       const reason = `🛑 Directional Margin Ceiling Reached: Total ${action} margin deployed is $${sameDirMargin.toFixed(2)} (>= $${maxDirMargin.toFixed(2)} limit). New ${action} blocked to prevent correlated beta cascade.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
@@ -537,16 +537,20 @@ export class RiskGuard {
     }
 
     // ── 4. Budget & Allocation Ceiling ─────────────────────────────────────────
-    if (config.BUDGET_USD <= 0) {
-      const reason = `🛑 Budget Locked: Configured trading budget is $0.00. Set an authorized budget ceiling in Settings before live trading.`;
+    // Live capital guard & Dynamic Budget Ceiling:
+    // 1. If user set BUDGET_USD > 0 and accountEquity > 0:
+    //    Gracefully clamp to min(config.BUDGET_USD, accountEquity) if budget ceiling is higher than real balance.
+    // 2. If user left BUDGET_USD <= 0 or unset:
+    //    Automatically authorize 100% of available on-chain account equity (or availableMargin) instead of locking.
+    const effectiveBudget = (accountEquity > 0)
+      ? (config.BUDGET_USD > 0 ? Math.min(config.BUDGET_USD, accountEquity) : accountEquity)
+      : (config.BUDGET_USD > 0 ? config.BUDGET_USD : Math.max(0, availableMargin));
+
+    if (effectiveBudget <= 0) {
+      const reason = `🛑 Budget Locked: Both configured trading budget and available account equity are $0.00. Deposit collateral before live trading.`;
       logger.warn(`[Risk Guard] ${signal.symbol} — ${reason}`);
       return this.reject(reason, directives, accountEquity, availableMargin);
     }
-
-    // Live capital guard: The working budget ceiling can never exceed real on-chain account equity when available.
-    const effectiveBudget = (accountEquity > 0)
-      ? Math.min(config.BUDGET_USD, accountEquity)
-      : config.BUDGET_USD;
     const maxBudget = effectiveBudget;
     if (currentAllocatedUsd >= maxBudget) {
       const reason = `🛑 Budget Exhausted: Currently deployed $${currentAllocatedUsd.toFixed(2)} reaches max budget $${maxBudget.toFixed(2)} (Configured: $${config.BUDGET_USD.toFixed(2)}, Real Equity: $${accountEquity.toFixed(2)}).`;
@@ -582,9 +586,14 @@ export class RiskGuard {
     }
 
     const isReversalLoop = signal.strategyName === 'Robust Island SMA Reversal Loop';
-    const minMarginFloor = Number((config as any).MIN_POSITION_USD) || 35.0;
-    const clientMinPosUsd = isReversalLoop ? ((signal as any).customMarginUsd || minMarginFloor) : Math.max(minMarginFloor, (config as any).MIN_POSITION_USD || minMarginFloor);
-    const stratMinMargin = isReversalLoop
+    
+    // Auto-calculate dynamic minimum margin based on available budget if user did not set it:
+    const configuredMinMargin = Number((config as any).MIN_POSITION_USD);
+    const autoBudgetMinMargin = Math.max(25.0, Math.min(35.0, Number((maxBudget * 0.15).toFixed(2))));
+    const minMarginFloor = (configuredMinMargin > 0) ? configuredMinMargin : autoBudgetMinMargin;
+
+    const clientMinPosUsd = isReversalLoop ? ((signal as any).customMarginUsd || minMarginFloor) : Math.max(minMarginFloor, configuredMinMargin || autoBudgetMinMargin);
+    let stratMinMargin = isReversalLoop
       ? ((signal as any).customMarginUsd || minMarginFloor)
       : Math.max(
           minMarginFloor,
@@ -708,12 +717,27 @@ export class RiskGuard {
       // user risk ceiling with a 1.25x round-lot tolerance (or baseline floor $4.50)
       const maxPermissibleLoss = Math.max(userAuthorizedLossCeiling * 1.25, 4.50);
 
+      // Dynamic Risk-Parity Adaptation:
+      // If stratMinMargin at target leverage risks more than maxPermissibleLoss,
+      // dynamically scale down stratMinMargin to maxSafeMarginForRisk (down to Decibel floor $25.00)
+      // so the trade CAN be taken safely within the risk ceiling rather than staying silent!
       if (projectedLossAtMinMargin > maxPermissibleLoss) {
-        const reason = `🛑 [HARD RISK REJECTION] Minimum margin ($${stratMinMargin.toFixed(2)}) at ${leverage}x leverage ` +
-          `would risk $${projectedLossAtMinMargin.toFixed(2)} on stop out, which strictly exceeds the user risk ceiling ` +
-          `of $${userAuthorizedLossCeiling.toFixed(2)} (${userRiskPct}% of $${effectiveCapitalBase.toFixed(2)}). Trade aborted to protect capital.`;
-        logger.warn(reason);
-        return this.reject(reason, directives, accountEquity, availableMargin);
+        const maxSafeMarginForRisk = Math.floor((maxPermissibleLoss / (bufferedSlDistPct * leverage)) * 100) / 100;
+        const decibelAbsoluteFloor = 25.0; // Decibel contract round-lot margin floor
+
+        if (maxSafeMarginForRisk >= decibelAbsoluteFloor) {
+          logger.info(
+            `⚖️ [Risk Guard] ${signal.symbol} — Auto-scaled minimum margin from $${stratMinMargin.toFixed(2)} to $${maxSafeMarginForRisk.toFixed(2)} ` +
+            `to safely fit within risk ceiling ($${userAuthorizedLossCeiling.toFixed(2)}) without staying silent.`
+          );
+          stratMinMargin = maxSafeMarginForRisk;
+        } else {
+          const reason = `🛑 [HARD RISK REJECTION] Even minimum contract margin ($${decibelAbsoluteFloor.toFixed(2)}) at ${leverage}x leverage ` +
+            `would risk $${(decibelAbsoluteFloor * bufferedSlDistPct * leverage).toFixed(2)} on stop out, which strictly exceeds the user risk ceiling ` +
+            `of $${userAuthorizedLossCeiling.toFixed(2)} (${userRiskPct}% of $${effectiveCapitalBase.toFixed(2)}). Trade aborted to protect capital.`;
+          logger.warn(reason);
+          return this.reject(reason, directives, accountEquity, availableMargin);
+        }
       }
 
       // Max safe allocation guaranteeing stop loss does not exceed userAuthorizedLossCeiling

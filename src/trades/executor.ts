@@ -650,19 +650,25 @@ export class TradeExecutor {
           (isLong ? pos.takeProfit >= pos.entryPrice * 1.008 : pos.takeProfit <= pos.entryPrice * 0.992) &&
           Math.abs(pos.takeProfit - pos.entryPrice) / pos.entryPrice <= 0.04;
 
-        // If not found open, check if this position was recently closed (prevent ghost flickering from delayed RPC indexer responses)
+        // If not found open, check if this position was previously marked closed due to transient RPC disconnect
+        // Invariant: Resurrect false disconnects instead of creating phantom duplicate trades!
         let recentClosed: TradeRecord | undefined;
         if (!existing) {
-          recentClosed = this.tradesCache.find(
+          const recentFalseClosed = this.tradesCache.slice().reverse().find(
             (t) => t.symbol.replace('-', '/').toUpperCase() === symNorm &&
               t.status !== 'open' &&
-              (t.closedAt ? Date.now() - t.closedAt < 10_000 : false) &&
-              Math.abs((t.entryPrice || 0) - (pos.entryPrice || 0)) < 0.001,
+              (t.closedAt ? Date.now() - t.closedAt < 300_000 : false) &&
+              Math.abs((t.entryPrice || 0) - (pos.entryPrice || 0)) < 0.0005 &&
+              Math.abs((t.sizeBase || 0) - (pos.sizeBase || 0)) < 0.01,
           );
-          if (recentClosed) {
-            // Decibel DEX is reporting a position that was already closed within the last 10s with identical entry.
-            logger.debug(`[RECONCILE] Ignoring stale on-chain position for ${pos.symbol}: trade was recently closed (${recentClosed.status}, closed ${Math.round((Date.now() - (recentClosed.closedAt || 0)) / 1000)}s ago)`);
-            continue;
+          if (recentFalseClosed) {
+            logger.info(`🔄 [RECONCILE RE-ATTACH] Re-activating falsely closed position for ${pos.symbol} (Entry: $${pos.entryPrice}, Size: ${pos.sizeBase}). Restoring continuous tracking without duplication.`);
+            recentFalseClosed.status = 'open';
+            recentFalseClosed.closedAt = undefined;
+            recentFalseClosed.exitReason = undefined;
+            existing = recentFalseClosed;
+            recentClosed = recentFalseClosed;
+            modified = true;
           }
         }
 
@@ -1061,9 +1067,10 @@ export class TradeExecutor {
           }
           const durationMissingMs = now - (this.missingFirstSeenAt.get(symNorm) || now);
 
-          // Fast & decisive on-chain absence confirmation (2 consecutive checks >= 2s)
-          // Eliminates ghost position delays immediately after DEX close (down from 30s to 2s)
-          if (missed >= 2 && durationMissingMs >= 2000) {
+          // Robust on-chain absence confirmation:
+          // Requires at least 5 consecutive missed checks and at least 15 seconds of sustained absence
+          // to prevent ghost closures and duplicate re-ingestion from transient RPC jitter.
+          if (missed >= 5 && durationMissingMs >= 15_000) {
             const pnl = trade.pnlUsd || 0;
             const smartStatus = pnl > 0.05 ? 'closed_tp' : (pnl < 0 ? 'closed_sl' : 'closed_manual');
             const smartReason = smartStatus === 'closed_tp' ? 'ON_CHAIN_TP_FILL' : (smartStatus === 'closed_sl' ? 'ON_CHAIN_SL_HIT' : 'ON_CHAIN_DEX_CLOSE');
